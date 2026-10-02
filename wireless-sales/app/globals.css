@@ -14,8 +14,9 @@
 
   --color-canvas: #fafafa;
 
-  --font-sans: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic",
-    "맑은 고딕", "Noto Sans KR", system-ui, sans-serif;
+  --font-sans:
+    "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "맑은 고딕",
+    "Noto Sans KR", system-ui, sans-serif;
 }
 
 body {

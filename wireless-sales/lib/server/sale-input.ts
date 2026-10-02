@@ -1,5 +1,6 @@
 import "server-only";
 import {
+  ADDON_OPTIONS,
   DONGPAN_OPTIONS,
   OX_OPTIONS,
   PLAN_CHANGES,
@@ -119,31 +120,39 @@ export function parseSaleFormInput(
     activatedAt: date("activatedAt", "개통일", true),
     customer: text("customer", "고객명", 50),
     ctn: /^\d*$/.test(ctn) ? ctn : "",
+    excludeIndicator: choice(
+      "excludeIndicator",
+      "실력지표제외",
+      OX_OPTIONS,
+      true,
+    ),
     category: choice("category", "개통구분", SALE_CATEGORIES, true),
     model: text("model", "모델명", 100),
     plan: text("plan", "요금제", 100),
-    planChange: choice("planChange", "요금제 유지/변경", PLAN_CHANGES, true),
+    planChange: choice("planChange", "유지/변경", PLAN_CHANGES, true),
     staff,
-    customerPromise: text("customerPromise", "추후 고객약속", 500),
+    customerPromise: text("customerPromise", "고객약속사항", 500),
     inspected: ox("inspected", "검수"),
     paid: ox("paid", "수납"),
     secured: amountGroup("secured", SECURED_ITEMS),
-    customerBenefitTotal: amount(raw.customerBenefitTotal, "고객혜택 총액"),
+    customerBenefit: amount(raw.customerBenefit, "고객혜택"),
     used: amountGroup("used", USED_ITEMS),
-    usedPhoneSale: amount(raw.usedPhoneSale, "중고판매 판매금액"),
-    usedPhoneUsed: amount(raw.usedPhoneUsed, "중고판매 사용금액"),
-    secondPerformance: ox("secondPerformance", "2ND 실적"),
-    jecaPerformance: ox("jecaPerformance", "제카 실적"),
-    weaponType: text("weaponType", "판매무기 종류", 50),
-    weaponRegistered: ox("weaponRegistered", "판매무기 등록"),
-    jecaBudget: amount(raw.jecaBudget, "제카 확보예산"),
-    pilS: ox("pilS", "필S"),
-    pilL: ox("pilL", "필L"),
+    usedPhoneSale: amount(raw.usedPhoneSale, "중고판매 판매"),
+    usedPhoneUsed: amount(raw.usedPhoneUsed, "중고판매 사용"),
+    secondPerformance: ox("secondPerformance", "2ND"),
+    jeca: ox("jeca", "제카"),
+    cardType: text("cardType", "카드 종류", 30),
+    jecaBudget: amount(raw.jecaBudget, "제카확보예산"),
+    addon: (raw.addon === undefined
+      ? "X"
+      : choice("addon", "부가", ADDON_OPTIONS) ||
+        "X") as SaleFormValues["addon"],
+    insurance: ox("insurance", "보험"),
     dongpan: (raw.dongpan === undefined
       ? "X"
       : choice("dongpan", "동판", DONGPAN_OPTIONS) ||
         "X") as SaleFormValues["dongpan"],
-    wiredAvailableDate: date("wiredAvailableDate", "유선 가능일", true),
+    wiredAvailableDate: date("wiredAvailableDate", "가능일", true),
   };
 
   // 필수 항목·CTN 형식은 화면과 같은 규칙으로 다시 확인한다

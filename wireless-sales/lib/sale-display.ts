@@ -1,7 +1,6 @@
 import { formatCtn, formatDate, formatNumber } from "@/lib/format";
-import type { SheetSale } from "@/lib/sheet-record";
 
-/* 장표 판매내역을 화면에 보여줄 때 함께 쓰는 표시 규칙 (대시보드·판매 현황 공용) */
+/* 장표 판매내역을 화면에 보여줄 때 함께 쓰는 표시 규칙 (검수관리·카드실적·상세 공용) */
 
 /** 금액이 비어 있으면 "-" */
 export function amountText(value: number | null): string {
@@ -20,23 +19,4 @@ export function maskedCtn(ctn: string): string {
   return parts.length === 3
     ? `${parts[0]}-${"*".repeat(parts[1].length)}-${parts[2]}`
     : formatted;
-}
-
-/** 개통구분 배지 색 (장표의 "기변/번이/신규", 웹앱의 "기기변경/번호이동/신규" 모두) */
-export function categoryStyle(category: string): string {
-  if (category.startsWith("신규"))
-    return "bg-sky-50 text-sky-700 ring-sky-600/20";
-  if (category.startsWith("번"))
-    return "bg-rose-50 text-rose-700 ring-rose-600/20";
-  if (category.startsWith("기"))
-    return "bg-amber-50 text-amber-700 ring-amber-600/20";
-  return "bg-zinc-100 text-ink-sub ring-zinc-400/20";
-}
-
-/** 금액 합계 (빈 칸은 0으로) */
-export function sumAmount(
-  sales: readonly SheetSale[],
-  pick: (sale: SheetSale) => number | null,
-): number {
-  return sales.reduce((total, sale) => total + (pick(sale) ?? 0), 0);
 }

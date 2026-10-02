@@ -1,13 +1,17 @@
 import type { Metadata } from "next";
-import { PlaceholderPage } from "@/components/placeholder-page";
+import { BudgetView } from "@/components/budget-view";
+import { PageHeader } from "@/components/page-header";
 
-export const metadata: Metadata = { title: "예산 관리" };
+export const metadata: Metadata = { title: "예산관리" };
 
 export default function BudgetPage() {
   return (
-    <PlaceholderPage
-      title="예산 관리"
-      description="확보금액과 사용금액을 관리합니다."
-    />
+    <>
+      <PageHeader
+        title="예산관리"
+        description="선택한 월 시트의 고객혜택·스팟·현금 예산과 무선 목표를 봅니다."
+      />
+      <BudgetView />
+    </>
   );
 }

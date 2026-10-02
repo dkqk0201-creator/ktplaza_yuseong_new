@@ -2,14 +2,109 @@
 
 import { useEffect, useState } from "react";
 import { useSalesData } from "@/components/sales-data-provider";
+import { todayInKorea } from "@/lib/format";
 
-/* 판매 데이터 상태 표시: 처음 불러오는 중 / 불러오기 실패 / 조회 시각·새로고침 */
+/* 판매 데이터 상태 표시: 월 선택 / 처음 불러오는 중 / 불러오기 실패 / 조회 시각·새로고침 */
 
 function agoText(fetchedAt: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - fetchedAt) / 1000));
   if (seconds < 10) return "방금 조회";
   if (seconds < 60) return `${seconds}초 전 조회`;
   return `${Math.floor(seconds / 60)}분 전 조회`;
+}
+
+/** "10월" → 연도를 붙인 "2026-10" (이번 달보다 뒤의 월은 작년으로 본다) */
+export function sheetToYearMonth(sheet: string): string {
+  const today = todayInKorea();
+  const year = Number(today.slice(0, 4));
+  const thisMonth = Number(today.slice(5, 7));
+  const month = Number(sheet.replace("월", ""));
+  const y = month > thisMonth ? year - 1 : year;
+  return `${y}-${String(month).padStart(2, "0")}`;
+}
+
+export function sheetLabel(sheet: string): string {
+  const [y, m] = sheetToYearMonth(sheet).split("-");
+  return `${y}년 ${Number(m)}월`;
+}
+
+/** 월 선택 + 조회 시각 + 새로고침 */
+export function SalesDataBar() {
+  const {
+    data,
+    fetchedAt,
+    loading,
+    error,
+    refresh,
+    sheets,
+    selectedSheet,
+    selectSheet,
+  } = useSalesData();
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const options = [
+    ...new Set([...sheets, ...(selectedSheet ? [selectedSheet] : [])]),
+  ].sort((a, b) => sheetToYearMonth(a).localeCompare(sheetToYearMonth(b)));
+
+  return (
+    <div className="mb-4 space-y-2">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
+        {options.length > 0 ? (
+          <label className="flex items-center gap-1.5">
+            <span className="sr-only">월 선택</span>
+            <select
+              value={selectedSheet ?? ""}
+              onChange={(e) => selectSheet(e.target.value)}
+              aria-label="월 선택"
+              className="h-9 rounded-lg border border-line bg-white px-2.5 text-sm font-semibold text-ink"
+            >
+              {selectedSheet === null && <option value="">이번 달</option>}
+              {options.map((sheet) => (
+                <option key={sheet} value={sheet}>
+                  {sheetLabel(sheet)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          data && (
+            <span className="text-sm font-semibold text-ink">
+              {sheetLabel(data.sheet)}
+            </span>
+          )
+        )}
+        <span>
+          {loading
+            ? "최신 데이터 확인 중..."
+            : fetchedAt
+              ? agoText(fetchedAt, now)
+              : ""}
+        </span>
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          disabled={loading}
+          className="h-9 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink-sub hover:bg-zinc-50 disabled:opacity-60"
+        >
+          새로고침
+        </button>
+      </div>
+      {error && data && (
+        <p
+          role="alert"
+          className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700"
+        >
+          ⚠ 최신 데이터를 불러오지 못해 이전에 조회한 내용을 보여주고 있습니다.
+          ({error})
+        </p>
+      )}
+    </div>
+  );
 }
 
 /** 데이터가 아직 없을 때의 로딩 화면 */
@@ -50,47 +145,28 @@ export function SalesDataError({ message }: { message: string }) {
   );
 }
 
-/** 데이터가 있을 때 위쪽에 표시: "10월 시트 · 12초 전 조회 · 새로고침" */
-export function SalesDataBar() {
-  const { data, fetchedAt, loading, error, refresh } = useSalesData();
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  if (!data) return null;
+/**
+ * 공통 화면 틀: 월 선택 바 + (데이터가 없으면) 로딩/오류.
+ * children 은 데이터가 있을 때만 그린다.
+ */
+export function SalesDataGate({
+  children,
+}: {
+  children: (
+    data: NonNullable<ReturnType<typeof useSalesData>["data"]>,
+  ) => React.ReactNode;
+}) {
+  const { data, error, loading } = useSalesData();
   return (
-    <div className="mb-4 space-y-2">
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-ink-muted">
-        <span className="font-semibold text-ink-sub">{data.sheet} 시트</span>
-        <span aria-hidden>·</span>
-        <span>
-          {loading
-            ? "최신 데이터 확인 중..."
-            : fetchedAt
-              ? agoText(fetchedAt, now)
-              : ""}
-        </span>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          disabled={loading}
-          className="ml-1 rounded-md border border-line bg-white px-2 py-0.5 font-semibold text-ink-sub hover:bg-zinc-50 disabled:opacity-60"
-        >
-          새로고침
-        </button>
-      </div>
-      {error && (
-        <p
-          role="alert"
-          className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-medium text-rose-700"
-        >
-          ⚠ 최신 데이터를 불러오지 못해 이전에 조회한 내용을 보여주고 있습니다.
-          ({error})
-        </p>
+    <>
+      <SalesDataBar />
+      {data ? (
+        children(data)
+      ) : error && !loading ? (
+        <SalesDataError message={error} />
+      ) : (
+        <SalesDataLoading />
       )}
-    </div>
+    </>
   );
 }

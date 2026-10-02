@@ -4,154 +4,58 @@ import {
   toAmount,
   type SaleFormValues,
 } from "@/lib/sale-form";
+import type { SheetRowValues } from "@/lib/sheet-columns";
 
 /*
- * 판매 등록 입력값 → Google 스프레드시트 무선장표 한 행 변환.
- * 어느 월 시트에 저장할지는 Apps Script가 정하므로 여기서는 열 값만 만든다.
+ * 판매등록 입력값 → 무선장표 한 행 (A~AL).
+ * 열 위치는 lib/sheet-columns.ts 한 곳에서만 정한다. 여기서는 "어느 항목에 어떤 값"만 정한다.
+ * 어느 월 시트·행에 저장할지는 Apps Script가 정한다. B열(No.)은 보내지 않는다.
  */
-
-/** 웹앱이 값을 채우는 열. B열(No.)은 시트의 기존 순번 구조를 사용하므로 제외한다. */
-export const SHEET_COLUMNS = [
-  { column: "A", header: "고객약속" },
-  { column: "C", header: "개통일" },
-  { column: "D", header: "고객" },
-  { column: "E", header: "CTN" },
-  { column: "F", header: "검수" },
-  { column: "G", header: "수납" },
-  { column: "H", header: "기변/번이/신규" },
-  { column: "I", header: "모델명" },
-  { column: "J", header: "요금제" },
-  { column: "K", header: "요금제 유지/변경" },
-  { column: "L", header: "직원명" },
-  { column: "M", header: "총 확보금액" },
-  { column: "N", header: "SPOT정책" },
-  { column: "O", header: "디초/삼초" },
-  { column: "P", header: "애플매니아" },
-  { column: "Q", header: "2ND" },
-  { column: "R", header: "모델인센" },
-  { column: "S", header: "고객혜택" },
-  { column: "T", header: "총 사용금액" },
-  { column: "U", header: "모델/요금" },
-  { column: "V", header: "디초/삼초" },
-  { column: "W", header: "2ND" },
-  { column: "X", header: "민원건" },
-  { column: "Y", header: "중고판매 판매금액" },
-  { column: "Z", header: "중고판매 사용금액" },
-  { column: "AA", header: "중고판매 잔여금액" },
-  { column: "AB", header: "합계" },
-  { column: "AC", header: "2ND 실적 여부" },
-  { column: "AD", header: "제카 실적 여부" },
-  { column: "AE", header: "판매무기 종류" },
-  { column: "AF", header: "판매무기 등록 여부" },
-  { column: "AG", header: "제카확보예산" },
-  { column: "AH", header: "필S" },
-  { column: "AI", header: "필L" },
-  { column: "AJ", header: "동판" },
-  { column: "AK", header: "유선 가능일" },
-] as const;
-
-export type SheetColumn = (typeof SHEET_COLUMNS)[number]["column"];
-export type SheetRow = Record<SheetColumn, string | number>;
-
-export function buildSheetRow(values: SaleFormValues): SheetRow {
+export function buildSheetRow(values: SaleFormValues): SheetRowValues {
   const totals = calculateTotals(values);
+  const noJeca = values.jeca === "X";
+  const noDongpan = values.dongpan === "X";
 
-  return {
-    A: values.customerPromise.trim(),
-    C: values.activatedAt,
-    D: values.customer.trim(),
-    E: formatCtn(values.ctn),
-    F: values.inspected,
-    G: values.paid,
-    H: values.category,
-    I: values.model.trim(),
-    J: values.plan.trim(),
-    K: values.planChange,
-    L: values.staff,
-    M: totals.securedTotal,
-    N: toAmount(values.secured.spot),
-    O: toAmount(values.secured.dicho),
-    P: toAmount(values.secured.appleMania),
-    Q: toAmount(values.secured.second),
-    R: toAmount(values.secured.modelIncentive),
-    S: toAmount(values.customerBenefitTotal),
-    T: totals.usedTotal,
-    U: toAmount(values.used.modelPlan),
-    V: toAmount(values.used.dicho),
-    W: toAmount(values.used.second),
-    X: toAmount(values.used.complaint),
-    Y: toAmount(values.usedPhoneSale),
-    Z: toAmount(values.usedPhoneUsed),
-    AA: totals.usedPhoneRemaining,
-    AB: totals.finalTotal,
-    AC: values.secondPerformance,
-    AD: values.jecaPerformance,
-    AE: values.weaponType.trim(),
-    AF: values.weaponRegistered,
-    AG: toAmount(values.jecaBudget),
-    AH: values.pilS,
-    AI: values.pilL,
-    AJ: values.dongpan,
-    AK: values.wiredAvailableDate,
+  const row: SheetRowValues = {
+    customerPromise: values.customerPromise.trim(),
+    activatedAt: values.activatedAt,
+    customer: values.customer.trim(),
+    ctn: formatCtn(values.ctn),
+    excludeIndicator: values.excludeIndicator,
+    inspected: values.inspected,
+    paid: values.paid,
+    category: values.category,
+    model: values.model.trim(),
+    plan: values.plan.trim(),
+    planChange: values.planChange,
+    staff: values.staff,
+    securedTotal: totals.securedTotal,
+    spot: toAmount(values.secured.spot),
+    securedDicho: toAmount(values.secured.dicho),
+    appleMania: toAmount(values.secured.appleMania),
+    securedSecond: toAmount(values.secured.second),
+    modelPolicy: toAmount(values.secured.modelPolicy),
+    customerBenefit: toAmount(values.customerBenefit),
+    usedTotal: totals.usedTotal,
+    usedModelPlan: toAmount(values.used.modelPlan),
+    usedExtraSupport: toAmount(values.used.extraSupport),
+    usedDicho: toAmount(values.used.dicho),
+    usedSecond: toAmount(values.used.second),
+    usedPhoneSale: toAmount(values.usedPhoneSale),
+    usedPhoneUsed: toAmount(values.usedPhoneUsed),
+    usedPhoneRemaining: totals.usedPhoneRemaining,
+    finalTotal: totals.finalTotal,
+    secondPerformance: values.secondPerformance,
+    // 제카 규칙: X 이면 제카·종류·카드실적 검수 모두 X / O 이면 종류만, 검수 칸은 점장이 장표에서 입력
+    jeca: values.jeca,
+    cardType: noJeca ? "X" : values.cardType.trim(),
+    jecaBudget: toAmount(values.jecaBudget),
+    addon: values.addon,
+    insurance: values.insurance,
+    dongpan: values.dongpan,
+    // 동판이 X 이면 가능일도 X
+    wiredAvailableDate: noDongpan ? "X" : values.wiredAvailableDate,
   };
-}
-
-/** 장표의 A~AK 전체 열 (37개). Apps Script에는 이 순서의 배열로 보낸다. */
-export const ALL_SHEET_COLUMNS = [
-  "A",
-  "B",
-  "C",
-  "D",
-  "E",
-  "F",
-  "G",
-  "H",
-  "I",
-  "J",
-  "K",
-  "L",
-  "M",
-  "N",
-  "O",
-  "P",
-  "Q",
-  "R",
-  "S",
-  "T",
-  "U",
-  "V",
-  "W",
-  "X",
-  "Y",
-  "Z",
-  "AA",
-  "AB",
-  "AC",
-  "AD",
-  "AE",
-  "AF",
-  "AG",
-  "AH",
-  "AI",
-  "AJ",
-  "AK",
-] as const;
-
-export type SheetRowArray = (string | number)[];
-
-/**
- * 글자가 =, +, -, @ 로 시작하면 시트가 계산식으로 해석할 수 있으므로
- * 앞에 ' 를 붙여 일반 글자로 저장되게 한다 (시트 화면에는 ' 가 보이지 않음).
- */
-export function escapeSheetText(value: string): string {
-  return /^[=+\-@]/.test(value) ? `'${value}` : value;
-}
-
-/** A~AK 37칸 배열로 변환. B열(No.)은 Apps Script가 쓰지 않으므로 빈 값으로 둔다. */
-export function toSheetRowArray(row: SheetRow): SheetRowArray {
-  return ALL_SHEET_COLUMNS.map((column) => {
-    if (column === "B") return "";
-    const value = row[column];
-    return typeof value === "string" ? escapeSheetText(value) : value;
-  });
+  if (noJeca) row.cardChecked = "X";
+  return row;
 }

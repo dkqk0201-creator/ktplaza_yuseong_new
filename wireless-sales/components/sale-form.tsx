@@ -13,6 +13,7 @@ import {
 } from "@/components/form-controls";
 import { formatCtnInput, formatNumber } from "@/lib/format";
 import {
+  ADDON_OPTIONS,
   DONGPAN_OPTIONS,
   OX_OPTIONS,
   PLAN_CHANGES,
@@ -105,7 +106,7 @@ export function SaleForm({
     if (response.ok) {
       setSaved({ sheet: response.sheet, no: response.no });
       setLastSavedKey(key);
-      // 대시보드·판매 현황이 최신 장표를 보도록 공유 데이터를 무효화하고 다시 읽는다
+      // 검수관리·카드실적·예산관리가 최신 장표를 보도록 공유 데이터를 무효화하고 다시 읽는다
       void invalidate();
     } else {
       // 실패해도 입력값은 그대로 둔다
@@ -182,6 +183,25 @@ export function SaleForm({
                 onChange={(e) =>
                   update("ctn", e.target.value.replace(/\D/g, "").slice(0, 11))
                 }
+              />
+            </Field>
+
+            <Field
+              label="실력지표제외"
+              htmlFor={fieldId("excludeIndicator")}
+              group
+              required
+              error={errors.excludeIndicator}
+            >
+              <ChoiceGroup
+                id={fieldId("excludeIndicator")}
+                label="실력지표제외"
+                options={OX_OPTIONS}
+                columns={2}
+                variant="ox"
+                value={values.excludeIndicator}
+                invalid={!!errors.excludeIndicator}
+                onChange={(v) => update("excludeIndicator", v)}
               />
             </Field>
 
@@ -271,7 +291,7 @@ export function SaleForm({
             </Field>
 
             <Field
-              label="추후 고객약속"
+              label="고객약속사항"
               htmlFor="sale-customerPromise"
               className="sm:col-span-2"
             >
@@ -288,10 +308,10 @@ export function SaleForm({
           </div>
         </FormSection>
 
-        {/* 2. 업무 처리 확인 */}
+        {/* 2. 정리 (검수·수납) */}
         <FormSection
           step={2}
-          title="업무 처리 확인"
+          title="정리 (검수/수납)"
           description="눌러서 완료 여부를 바꿉니다"
         >
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
@@ -323,19 +343,19 @@ export function SaleForm({
           <TotalRow label="총 확보금액" value={totals.securedTotal} />
         </FormSection>
 
-        {/* 4. 고객혜택 / 사용금액 */}
-        <FormSection step={4} title="고객혜택 / 사용금액">
+        {/* 4. 고객혜택 / 고객혜택사용 */}
+        <FormSection step={4} title="고객혜택 / 고객혜택사용">
           <AmountRow
-            id="sale-customerBenefitTotal"
-            label="고객혜택 총액"
-            value={values.customerBenefitTotal}
-            onChange={(v) => update("customerBenefitTotal", v)}
+            id="sale-customerBenefit"
+            label="고객혜택"
+            value={values.customerBenefit}
+            onChange={(v) => update("customerBenefit", v)}
           />
           <p className="mt-1.5 text-xs text-ink-muted">
-            고객에게 제공하기로 한 혜택 총액 (총 사용금액에는 포함되지 않음)
+            총 확보금액·총 사용금액에는 포함되지 않음
           </p>
           <p className="mt-4 mb-3 border-t border-line pt-4 text-xs font-semibold text-ink-sub">
-            혜택 사용내역
+            고객혜택사용
           </p>
           <AmountList
             prefix="used"
@@ -379,10 +399,10 @@ export function SaleForm({
           className="lg:col-span-2 xl:col-span-3"
         >
           <div className="grid grid-cols-2 gap-x-5 gap-y-6 xl:grid-cols-4">
-            <Field label="2ND 실적" htmlFor="sale-secondPerformance" group>
+            <Field label="2ND" htmlFor="sale-secondPerformance" group>
               <ChoiceGroup
                 id="sale-secondPerformance"
-                label="2ND 실적"
+                label="2ND"
                 options={OX_OPTIONS}
                 columns={2}
                 variant="ox"
@@ -391,20 +411,8 @@ export function SaleForm({
               />
             </Field>
 
-            <Field label="제카 실적" htmlFor="sale-jecaPerformance" group>
-              <ChoiceGroup
-                id="sale-jecaPerformance"
-                label="제카 실적"
-                options={OX_OPTIONS}
-                columns={2}
-                variant="ox"
-                value={values.jecaPerformance}
-                onChange={(v) => update("jecaPerformance", v)}
-              />
-            </Field>
-
             <Field
-              label="제카 확보예산"
+              label="제카확보예산"
               htmlFor="sale-jecaBudget"
               className="col-span-2 sm:col-span-1"
             >
@@ -418,59 +426,71 @@ export function SaleForm({
               </p>
             </Field>
 
-            <Field
-              label="판매무기"
-              htmlFor="sale-weaponType"
-              className="col-span-2 sm:col-span-1"
-            >
-              <div className="space-y-2">
-                <TextInput
-                  id="sale-weaponType"
-                  placeholder="종류 (예: 롯데, 신한, 국민)"
-                  autoComplete="off"
-                  value={values.weaponType}
-                  onChange={(e) => update("weaponType", e.target.value)}
-                />
-                <div className="flex items-center gap-3">
-                  <span className="shrink-0 text-sm font-medium text-ink-sub">
-                    등록
-                  </span>
-                  <div className="flex-1">
-                    <ChoiceGroup
-                      id="sale-weaponRegistered"
-                      label="판매무기 등록"
-                      options={OX_OPTIONS}
-                      columns={2}
-                      variant="ox"
-                      value={values.weaponRegistered}
-                      onChange={(v) => update("weaponRegistered", v)}
-                    />
-                  </div>
-                </div>
-              </div>
-            </Field>
-
-            <Field label="필S" htmlFor="sale-pilS" group>
+            <Field label="제카" htmlFor="sale-jeca" group>
               <ChoiceGroup
-                id="sale-pilS"
-                label="필S"
+                id="sale-jeca"
+                label="제카"
                 options={OX_OPTIONS}
                 columns={2}
                 variant="ox"
-                value={values.pilS}
-                onChange={(v) => update("pilS", v)}
+                value={values.jeca}
+                onChange={(v) => {
+                  setValues((prev) => ({
+                    ...prev,
+                    jeca: v,
+                    cardType: v === "X" ? "" : prev.cardType,
+                  }));
+                }}
               />
             </Field>
 
-            <Field label="필L" htmlFor="sale-pilL" group>
+            <Field
+              label="카드 종류"
+              htmlFor={fieldId("cardType")}
+              required={values.jeca === "O"}
+              error={errors.cardType}
+            >
+              <TextInput
+                id={fieldId("cardType")}
+                placeholder={
+                  values.jeca === "O"
+                    ? "예: 우리, 신한, 롯데"
+                    : "제카 X → 자동으로 X"
+                }
+                autoComplete="off"
+                disabled={values.jeca !== "O"}
+                value={values.jeca === "O" ? values.cardType : ""}
+                invalid={!!errors.cardType}
+                onChange={(e) => update("cardType", e.target.value)}
+              />
+              <p className="mt-1.5 text-xs text-ink-muted">
+                {values.jeca === "O"
+                  ? "카드실적 검수(AG)는 점장이 장표에서 O 입력"
+                  : "제카 X → 카드 종류·카드실적 검수 모두 X"}
+              </p>
+            </Field>
+
+            <Field label="부가 (필L/필S)" htmlFor="sale-addon" group>
               <ChoiceGroup
-                id="sale-pilL"
-                label="필L"
+                id="sale-addon"
+                label="부가 (필L/필S)"
+                options={ADDON_OPTIONS}
+                columns={3}
+                variant="ox"
+                value={values.addon}
+                onChange={(v) => update("addon", v)}
+              />
+            </Field>
+
+            <Field label="보험" htmlFor="sale-insurance" group>
+              <ChoiceGroup
+                id="sale-insurance"
+                label="보험"
                 options={OX_OPTIONS}
                 columns={2}
                 variant="ox"
-                value={values.pilL}
-                onChange={(v) => update("pilL", v)}
+                value={values.insurance}
+                onChange={(v) => update("insurance", v)}
               />
             </Field>
 
@@ -487,21 +507,37 @@ export function SaleForm({
                 columns={4}
                 variant="ox"
                 value={values.dongpan}
-                onChange={(v) => update("dongpan", v)}
+                onChange={(v) => {
+                  setValues((prev) => ({
+                    ...prev,
+                    dongpan: v,
+                    wiredAvailableDate:
+                      v === "X" ? "" : prev.wiredAvailableDate,
+                  }));
+                }}
               />
             </Field>
 
             <Field
-              label="유선 가능일"
-              htmlFor="sale-wiredAvailableDate"
+              label="가능일"
+              htmlFor={fieldId("wiredAvailableDate")}
+              required={values.dongpan !== "X"}
+              error={errors.wiredAvailableDate}
               className="col-span-2 sm:col-span-1"
             >
               <TextInput
-                id="sale-wiredAvailableDate"
+                id={fieldId("wiredAvailableDate")}
                 type="date"
-                value={values.wiredAvailableDate}
+                disabled={values.dongpan === "X"}
+                value={values.dongpan === "X" ? "" : values.wiredAvailableDate}
+                invalid={!!errors.wiredAvailableDate}
                 onChange={(e) => update("wiredAvailableDate", e.target.value)}
               />
+              {values.dongpan === "X" && (
+                <p className="mt-1.5 text-xs text-ink-muted">
+                  동판 X → 가능일 X
+                </p>
+              )}
             </Field>
           </div>
         </FormSection>

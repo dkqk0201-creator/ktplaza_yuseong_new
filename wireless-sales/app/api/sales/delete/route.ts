@@ -9,7 +9,7 @@ import {
 
 /*
  * 판매내역 삭제 API.
- * 화면 → (이 API) → Apps Script → 장표의 해당 행 A열·C~AK열 값만 비움
+ * 화면 → (이 API) → Apps Script → 장표의 해당 행 A열·C~AL열 값만 비움
  * 실제로 지울지는 Apps Script가 장표의 현재 값(No.·개통일·고객·CTN)을 다시 확인해 결정한다.
  */
 

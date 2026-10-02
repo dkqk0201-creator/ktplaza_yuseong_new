@@ -1,0 +1,653 @@
+import type { ColumnKey, SheetRowValues } from "@/lib/sheet-columns";
+import { formatCtn } from "@/lib/format";
+
+/*
+ * 간편등록: 직원 카톡 판매보고 → 분석 → 검수 → 장표 한 행.
+ * 화면(분석·검수)과 서버(저장 전 재검증)가 이 파일을 함께 쓴다.
+ * 규칙은 점장이 확정한 업무 규칙만 따른다. 애매하면 "확인 필요"로 막는다.
+ */
+
+/** 직원용 보고 양식 (띄어쓰기·줄 순서 그대로 복사된다) */
+export const STAFF_REPORT_TEMPLATE = [
+  "개통일자 : ",
+  "직원명 : ",
+  "고객명 : ",
+  "실력지표제외 :",
+  "CTN : ",
+  "개통구분 :",
+  "모델명 : ",
+  "요금제 :",
+  "ㄴ유지/변경 : ",
+  "",
+  "정책 ",
+  "ㄴ고객혜택 : ",
+  "ㄴ그외(스팟제외) :",
+  "",
+  "정책사용",
+  "ㄴ추가지원금 : ",
+  "ㄴ고혜(기존할부금) : ",
+  "ㄴ고혜(요금) : ",
+  "",
+  "2ND : ",
+  "ㄴ고객혜택 : ",
+  "ㄴ자부담 : ",
+  "사은품판매or수령 : ",
+  "",
+  "디초/삼초 : ",
+  "ㄴ고객혜택 : ",
+  "사은품판매or수령 : ",
+  "",
+  "중고폰 리본or폰삼 : ",
+  "ㄴ사용 : ",
+  "",
+  "제카 : ",
+  "보험 : ",
+  "부가 : ",
+  "동판 : ",
+  "ㄴ가능일 : ",
+  "",
+  "고객약속사항 :",
+].join("\n");
+
+/** 양식 항목. column 이 없으면 장표에 저장하지 않는 참고 항목 */
+export const QUICK_FIELDS = [
+  { id: "activatedAt", label: "개통일자", column: "activatedAt" },
+  { id: "staff", label: "직원명", column: "staff" },
+  { id: "customer", label: "고객명", column: "customer" },
+  { id: "excludeIndicator", label: "실력지표제외", column: "excludeIndicator" },
+  { id: "ctn", label: "CTN", column: "ctn" },
+  { id: "category", label: "개통구분", column: "category" },
+  { id: "model", label: "모델명", column: "model" },
+  { id: "plan", label: "요금제", column: "plan" },
+  { id: "planChange", label: "요금제 → 유지/변경", column: "planChange" },
+  { id: "policyBenefit", label: "정책 → 고객혜택", column: "customerBenefit" },
+  { id: "policyOther", label: "정책 → 그외(스팟제외)", column: "modelPolicy" },
+  { id: "useExtraSupport", label: "정책사용 → 추가지원금", column: null },
+  { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: null },
+  { id: "usePlan", label: "정책사용 → 고혜(요금)", column: null },
+  { id: "second", label: "2ND", column: null },
+  { id: "secondBenefit", label: "2ND → 고객혜택", column: "usedSecond" },
+  { id: "secondSelfPay", label: "2ND → 자부담", column: null },
+  { id: "secondGift", label: "2ND → 사은품판매or수령", column: null },
+  { id: "dicho", label: "디초/삼초", column: null },
+  { id: "dichoBenefit", label: "디초/삼초 → 고객혜택", column: "usedDicho" },
+  { id: "dichoGift", label: "디초/삼초 → 사은품판매or수령", column: null },
+  { id: "usedPhone", label: "중고폰 리본or폰삼", column: null },
+  { id: "usedPhoneUse", label: "중고폰 → 사용", column: null },
+  { id: "jeca", label: "제카", column: "jeca" },
+  { id: "insurance", label: "보험", column: "insurance" },
+  { id: "addon", label: "부가", column: "addon" },
+  { id: "dongpan", label: "동판", column: "dongpan" },
+  { id: "availableDate", label: "동판 → 가능일", column: "wiredAvailableDate" },
+  { id: "customerPromise", label: "고객약속사항", column: "customerPromise" },
+] as const satisfies readonly {
+  id: string;
+  label: string;
+  column: ColumnKey | null;
+}[];
+
+export type QuickFieldId = (typeof QUICK_FIELDS)[number]["id"];
+export type QuickFields = Record<QuickFieldId, string>;
+
+export function emptyQuickFields(): QuickFields {
+  return Object.fromEntries(QUICK_FIELDS.map((f) => [f.id, ""])) as QuickFields;
+}
+
+/* ---------- 1) 붙여넣은 글 → 판매 건별 항목 ---------- */
+
+/** 상위 항목 (양식의 "ㄴ" 없는 줄). children: "ㄴ" 하위 항목 */
+const TOP_LEVEL: {
+  key: string;
+  id: QuickFieldId | null;
+  children?: Record<string, QuickFieldId>;
+}[] = [
+  { key: "개통일자", id: "activatedAt" },
+  { key: "직원명", id: "staff" },
+  { key: "고객명", id: "customer" },
+  { key: "실력지표제외", id: "excludeIndicator" },
+  { key: "ctn", id: "ctn" },
+  { key: "개통구분", id: "category" },
+  { key: "모델명", id: "model" },
+  { key: "요금제", id: "plan", children: { "유지/변경": "planChange" } },
+  {
+    key: "정책",
+    id: null,
+    children: { 고객혜택: "policyBenefit", "그외(스팟제외)": "policyOther" },
+  },
+  {
+    key: "정책사용",
+    id: null,
+    children: {
+      추가지원금: "useExtraSupport",
+      "고혜(기존할부금)": "useInstallment",
+      "고혜(요금)": "usePlan",
+    },
+  },
+  {
+    key: "2nd",
+    id: "second",
+    children: {
+      고객혜택: "secondBenefit",
+      자부담: "secondSelfPay",
+      사은품판매or수령: "secondGift",
+    },
+  },
+  {
+    key: "디초/삼초",
+    id: "dicho",
+    children: { 고객혜택: "dichoBenefit", 사은품판매or수령: "dichoGift" },
+  },
+  {
+    key: "중고폰리본or폰삼",
+    id: "usedPhone",
+    children: { 사용: "usedPhoneUse" },
+  },
+  { key: "제카", id: "jeca" },
+  { key: "보험", id: "insurance" },
+  { key: "부가", id: "addon" },
+  { key: "동판", id: "dongpan", children: { 가능일: "availableDate" } },
+  { key: "고객약속사항", id: "customerPromise" },
+];
+
+/** "ㄴ" 없이 쓰지만 바로 위 2ND / 디초/삼초 묶음에 속하는 줄 */
+const GROUP_SIBLING_KEYS = new Set(["사은품판매or수령"]);
+
+function normalizeKey(key: string): string {
+  return key.replace(/\s+/g, "").toLowerCase();
+}
+
+/** ":" 없는 줄에서 알려진 항목명으로 시작하면 [항목, 값] (가장 긴 항목명 우선) */
+function splitKeyValue(
+  body: string,
+  keys: readonly string[],
+): [string, string] | null {
+  let best: [string, string] | null = null;
+  for (const raw of keys) {
+    const key = normalizeKey(raw);
+    const pattern = [...key]
+      .map((ch) => ch.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&"))
+      .join("\\s*");
+    const m = body.match(new RegExp(`^${pattern}(?:\\s+(.*))?$`, "i"));
+    if (m && (!best || key.length > best[0].length)) {
+      best = [key, (m[1] ?? "").trim()];
+    }
+  }
+  return best;
+}
+
+export interface QuickReport {
+  fields: QuickFields;
+  /** 양식에 없는 줄 (참고용) */
+  unknownLines: string[];
+  /** 같은 항목이 두 번 나온 경우 (나중 값은 무시하고 확인 필요) */
+  repeatedFields: QuickFieldId[];
+  /** 이 판매 건의 원문 */
+  raw: string;
+}
+
+/** 카톡 복사 시 붙는 "[이름] [오후 3:21]" 같은 앞부분 제거 */
+function stripChatPrefix(line: string): string {
+  return line.replace(/^\s*\[[^\]]*\]\s*\[[^\]]*\]\s*/, "");
+}
+
+/** 여러 판매 건이 붙은 글을 "개통일자 :" 줄마다 나눠 분석한다 */
+export function parseQuickReports(text: string): QuickReport[] {
+  const reports: QuickReport[] = [];
+  let current: QuickReport | null = null;
+  let parent: (typeof TOP_LEVEL)[number] | null = null;
+  let lastField: QuickFieldId | null = null;
+  let rawLines: string[] = [];
+
+  const finish = () => {
+    if (current) {
+      current.raw = rawLines.join("\n").trim();
+      reports.push(current);
+    }
+  };
+
+  const set = (report: QuickReport, id: QuickFieldId, value: string) => {
+    if (report.fields[id] !== "" || report.repeatedFields.includes(id)) {
+      // 이미 값이 있는 항목이 또 나오면 덮어쓰지 않고 확인 필요로 표시
+      if (value !== "" && !report.repeatedFields.includes(id)) {
+        report.repeatedFields.push(id);
+      }
+      return;
+    }
+    report.fields[id] = value;
+  };
+
+  for (const original of text.replace(/\r\n?/g, "\n").split("\n")) {
+    const line = stripChatPrefix(original).replace(/：/g, ":");
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (current) rawLines.push("");
+      continue;
+    }
+
+    const isChild = /^(ㄴ|└)/.test(trimmed);
+    const body = isChild ? trimmed.replace(/^(ㄴ|└)\s*/, "") : trimmed;
+    const colon = body.indexOf(":");
+    let key = normalizeKey(colon >= 0 ? body.slice(0, colon) : body);
+    let value = colon >= 0 ? body.slice(colon + 1).trim() : "";
+    if (colon < 0) {
+      // ":" 없이 "ㄴ고객혜택 30만" 처럼 쓴 줄도 항목명 + 값으로 나눈다
+      const candidates = isChild
+        ? Object.keys(parent?.children ?? {})
+        : [
+            ...TOP_LEVEL.map((t) => t.key),
+            ...[...GROUP_SIBLING_KEYS].filter((k) => parent?.children?.[k]),
+          ];
+      const split = splitKeyValue(body, candidates);
+      // 고객약속사항 다음 줄들은 내용이 이어지는 것으로 본다 (새 판매 건 시작만 예외)
+      if (
+        split &&
+        (lastField !== "customerPromise" || split[0] === "개통일자")
+      ) {
+        [key, value] = split;
+      }
+    }
+
+    // "개통일자" 줄이 나오면 새 판매 건 시작
+    if (!isChild && key === "개통일자") {
+      finish();
+      current = {
+        fields: emptyQuickFields(),
+        unknownLines: [],
+        repeatedFields: [],
+        raw: "",
+      };
+      rawLines = [];
+    }
+    if (!current) continue; // 첫 판매 건 앞의 글(인사말 등)은 무시
+    rawLines.push(original);
+
+    if (isChild || (GROUP_SIBLING_KEYS.has(key) && parent?.children?.[key])) {
+      const childId = parent?.children?.[key];
+      if (childId) {
+        set(current, childId, value);
+        lastField = childId;
+      } else {
+        current.unknownLines.push(trimmed);
+        lastField = null;
+      }
+      continue;
+    }
+
+    const top = TOP_LEVEL.find((t) => normalizeKey(t.key) === key);
+    if (top) {
+      parent = top;
+      if (top.id) set(current, top.id, value);
+      lastField = top.id;
+      continue;
+    }
+
+    // 고객약속사항이 여러 줄이면 이어 붙인다
+    if (lastField === "customerPromise" && colon < 0) {
+      current.fields.customerPromise = current.fields.customerPromise
+        ? `${current.fields.customerPromise}\n${trimmed}`
+        : trimmed;
+      continue;
+    }
+    current.unknownLines.push(trimmed);
+  }
+  finish();
+  return reports;
+}
+
+/* ---------- 2) 값 변환·검증 ---------- */
+
+export interface QuickIssue {
+  field: QuickFieldId;
+  message: string;
+}
+
+export interface QuickNormalized {
+  /** 장표에 저장할 값 (없는 키는 장표 칸을 건드리지 않음) */
+  row: SheetRowValues;
+  /** 등록을 막는 문제 */
+  issues: QuickIssue[];
+  /** 항목별로 변환된 값 (화면 표시용) */
+  display: Partial<Record<QuickFieldId, string>>;
+  /** 중복 확인용 "개통일|CTN숫자" (개통일·CTN 이 정상일 때만) */
+  duplicateKey: string | null;
+}
+
+export interface QuickContext {
+  /** 오늘 날짜 (한국 시간, YYYY-MM-DD) — 연도와 저장 대상 월 판단에 사용 */
+  today: string;
+  staffNames: readonly string[];
+}
+
+/** 금액: "30만" → 300000, "15000원" → 15000, "300,000원" → 300000. 애매하면 error */
+export function parseAmount(
+  raw: string,
+): { value: number | null } | { error: string } {
+  const s = raw.replace(/\s+/g, "").replace(/,/g, "");
+  if (s === "") return { value: null };
+  if (/^(x|-|없음)$/i.test(s)) return { value: null };
+  const man = s.match(/^(\d+(?:\.\d+)?)만(원)?$/);
+  if (man) {
+    const value = Math.round(Number(man[1]) * 10000);
+    if (Math.abs(value - Number(man[1]) * 10000) > 1e-6) {
+      return { error: `금액 "${raw}" 를 확인해 주세요.` };
+    }
+    return { value };
+  }
+  const won = s.match(/^(\d+)(원)?$/);
+  if (won) {
+    const value = Number(won[1]);
+    // "30" 처럼 단위 없이 작은 숫자는 30원인지 30만원인지 알 수 없다
+    if (!won[2] && value > 0 && value < 1000) {
+      return {
+        error: `금액 "${raw}" 가 원 단위인지 만원 단위인지 확인해 주세요.`,
+      };
+    }
+    return { value };
+  }
+  return { error: `금액 "${raw}" 를 읽을 수 없습니다.` };
+}
+
+function validDate(y: number, m: number, d: number): string | null {
+  const date = new Date(Date.UTC(y, m - 1, d));
+  if (
+    date.getUTCFullYear() !== y ||
+    date.getUTCMonth() !== m - 1 ||
+    date.getUTCDate() !== d
+  ) {
+    return null;
+  }
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+/** 개통일자 "10.03" (MM.DD) → 올해 날짜 */
+export function parseActivatedAt(raw: string, today: string): string | null {
+  const s = raw.replace(/\s+/g, "");
+  const md = s.match(/^(\d{1,2})[./-](\d{1,2})\.?$/);
+  if (md)
+    return validDate(Number(today.slice(0, 4)), Number(md[1]), Number(md[2]));
+  return null;
+}
+
+/** 동판 가능일 "27.10.15" (YY.MM.DD) → 2027-10-15 */
+export function parseAvailableDate(raw: string): string | null {
+  const s = raw.replace(/\s+/g, "");
+  const ymd = s.match(/^(\d{2}|\d{4})[./-](\d{1,2})[./-](\d{1,2})\.?$/);
+  if (!ymd) return null;
+  const year = ymd[1].length === 2 ? 2000 + Number(ymd[1]) : Number(ymd[1]);
+  return validDate(year, Number(ymd[2]), Number(ymd[3]));
+}
+
+const CATEGORY_MAP: Record<string, string> = {
+  기변: "기기변경",
+  기기변경: "기기변경",
+  번이: "번호이동",
+  번호이동: "번호이동",
+  신규: "신규",
+};
+
+function ox(raw: string): "O" | "X" | null {
+  const s = raw.trim().toUpperCase();
+  return s === "O" || s === "X" ? s : null;
+}
+
+export function normalizeQuick(
+  fields: QuickFields,
+  ctx: QuickContext,
+): QuickNormalized {
+  const issues: QuickIssue[] = [];
+  const display: Partial<Record<QuickFieldId, string>> = {};
+  const row: SheetRowValues = {};
+  const v = (id: QuickFieldId) => fields[id].trim();
+  const need = (id: QuickFieldId, label: string) => {
+    if (!v(id))
+      issues.push({ field: id, message: `${label}이(가) 비어 있습니다.` });
+    return !!v(id);
+  };
+
+  // 개통일자 (MM.DD, 올해) — 저장 대상 월(이번 달)과 다르면 등록하지 않는다
+  let activatedAt: string | null = null;
+  if (need("activatedAt", "개통일자")) {
+    activatedAt = parseActivatedAt(v("activatedAt"), ctx.today);
+    if (!activatedAt) {
+      issues.push({
+        field: "activatedAt",
+        message: `개통일자 "${v("activatedAt")}" 를 확인해 주세요. (예: 10.03)`,
+      });
+    } else {
+      display.activatedAt = activatedAt;
+      if (activatedAt.slice(0, 7) !== ctx.today.slice(0, 7)) {
+        issues.push({
+          field: "activatedAt",
+          message: `개통월 확인 필요: ${Number(activatedAt.slice(5, 7))}월 개통은 이번 달(${Number(ctx.today.slice(5, 7))}월) 시트에 등록할 수 없습니다.`,
+        });
+      } else {
+        row.activatedAt = activatedAt;
+      }
+    }
+  }
+
+  if (need("staff", "직원명")) {
+    if (ctx.staffNames.includes(v("staff"))) {
+      row.staff = v("staff");
+      display.staff = v("staff");
+    } else {
+      issues.push({
+        field: "staff",
+        message: `등록되지 않은 직원명입니다: ${v("staff")}`,
+      });
+    }
+  }
+
+  if (need("customer", "고객명")) {
+    if (v("customer").length > 50) {
+      issues.push({ field: "customer", message: "고객명이 너무 깁니다." });
+    } else {
+      row.customer = v("customer");
+      display.customer = v("customer");
+    }
+  }
+
+  // 실력지표제외: O/X. 비어 있으면 임의로 정하지 않는다
+  if (!v("excludeIndicator")) {
+    issues.push({
+      field: "excludeIndicator",
+      message: "실력지표제외(O/X)가 비어 있습니다. 확인 필요",
+    });
+  } else {
+    const value = ox(v("excludeIndicator"));
+    if (value) {
+      row.excludeIndicator = value;
+      display.excludeIndicator = value;
+    } else {
+      issues.push({
+        field: "excludeIndicator",
+        message: "실력지표제외는 O 또는 X 만 가능합니다.",
+      });
+    }
+  }
+
+  let ctnDigits: string | null = null;
+  if (need("ctn", "CTN")) {
+    const digits = v("ctn").replace(/[\s-]/g, "");
+    if (/^01[016789]\d{7,8}$/.test(digits)) {
+      ctnDigits = digits;
+      row.ctn = formatCtn(digits);
+      display.ctn = formatCtn(digits);
+    } else {
+      issues.push({
+        field: "ctn",
+        message: `CTN "${v("ctn")}" 형식을 확인해 주세요.`,
+      });
+    }
+  }
+
+  if (need("category", "개통구분")) {
+    const value = CATEGORY_MAP[v("category").replace(/\s+/g, "")];
+    if (value) {
+      row.category = value;
+      display.category = value;
+    } else {
+      issues.push({
+        field: "category",
+        message: "개통구분은 기변 / 번이 / 신규 중 하나여야 합니다.",
+      });
+    }
+  }
+
+  for (const [id, label, key] of [
+    ["model", "모델명", "model"],
+    ["plan", "요금제", "plan"],
+  ] as const) {
+    if (need(id, label)) {
+      if (v(id).length > 100) {
+        issues.push({ field: id, message: `${label}이 너무 깁니다.` });
+      } else {
+        row[key] = v(id);
+        display[id] = v(id);
+      }
+    }
+  }
+
+  if (need("planChange", "유지/변경")) {
+    if (v("planChange") === "유지" || v("planChange") === "변경") {
+      row.planChange = v("planChange");
+      display.planChange = v("planChange");
+    } else {
+      issues.push({
+        field: "planChange",
+        message: "유지/변경은 '유지' 또는 '변경' 이어야 합니다.",
+      });
+    }
+  }
+
+  // 장표에 저장하는 금액 4가지 (비어 있으면 장표 칸을 건드리지 않음)
+  for (const id of [
+    "policyBenefit",
+    "policyOther",
+    "dichoBenefit",
+    "secondBenefit",
+  ] as const) {
+    const parsed = parseAmount(fields[id]);
+    const column = QUICK_FIELDS.find((f) => f.id === id)!.column as ColumnKey;
+    if ("error" in parsed) {
+      issues.push({ field: id, message: parsed.error });
+    } else if (parsed.value !== null) {
+      row[column] = parsed.value;
+      display[id] = `${parsed.value.toLocaleString("ko-KR")}원`;
+    }
+  }
+
+  // 제카: 비어 있거나 X → 제카·종류·카드실적 검수 모두 X / 카드 종류 → O·종류·검수 칸은 비워 둠
+  const jeca = v("jeca");
+  if (jeca === "" || jeca.toUpperCase() === "X") {
+    row.jeca = "X";
+    row.cardType = "X";
+    row.cardChecked = "X";
+    display.jeca = "X (카드 없음)";
+  } else if (jeca.toUpperCase() === "O") {
+    issues.push({
+      field: "jeca",
+      message: "제카에는 카드 종류(예: 우리, 신한) 또는 X 를 적어 주세요.",
+    });
+  } else if (jeca.length > 30) {
+    issues.push({ field: "jeca", message: "카드 종류가 너무 깁니다." });
+  } else {
+    row.jeca = "O";
+    row.cardType = jeca;
+    display.jeca = `O · ${jeca}`;
+  }
+
+  // 보험: O/X, 비어 있으면 X
+  const insurance = v("insurance") ? ox(v("insurance")) : "X";
+  if (insurance) {
+    row.insurance = insurance;
+    display.insurance = insurance;
+  } else {
+    issues.push({
+      field: "insurance",
+      message: "보험은 O 또는 X 만 가능합니다.",
+    });
+  }
+
+  // 부가: 필L/필S, 비어 있으면 X
+  const addonRaw = v("addon").replace(/\s+/g, "").toUpperCase();
+  const addon =
+    addonRaw === "" || addonRaw === "X"
+      ? "X"
+      : addonRaw === "필L"
+        ? "필L"
+        : addonRaw === "필S"
+          ? "필S"
+          : null;
+  if (addon) {
+    row.addon = addon;
+    display.addon = addon;
+  } else {
+    issues.push({
+      field: "addon",
+      message: "부가는 필L 또는 필S 만 가능합니다.",
+    });
+  }
+
+  // 동판: 신동/순동/약동/X, 비어 있으면 X. X 이면 가능일도 X, 아니면 가능일 필수
+  const dongpan =
+    v("dongpan") === ""
+      ? "X"
+      : v("dongpan").toUpperCase() === "X"
+        ? "X"
+        : v("dongpan");
+  if (["신동", "순동", "약동", "X"].includes(dongpan)) {
+    row.dongpan = dongpan;
+    display.dongpan = dongpan;
+    if (dongpan === "X") {
+      row.wiredAvailableDate = "X";
+      display.availableDate = "X";
+    } else if (!v("availableDate")) {
+      issues.push({
+        field: "availableDate",
+        message: "동판이 X 가 아니면 가능일이 필요합니다. (예: 27.10.15)",
+      });
+    } else {
+      const date = parseAvailableDate(v("availableDate"));
+      if (date) {
+        row.wiredAvailableDate = date;
+        display.availableDate = date;
+      } else {
+        issues.push({
+          field: "availableDate",
+          message: `가능일 "${v("availableDate")}" 를 확인해 주세요. (예: 27.10.15)`,
+        });
+      }
+    }
+  } else {
+    issues.push({
+      field: "dongpan",
+      message: "동판은 신동 / 순동 / 약동 / X 중 하나여야 합니다.",
+    });
+  }
+
+  if (v("customerPromise")) {
+    if (fields.customerPromise.length > 500) {
+      issues.push({
+        field: "customerPromise",
+        message: "고객약속사항이 너무 깁니다.",
+      });
+    } else {
+      row.customerPromise = fields.customerPromise.trim();
+      display.customerPromise = fields.customerPromise.trim();
+    }
+  }
+
+  return {
+    row,
+    issues,
+    display,
+    duplicateKey:
+      activatedAt && ctnDigits ? `${activatedAt}|${ctnDigits}` : null,
+  };
+}
+
+/** 장표 판매 1건의 중복 확인 키 */
+export function saleDuplicateKey(activatedAt: string, ctn: string): string {
+  return `${activatedAt}|${ctn.replace(/\D/g, "")}`;
+}

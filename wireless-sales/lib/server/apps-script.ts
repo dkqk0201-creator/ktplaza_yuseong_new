@@ -1,10 +1,12 @@
 import "server-only";
-import type { SheetRowArray } from "@/lib/sheet-mapping";
+import { COLUMN_COUNT, type SheetRowArray } from "@/lib/sheet-columns";
 
 /*
  * Google Apps Script 웹앱과 통신한다.
- * - 저장: { secret, row } → 판매 1건(A~AK 37칸) 저장
- * - 조회: { secret, action: "list" } → 이번 달 시트의 판매내역
+ * - 저장: { secret, action: "save", row } → 판매 1건(A~AL 38칸, null 칸은 건드리지 않음)
+ * - 조회: { secret, action: "list", sheet? } → 월 시트의 판매내역 (없으면 이번 달)
+ * - 삭제: { secret, action: "delete", target }
+ * - 목표: { secret, action: "goal-get" | "goal-set", month, goal? }
  * 주소와 비밀값은 서버 환경변수에서만 읽고, 어떤 경우에도 응답·로그에 넣지 않는다.
  * 어느 월 시트·어느 행인지는 Apps Script가 정한다.
  */
@@ -20,6 +22,8 @@ export class AppsScriptError extends Error {
   constructor(
     public readonly code: AppsScriptErrorCode,
     message: string,
+    /** Apps Script 가 거부할 때 함께 보낸 정보 (예: 조회 가능한 월 시트 목록) */
+    public readonly details: Record<string, unknown> = {},
   ) {
     super(message);
     this.name = "AppsScriptError";
@@ -104,6 +108,7 @@ async function postToAppsScript(
     throw new AppsScriptError(
       "rejected",
       shortText(data.message) || rejectedMessage,
+      data,
     );
   }
   return data;
@@ -112,11 +117,17 @@ async function postToAppsScript(
 export async function saveRowToAppsScript(
   row: SheetRowArray,
 ): Promise<AppsScriptSaveResult> {
-  if (row.length !== 37) {
-    throw new AppsScriptError("bad_response", "전송할 행이 37칸이 아닙니다.");
+  if (row.length !== COLUMN_COUNT) {
+    throw new AppsScriptError(
+      "bad_response",
+      `전송할 행이 ${COLUMN_COUNT}칸(A~AL)이 아닙니다.`,
+    );
+  }
+  if (row[1] !== null) {
+    throw new AppsScriptError("bad_response", "B열(No.)은 보낼 수 없습니다.");
   }
   const data = await postToAppsScript(
-    { row },
+    { action: "save", row },
     "Apps Script가 저장을 거부했습니다.",
   );
 
@@ -138,24 +149,34 @@ export interface AppsScriptListRow {
   row: number;
   /** B열 No. */
   no: string;
-  /** A~AK 37칸 값 */
+  /** A~AL 38칸 값 */
   values: unknown[];
 }
 
 export interface AppsScriptListResult {
   sheet: string;
   rows: AppsScriptListRow[];
+  /** 스프레드시트에 있는 월 시트 이름 (예: ["9월", "10월"]) */
+  sheets: string[];
 }
 
-/** 이번 달 시트의 판매내역을 읽어 온다. 어느 시트인지는 Apps Script가 정한다. */
-export async function listRowsFromAppsScript(): Promise<AppsScriptListResult> {
+export function monthSheetNames(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map(String).filter((name) => /^(1[0-2]|[1-9])월$/.test(name))
+    : [];
+}
+
+/** 월 시트의 판매내역을 읽어 온다. sheet 가 없으면 Apps Script가 이번 달 시트를 고른다. */
+export async function listRowsFromAppsScript(
+  sheet?: string,
+): Promise<AppsScriptListResult> {
   const data = await postToAppsScript(
-    { action: "list" },
+    sheet ? { action: "list", sheet } : { action: "list" },
     "Apps Script가 조회를 거부했습니다.",
   );
 
-  const sheet = shortText(data.sheet, 50);
-  if (!sheet || !Array.isArray(data.rows)) {
+  const sheetName = shortText(data.sheet, 50);
+  if (!sheetName || !Array.isArray(data.rows)) {
     throw new AppsScriptError(
       "bad_response",
       "Apps Script 조회 응답에 sheet 또는 rows가 없습니다.",
@@ -171,10 +192,10 @@ export async function listRowsFromAppsScript(): Promise<AppsScriptListResult> {
     rows.push({
       row: rowNumber,
       no: no === undefined || no === null ? "" : String(no),
-      values: values.slice(0, 37),
+      values: values.slice(0, COLUMN_COUNT),
     });
   }
-  return { sheet, rows };
+  return { sheet: sheetName, rows, sheets: monthSheetNames(data.sheets) };
 }
 
 /** 삭제 대상: 화면에서 본 판매 건의 위치와 확인용 값 */
@@ -189,7 +210,7 @@ export interface DeleteTarget {
 
 /**
  * 판매 1건 삭제를 요청한다. Apps Script가 장표의 현재 값(No.·개통일·고객·CTN)을
- * 다시 확인한 뒤 A열·C~AK열 값만 비운다 (행 삭제 아님, B열 유지).
+ * 다시 확인한 뒤 A열·C~AL열 값만 비운다 (행 삭제 아님, B열 유지).
  */
 export async function deleteRowFromAppsScript(
   target: DeleteTarget,
@@ -211,4 +232,35 @@ export async function deleteRowFromAppsScript(
     row: rowNumber,
     no: data.no === undefined || data.no === null ? "" : String(data.no),
   };
+}
+
+/** 월별 무선 목표 읽기 (month: "2026-10"). 저장된 목표가 없으면 null */
+export async function getGoalFromAppsScript(
+  month: string,
+): Promise<number | null> {
+  const data = await postToAppsScript(
+    { action: "goal-get", month },
+    "Apps Script가 목표 조회를 거부했습니다.",
+  );
+  if (data.goal === null || data.goal === undefined) return null;
+  const goal = Number(data.goal);
+  if (!Number.isFinite(goal)) {
+    throw new AppsScriptError(
+      "bad_response",
+      "목표 응답 형식이 올바르지 않습니다.",
+    );
+  }
+  return goal;
+}
+
+/** 월별 무선 목표 저장 */
+export async function setGoalInAppsScript(
+  month: string,
+  goal: number,
+): Promise<number> {
+  const data = await postToAppsScript(
+    { action: "goal-set", month, goal },
+    "Apps Script가 목표 저장을 거부했습니다.",
+  );
+  return Number(data.goal);
 }
