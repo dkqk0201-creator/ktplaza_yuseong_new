@@ -27,6 +27,12 @@ import {
   type RequiredField,
   type SaleFormValues,
 } from "@/lib/sale-form";
+import { postSale } from "@/lib/save-sale-api";
+
+interface SaveError {
+  message: string;
+  errors?: string[];
+}
 
 export function SaleForm({
   today,
@@ -39,7 +45,14 @@ export function SaleForm({
     createInitialValues(today),
   );
   const [attempted, setAttempted] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // 상태 반영 전 빠른 연속 클릭까지 막기 위한 즉시 잠금
+  const savingRef = useRef(false);
+  const [saveError, setSaveError] = useState<SaveError | null>(null);
+  const [saved, setSaved] = useState<{ sheet: string; no: string } | null>(
+    null,
+  );
+  const [lastSavedKey, setLastSavedKey] = useState<string | null>(null);
 
   const totals = calculateTotals(values);
   // 첫 등록 시도 이후부터 오류를 표시하고, 입력하는 즉시 사라지게 한다
@@ -59,8 +72,10 @@ export function SaleForm({
     el?.focus({ preventScroll: true });
   }
 
-  function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (savingRef.current) return;
+
     setAttempted(true);
     const result = validateSaleForm(values);
     const first = REQUIRED_FIELDS.find(({ name }) => result[name]);
@@ -68,14 +83,38 @@ export function SaleForm({
       focusField(first.name);
       return;
     }
-    // 아직 실제 저장은 하지 않는다 (Google 스프레드시트 연결 전)
-    setShowSuccess(true);
+
+    // 방금 저장한 내용을 실수로 한 번 더 저장하는 것을 막는다
+    const key = JSON.stringify(values);
+    if (
+      key === lastSavedKey &&
+      !window.confirm("방금 저장한 내용과 같습니다. 한 번 더 저장할까요?")
+    ) {
+      return;
+    }
+
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError(null);
+    const response = await postSale(values);
+    savingRef.current = false;
+    setSaving(false);
+
+    if (response.ok) {
+      setSaved({ sheet: response.sheet, no: response.no });
+      setLastSavedKey(key);
+    } else {
+      // 실패해도 입력값은 그대로 둔다
+      setSaveError({ message: response.message, errors: response.errors });
+    }
   }
 
   function resetForm() {
     setValues(createInitialValues(today));
     setAttempted(false);
-    setShowSuccess(false);
+    setSaved(null);
+    setSaveError(null);
+    setLastSavedKey(null);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
@@ -490,6 +529,24 @@ export function SaleForm({
       {/* 하단 고정 등록 영역 */}
       <div className="sticky bottom-16 z-10 mt-4 md:bottom-4">
         <div className="rounded-xl border border-line bg-white/95 p-3 shadow-[0_-4px_16px_rgba(0,0,0,0.06)] backdrop-blur sm:p-4">
+          {saveError && (
+            <div
+              role="alert"
+              className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700"
+            >
+              <p className="font-semibold">⚠ {saveError.message}</p>
+              {saveError.errors && saveError.errors.length > 0 && (
+                <ul className="mt-1 list-disc pl-5 text-xs">
+                  {saveError.errors.map((message) => (
+                    <li key={message}>{message}</li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-1 text-xs text-rose-600/80">
+                입력한 내용은 그대로 남아 있습니다.
+              </p>
+            </div>
+          )}
           {missingFields.length > 0 && (
             <button
               type="button"
@@ -508,6 +565,7 @@ export function SaleForm({
             </dl>
             <button
               type="button"
+              disabled={saving}
               onClick={() => {
                 if (window.confirm("입력한 내용을 모두 지울까요?")) resetForm();
               }}
@@ -517,17 +575,27 @@ export function SaleForm({
             </button>
             <button
               type="submit"
-              className="h-12 shrink-0 rounded-lg bg-brand px-6 text-base font-bold text-white shadow-sm hover:bg-brand-strong sm:px-10"
+              disabled={saving}
+              aria-busy={saving}
+              className="flex h-12 shrink-0 items-center gap-2 rounded-lg bg-brand px-6 text-base font-bold text-white shadow-sm hover:bg-brand-strong disabled:cursor-wait disabled:opacity-70 sm:px-10"
             >
-              판매 등록
+              {saving && (
+                <span
+                  aria-hidden
+                  className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                />
+              )}
+              {saving ? "저장 중..." : "판매 등록"}
             </button>
           </div>
         </div>
       </div>
 
-      {showSuccess && (
+      {saved && (
         <SuccessDialog
-          onClose={() => setShowSuccess(false)}
+          sheet={saved.sheet}
+          no={saved.no}
+          onClose={() => setSaved(null)}
           onReset={resetForm}
         />
       )}
@@ -614,9 +682,13 @@ function AmountList<K extends string>({
 }
 
 function SuccessDialog({
+  sheet,
+  no,
   onClose,
   onReset,
 }: {
+  sheet: string;
+  no: string;
   onClose: () => void;
   onReset: () => void;
 }) {
@@ -642,26 +714,32 @@ function SuccessDialog({
           ✓
         </div>
         <h2 id="sale-success-title" className="mt-4 text-lg font-bold text-ink">
-          판매 등록 테스트가 완료되었습니다
+          판매 등록이 완료되었습니다
         </h2>
-        <p id="sale-success-desc" className="mt-1.5 text-sm text-ink-sub">
-          입력값 확인만 진행했으며, 실제로 저장되지는 않았습니다.
+        <p
+          id="sale-success-desc"
+          className="mt-1.5 text-base font-semibold text-ink"
+        >
+          {sheet} / No.{no}에 저장되었습니다.
+        </p>
+        <p className="mt-1 text-xs text-ink-muted">
+          새 판매를 입력하려면 입력 내용을 비워 주세요.
         </p>
         <div className="mt-6 grid grid-cols-2 gap-2">
           <button
             type="button"
-            onClick={onReset}
+            onClick={onClose}
             className="h-11 rounded-lg border border-line text-[15px] font-semibold text-ink-sub hover:bg-zinc-50"
           >
-            새로 입력
+            닫기
           </button>
           <button
             ref={confirmRef}
             type="button"
-            onClick={onClose}
+            onClick={onReset}
             className="h-11 rounded-lg bg-brand text-[15px] font-semibold text-white hover:bg-brand-strong"
           >
-            확인
+            새 판매 입력
           </button>
         </div>
       </div>

@@ -6,11 +6,9 @@ import {
 } from "@/lib/sale-form";
 
 /*
- * 판매 등록 입력값 → Google 스프레드시트 "무선장표 양식" 한 행 변환.
- * 아직 실제 시트에 쓰지는 않는다. 연결 단계에서 buildSheetRow()의 결과를 그대로 사용한다.
+ * 판매 등록 입력값 → Google 스프레드시트 무선장표 한 행 변환.
+ * 어느 월 시트에 저장할지는 Apps Script가 정하므로 여기서는 열 값만 만든다.
  */
-
-export const SHEET_NAME = "무선장표 양식";
 
 /** 웹앱이 값을 채우는 열. B열(No.)은 시트의 기존 순번 구조를 사용하므로 제외한다. */
 export const SHEET_COLUMNS = [
@@ -96,4 +94,64 @@ export function buildSheetRow(values: SaleFormValues): SheetRow {
     AJ: values.dongpan,
     AK: values.wiredAvailableDate,
   };
+}
+
+/** 장표의 A~AK 전체 열 (37개). Apps Script에는 이 순서의 배열로 보낸다. */
+export const ALL_SHEET_COLUMNS = [
+  "A",
+  "B",
+  "C",
+  "D",
+  "E",
+  "F",
+  "G",
+  "H",
+  "I",
+  "J",
+  "K",
+  "L",
+  "M",
+  "N",
+  "O",
+  "P",
+  "Q",
+  "R",
+  "S",
+  "T",
+  "U",
+  "V",
+  "W",
+  "X",
+  "Y",
+  "Z",
+  "AA",
+  "AB",
+  "AC",
+  "AD",
+  "AE",
+  "AF",
+  "AG",
+  "AH",
+  "AI",
+  "AJ",
+  "AK",
+] as const;
+
+export type SheetRowArray = (string | number)[];
+
+/**
+ * 글자가 =, +, -, @ 로 시작하면 시트가 계산식으로 해석할 수 있으므로
+ * 앞에 ' 를 붙여 일반 글자로 저장되게 한다 (시트 화면에는 ' 가 보이지 않음).
+ */
+export function escapeSheetText(value: string): string {
+  return /^[=+\-@]/.test(value) ? `'${value}` : value;
+}
+
+/** A~AK 37칸 배열로 변환. B열(No.)은 Apps Script가 쓰지 않으므로 빈 값으로 둔다. */
+export function toSheetRowArray(row: SheetRow): SheetRowArray {
+  return ALL_SHEET_COLUMNS.map((column) => {
+    if (column === "B") return "";
+    const value = row[column];
+    return typeof value === "string" ? escapeSheetText(value) : value;
+  });
 }
