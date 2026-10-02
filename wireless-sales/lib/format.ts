@@ -38,12 +38,6 @@ export function formatDate(date: string): string {
   return date.replaceAll("-", ".");
 }
 
-/** "2026-10" → "2026년 10월" */
-export function formatMonth(month: string): string {
-  const [year, mm] = month.split("-");
-  return `${year}년 ${Number(mm)}월`;
-}
-
 /** 한국 시간 기준 오늘 날짜 (YYYY-MM-DD) */
 export function todayInKorea(): string {
   return new Intl.DateTimeFormat("en-CA", {

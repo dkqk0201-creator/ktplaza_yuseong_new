@@ -1,9 +1,9 @@
-import { MOCK_STAFF } from "./mock-staff";
+import { STAFF_NAMES } from "./staff-list";
 
 /*
  * 직원 목록 조회 창구.
- * 나중에 Google 스프레드시트를 연결할 때 이 파일의 내부 구현만 바꾼다.
+ * 판매 등록 화면과 저장 API(서버 검증)가 이 함수를 사용한다.
  */
 export async function getStaffNames(): Promise<string[]> {
-  return MOCK_STAFF;
+  return STAFF_NAMES;
 }

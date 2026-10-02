@@ -2,48 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { formatCtn, formatDate, formatNumber } from "@/lib/format";
+import { CategoryBadge } from "@/components/category-badge";
+import { formatCtn, formatNumber } from "@/lib/format";
+import { amountText, dateText, maskedCtn, sumAmount } from "@/lib/sale-display";
 import type { SheetSale } from "@/lib/sheet-record";
 
 /* 장표에서 불러온 판매내역 목록 + 상세 보기 */
-
-function amountText(value: number | null): string {
-  return value === null ? "-" : `${formatNumber(value)}원`;
-}
-
-function dateText(value: string): string {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? formatDate(value) : value || "-";
-}
-
-/** 목록에서는 가운데 4자리를 가린다: 010-****-5678 */
-function maskedCtn(ctn: string): string {
-  const formatted = formatCtn(ctn);
-  const parts = formatted.split("-");
-  return parts.length === 3
-    ? `${parts[0]}-${"*".repeat(parts[1].length)}-${parts[2]}`
-    : formatted;
-}
-
-function categoryStyle(category: string): string {
-  if (category.startsWith("신규"))
-    return "bg-sky-50 text-sky-700 ring-sky-600/20";
-  if (category.startsWith("번"))
-    return "bg-rose-50 text-rose-700 ring-rose-600/20";
-  if (category.startsWith("기"))
-    return "bg-amber-50 text-amber-700 ring-amber-600/20";
-  return "bg-zinc-100 text-ink-sub ring-zinc-400/20";
-}
-
-function CategoryBadge({ category }: { category: string }) {
-  if (!category) return <span className="text-ink-muted">-</span>;
-  return (
-    <span
-      className={`inline-flex items-center rounded-md px-2 py-0.5 text-xs font-semibold whitespace-nowrap ring-1 ring-inset ${categoryStyle(category)}`}
-    >
-      {category}
-    </span>
-  );
-}
 
 function matches(sale: SheetSale, keyword: string): boolean {
   const k = keyword.replace(/\s/g, "").toLowerCase();
@@ -73,8 +37,7 @@ export function SalesList({
   );
   const selected = sales.find((sale) => sale.row === selectedRow) ?? null;
 
-  const sum = (pick: (s: SheetSale) => number | null) =>
-    sales.reduce((total, s) => total + (pick(s) ?? 0), 0);
+  const sum = (pick: (s: SheetSale) => number | null) => sumAmount(sales, pick);
 
   return (
     <>
