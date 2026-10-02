@@ -29,13 +29,13 @@ export const USED_ITEMS = [
 ] as const;
 export type UsedKey = (typeof USED_ITEMS)[number]["key"];
 
-/** 부가서비스 항목 */
-export const ADDON_ITEMS = [
-  { key: "safe", label: "안심" },
-  { key: "media", label: "미디" },
-  { key: "dongpan", label: "동판" },
-] as const;
-export type AddonKey = (typeof ADDON_ITEMS)[number]["key"];
+/** 장표의 O/X 값. 완료·해당 = "O", 미완료·미해당 = "X" */
+export type OX = "O" | "X";
+export const OX_OPTIONS: OX[] = ["O", "X"];
+
+/** 동판 선택값 (O/X가 아니라 반드시 이 4개 중 하나) */
+export type Dongpan = "신동" | "순동" | "약동" | "X";
+export const DONGPAN_OPTIONS: Dongpan[] = ["신동", "순동", "약동", "X"];
 
 export interface SaleFormValues {
   // 1. 기본 개통정보
@@ -48,21 +48,30 @@ export interface SaleFormValues {
   plan: string;
   planChange: PlanChange | "";
   staff: string;
+  /** 추후 고객약속 (선택) */
+  customerPromise: string;
   // 2. 업무 처리 확인
-  inspected: boolean;
-  paid: boolean;
+  inspected: OX;
+  paid: OX;
   // 3. 확보금액
   secured: Record<SecuredKey, string>;
   // 4. 고객혜택 / 사용금액
+  /** 고객혜택 총액. 총 사용금액 계산에 포함하지 않는다. */
+  customerBenefitTotal: string;
   used: Record<UsedKey, string>;
   // 5. 중고판매
   usedPhoneSale: string;
   usedPhoneUsed: string;
   // 6. 추가 관리
-  jecaAmount: string;
+  secondPerformance: OX;
+  jecaPerformance: OX;
   weaponType: string;
-  weaponRegistered: boolean;
-  addons: Record<AddonKey, boolean>;
+  weaponRegistered: OX;
+  /** 제카 확보예산. 총 확보금액에 포함하지 않는다. */
+  jecaBudget: string;
+  pilS: OX;
+  pilL: OX;
+  dongpan: Dongpan;
   wiredAvailableDate: string;
 }
 
@@ -86,16 +95,22 @@ export function createInitialValues(today: string): SaleFormValues {
     plan: "",
     planChange: "",
     staff: "",
-    inspected: false,
-    paid: false,
+    customerPromise: "",
+    inspected: "X",
+    paid: "X",
     secured: emptyRecord(SECURED_ITEMS, ""),
+    customerBenefitTotal: "",
     used: emptyRecord(USED_ITEMS, ""),
     usedPhoneSale: "",
     usedPhoneUsed: "",
-    jecaAmount: "",
+    secondPerformance: "X",
+    jecaPerformance: "X",
     weaponType: "",
-    weaponRegistered: false,
-    addons: emptyRecord(ADDON_ITEMS, false),
+    weaponRegistered: "X",
+    jecaBudget: "",
+    pilS: "X",
+    pilL: "X",
+    dongpan: "X",
     wiredAvailableDate: "",
   };
 }
@@ -106,23 +121,30 @@ export function toAmount(value: string): number {
 }
 
 export interface SaleFormTotals {
-  /** 총 확보금액 = 확보금액 항목 합계 */
+  /** M 총 확보금액 = N + O + P + Q + R (제카 확보예산 제외) */
   securedTotal: number;
-  /** 총 사용금액 = 고객혜택/사용금액 항목 합계 */
+  /** T 총 사용금액 = U + V + W + X (고객혜택 총액 제외) */
   usedTotal: number;
-  /** 중고판매 잔여금액 = 판매금액 − 사용금액 */
+  /** AA 중고판매 잔여금액 = Y − Z */
   usedPhoneRemaining: number;
+  /** AB 최종 합계 = M − T + AA */
+  finalTotal: number;
 }
 
 export function calculateTotals(values: SaleFormValues): SaleFormTotals {
   const sum = (record: Record<string, string>) =>
     Object.values(record).reduce((total, v) => total + toAmount(v), 0);
 
+  const securedTotal = sum(values.secured);
+  const usedTotal = sum(values.used);
+  const usedPhoneRemaining =
+    toAmount(values.usedPhoneSale) - toAmount(values.usedPhoneUsed);
+
   return {
-    securedTotal: sum(values.secured),
-    usedTotal: sum(values.used),
-    usedPhoneRemaining:
-      toAmount(values.usedPhoneSale) - toAmount(values.usedPhoneUsed),
+    securedTotal,
+    usedTotal,
+    usedPhoneRemaining,
+    finalTotal: securedTotal - usedTotal + usedPhoneRemaining,
   };
 }
 

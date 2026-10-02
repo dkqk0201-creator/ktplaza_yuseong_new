@@ -4,16 +4,17 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
   AmountInput,
   ChoiceGroup,
-  CheckChip,
   Field,
   FormSection,
   StatusToggle,
+  TextArea,
   TextInput,
   TotalRow,
 } from "@/components/form-controls";
 import { formatCtnInput, formatNumber } from "@/lib/format";
 import {
-  ADDON_ITEMS,
+  DONGPAN_OPTIONS,
+  OX_OPTIONS,
   PLAN_CHANGES,
   REQUIRED_FIELDS,
   SALE_CATEGORIES,
@@ -144,6 +145,7 @@ export function SaleForm({
             <Field
               label="개통구분"
               htmlFor={fieldId("category")}
+              group
               required
               error={errors.category}
             >
@@ -193,6 +195,7 @@ export function SaleForm({
             <Field
               label="요금제 유지/변경"
               htmlFor={fieldId("planChange")}
+              group
               required
               error={errors.planChange}
             >
@@ -210,6 +213,7 @@ export function SaleForm({
             <Field
               label="직원명"
               htmlFor={fieldId("staff")}
+              group
               required
               error={errors.staff}
             >
@@ -220,6 +224,22 @@ export function SaleForm({
                 value={values.staff}
                 invalid={!!errors.staff}
                 onChange={(v) => update("staff", v)}
+              />
+            </Field>
+
+            <Field
+              label="추후 고객약속"
+              htmlFor="sale-customerPromise"
+              className="sm:col-span-2"
+            >
+              <TextArea
+                id="sale-customerPromise"
+                rows={3}
+                placeholder={
+                  "나중에 고객에게 해줘야 할 일을 적어 주세요.\n예: 12월 1일 부가서비스 해지 / 6개월 후 요금제 변경 연락"
+                }
+                value={values.customerPromise}
+                onChange={(e) => update("customerPromise", e.target.value)}
               />
             </Field>
           </div>
@@ -235,14 +255,14 @@ export function SaleForm({
             <StatusToggle
               id="sale-inspected"
               label="검수"
-              checked={values.inspected}
-              onChange={(v) => update("inspected", v)}
+              checked={values.inspected === "O"}
+              onChange={(v) => update("inspected", v ? "O" : "X")}
             />
             <StatusToggle
               id="sale-paid"
               label="수납"
-              checked={values.paid}
-              onChange={(v) => update("paid", v)}
+              checked={values.paid === "O"}
+              onChange={(v) => update("paid", v ? "O" : "X")}
             />
           </div>
         </FormSection>
@@ -262,6 +282,18 @@ export function SaleForm({
 
         {/* 4. 고객혜택 / 사용금액 */}
         <FormSection step={4} title="고객혜택 / 사용금액">
+          <AmountRow
+            id="sale-customerBenefitTotal"
+            label="고객혜택 총액"
+            value={values.customerBenefitTotal}
+            onChange={(v) => update("customerBenefitTotal", v)}
+          />
+          <p className="mt-1.5 text-xs text-ink-muted">
+            고객에게 제공하기로 한 혜택 총액 (총 사용금액에는 포함되지 않음)
+          </p>
+          <p className="mt-4 mb-3 border-t border-line pt-4 text-xs font-semibold text-ink-sub">
+            혜택 사용내역
+          </p>
           <AmountList
             prefix="used"
             items={USED_ITEMS}
@@ -303,54 +335,124 @@ export function SaleForm({
           title="추가 관리"
           className="lg:col-span-2 xl:col-span-3"
         >
-          <div className="grid grid-cols-1 gap-x-5 gap-y-6 sm:grid-cols-2 xl:grid-cols-4">
-            <Field label="제카 확보금액" htmlFor="sale-jecaAmount">
-              <AmountInput
-                id="sale-jecaAmount"
-                value={values.jecaAmount}
-                onChange={(v) => update("jecaAmount", v)}
+          <div className="grid grid-cols-2 gap-x-5 gap-y-6 xl:grid-cols-4">
+            <Field label="2ND 실적" htmlFor="sale-secondPerformance" group>
+              <ChoiceGroup
+                id="sale-secondPerformance"
+                label="2ND 실적"
+                options={OX_OPTIONS}
+                columns={2}
+                variant="ox"
+                value={values.secondPerformance}
+                onChange={(v) => update("secondPerformance", v)}
               />
             </Field>
 
-            <Field label="판매무기" htmlFor="sale-weaponType">
+            <Field label="제카 실적" htmlFor="sale-jecaPerformance" group>
+              <ChoiceGroup
+                id="sale-jecaPerformance"
+                label="제카 실적"
+                options={OX_OPTIONS}
+                columns={2}
+                variant="ox"
+                value={values.jecaPerformance}
+                onChange={(v) => update("jecaPerformance", v)}
+              />
+            </Field>
+
+            <Field
+              label="제카 확보예산"
+              htmlFor="sale-jecaBudget"
+              className="col-span-2 sm:col-span-1"
+            >
+              <AmountInput
+                id="sale-jecaBudget"
+                value={values.jecaBudget}
+                onChange={(v) => update("jecaBudget", v)}
+              />
+              <p className="mt-1.5 text-xs text-ink-muted">
+                총 확보금액에는 포함되지 않음
+              </p>
+            </Field>
+
+            <Field
+              label="판매무기"
+              htmlFor="sale-weaponType"
+              className="col-span-2 sm:col-span-1"
+            >
               <div className="space-y-2">
                 <TextInput
                   id="sale-weaponType"
-                  placeholder="종류 입력"
+                  placeholder="종류 (예: 롯데, 신한, 국민)"
                   autoComplete="off"
                   value={values.weaponType}
                   onChange={(e) => update("weaponType", e.target.value)}
                 />
-                <StatusToggle
-                  id="sale-weaponRegistered"
-                  label="등록"
-                  onText="등록"
-                  offText="미등록"
-                  checked={values.weaponRegistered}
-                  onChange={(v) => update("weaponRegistered", v)}
-                />
+                <div className="flex items-center gap-3">
+                  <span className="shrink-0 text-sm font-medium text-ink-sub">
+                    등록
+                  </span>
+                  <div className="flex-1">
+                    <ChoiceGroup
+                      id="sale-weaponRegistered"
+                      label="판매무기 등록"
+                      options={OX_OPTIONS}
+                      columns={2}
+                      variant="ox"
+                      value={values.weaponRegistered}
+                      onChange={(v) => update("weaponRegistered", v)}
+                    />
+                  </div>
+                </div>
               </div>
             </Field>
 
-            <Field label="부가">
-              <div className="grid grid-cols-3 gap-2">
-                {ADDON_ITEMS.map(({ key, label }) => (
-                  <CheckChip
-                    key={key}
-                    label={label}
-                    checked={values.addons[key]}
-                    onChange={(v) =>
-                      update("addons", { ...values.addons, [key]: v })
-                    }
-                  />
-                ))}
-              </div>
-              <p className="mt-2 text-xs text-ink-muted">
-                가입한 부가서비스를 모두 선택하세요.
-              </p>
+            <Field label="필S" htmlFor="sale-pilS" group>
+              <ChoiceGroup
+                id="sale-pilS"
+                label="필S"
+                options={OX_OPTIONS}
+                columns={2}
+                variant="ox"
+                value={values.pilS}
+                onChange={(v) => update("pilS", v)}
+              />
             </Field>
 
-            <Field label="유선 가능일" htmlFor="sale-wiredAvailableDate">
+            <Field label="필L" htmlFor="sale-pilL" group>
+              <ChoiceGroup
+                id="sale-pilL"
+                label="필L"
+                options={OX_OPTIONS}
+                columns={2}
+                variant="ox"
+                value={values.pilL}
+                onChange={(v) => update("pilL", v)}
+              />
+            </Field>
+
+            <Field
+              label="동판"
+              htmlFor="sale-dongpan"
+              group
+              className="col-span-2 sm:col-span-1"
+            >
+              <ChoiceGroup
+                id="sale-dongpan"
+                label="동판"
+                options={DONGPAN_OPTIONS}
+                columns={4}
+                variant="ox"
+                value={values.dongpan}
+                onChange={(v) => update("dongpan", v)}
+              />
+            </Field>
+
+            <Field
+              label="유선 가능일"
+              htmlFor="sale-wiredAvailableDate"
+              className="col-span-2 sm:col-span-1"
+            >
               <TextInput
                 id="sale-wiredAvailableDate"
                 type="date"
@@ -398,19 +500,11 @@ export function SaleForm({
             </button>
           )}
           <div className="flex items-center gap-3">
-            <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-4 gap-y-0.5 text-sm sm:flex sm:gap-6">
-              <div className="min-w-0">
-                <dt className="text-xs text-ink-muted">총 확보금액</dt>
-                <dd className="truncate font-bold text-ink tabular-nums sm:text-lg">
-                  {formatNumber(totals.securedTotal)}원
-                </dd>
-              </div>
-              <div className="min-w-0">
-                <dt className="text-xs text-ink-muted">총 사용금액</dt>
-                <dd className="truncate font-bold text-ink tabular-nums sm:text-lg">
-                  {formatNumber(totals.usedTotal)}원
-                </dd>
-              </div>
+            <dl className="grid min-w-0 flex-1 grid-cols-2 gap-x-4 gap-y-1.5 text-sm lg:flex lg:gap-6">
+              <BarStat label="총 확보금액" value={totals.securedTotal} />
+              <BarStat label="총 사용금액" value={totals.usedTotal} />
+              <BarStat label="중고 잔여" value={totals.usedPhoneRemaining} />
+              <BarStat label="최종 합계" value={totals.finalTotal} emphasis />
             </dl>
             <button
               type="button"
@@ -438,6 +532,35 @@ export function SaleForm({
         />
       )}
     </form>
+  );
+}
+
+function BarStat({
+  label,
+  value,
+  emphasis = false,
+}: {
+  label: string;
+  value: number;
+  emphasis?: boolean;
+}) {
+  return (
+    <div
+      className={`min-w-0 ${emphasis ? "lg:border-l lg:border-line lg:pl-6" : ""}`}
+    >
+      <dt
+        className={`text-xs ${emphasis ? "font-semibold text-brand" : "text-ink-muted"}`}
+      >
+        {label}
+      </dt>
+      <dd
+        className={`truncate font-bold tabular-nums sm:text-lg ${
+          value < 0 ? "text-rose-600" : emphasis ? "text-brand" : "text-ink"
+        }`}
+      >
+        {formatNumber(value)}원
+      </dd>
+    </div>
   );
 }
 

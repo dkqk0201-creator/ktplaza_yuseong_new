@@ -1,6 +1,10 @@
 "use client";
 
-import type { InputHTMLAttributes, ReactNode } from "react";
+import type {
+  InputHTMLAttributes,
+  ReactNode,
+  TextareaHTMLAttributes,
+} from "react";
 import { formatNumber } from "@/lib/format";
 
 /* 판매 등록 등 입력 화면에서 함께 쓰는 입력 부품 */
@@ -51,6 +55,7 @@ export function Field({
   htmlFor,
   required = false,
   error,
+  group = false,
   className = "",
   children,
 }: {
@@ -58,14 +63,17 @@ export function Field({
   htmlFor?: string;
   required?: boolean;
   error?: string;
+  /** 버튼 묶음(ChoiceGroup) 제목일 때 true. 첫 버튼의 이름을 덮어쓰지 않도록 label 대신 span으로 그린다. */
+  group?: boolean;
   className?: string;
   children: ReactNode;
 }) {
-  const LabelTag = htmlFor ? "label" : "span";
+  const asLabel = htmlFor && !group;
+  const LabelTag = asLabel ? "label" : "span";
   return (
     <div className={className}>
       <LabelTag
-        {...(htmlFor ? { htmlFor } : {})}
+        {...(asLabel ? { htmlFor } : {})}
         className="mb-1.5 block text-sm font-semibold text-ink"
       >
         {label}
@@ -107,6 +115,18 @@ export function TextInput({
       aria-invalid={invalid || undefined}
       aria-describedby={invalid && props.id ? `${props.id}-error` : undefined}
       className={`${inputBase} ${borderClass(invalid)} ${className}`}
+    />
+  );
+}
+
+export function TextArea({
+  className = "",
+  ...props
+}: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      {...props}
+      className={`${inputBase} ${borderClass()} h-auto min-h-24 resize-y py-2.5 leading-relaxed ${className}`}
     />
   );
 }
@@ -161,6 +181,7 @@ export function ChoiceGroup<T extends string>({
   onChange,
   invalid,
   columns,
+  variant = "brand",
 }: {
   id: string;
   label: string;
@@ -170,6 +191,8 @@ export function ChoiceGroup<T extends string>({
   invalid?: boolean;
   /** 고정 열 수 (없으면 내용에 맞게 줄바꿈) */
   columns?: number;
+  /** "ox": 선택된 "X"는 회색, 그 외 선택값은 초록색으로 표시 */
+  variant?: "brand" | "ox";
 }) {
   return (
     <div
@@ -196,7 +219,11 @@ export function ChoiceGroup<T extends string>({
             onClick={() => onChange(option)}
             className={`h-11 rounded-lg border px-4 text-[15px] font-semibold whitespace-nowrap transition-colors ${
               selected
-                ? "border-brand bg-brand text-white"
+                ? variant === "brand"
+                  ? "border-brand bg-brand text-white"
+                  : option === "X"
+                    ? "border-zinc-600 bg-zinc-600 text-white"
+                    : "border-emerald-600 bg-emerald-600 text-white"
                 : invalid
                   ? "border-rose-500 bg-rose-50/40 text-ink-sub hover:bg-rose-50"
                   : "border-line bg-white text-ink-sub hover:border-zinc-300 hover:text-ink"
@@ -259,43 +286,6 @@ export function StatusToggle({
           />
         </span>
       </span>
-    </button>
-  );
-}
-
-/** 여러 개 중 복수 선택하는 체크 칩 */
-export function CheckChip({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: (checked: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      role="checkbox"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      className={`flex h-11 items-center justify-center gap-1.5 rounded-lg border px-3 text-[15px] font-semibold transition-colors ${
-        checked
-          ? "border-emerald-500/60 bg-emerald-50 text-emerald-700"
-          : "border-line bg-white text-ink-sub hover:border-zinc-300"
-      }`}
-    >
-      <span
-        aria-hidden
-        className={`flex h-4 w-4 items-center justify-center rounded border text-[10px] leading-none ${
-          checked
-            ? "border-emerald-600 bg-emerald-600 text-white"
-            : "border-zinc-300 bg-white"
-        }`}
-      >
-        {checked ? "✓" : ""}
-      </span>
-      {label}
     </button>
   );
 }
