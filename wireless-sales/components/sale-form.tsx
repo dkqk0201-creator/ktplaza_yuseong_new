@@ -304,30 +304,12 @@ export function SaleForm({
           className="lg:col-span-2 xl:col-span-3"
         >
           <div className="grid grid-cols-1 gap-x-5 gap-y-6 sm:grid-cols-2 xl:grid-cols-4">
-            <Field label="제카">
-              <div className="space-y-2">
-                <StatusToggle
-                  id="sale-jecaApplied"
-                  label="제카 여부"
-                  onText="해당"
-                  offText="미해당"
-                  checked={values.jecaApplied}
-                  onChange={(v) =>
-                    setValues((prev) => ({
-                      ...prev,
-                      jecaApplied: v,
-                      jecaAmount: v ? prev.jecaAmount : "",
-                    }))
-                  }
-                />
-                <AmountInput
-                  id="sale-jecaAmount"
-                  ariaLabel="제카 금액"
-                  disabled={!values.jecaApplied}
-                  value={values.jecaAmount}
-                  onChange={(v) => update("jecaAmount", v)}
-                />
-              </div>
+            <Field label="제카 확보금액" htmlFor="sale-jecaAmount">
+              <AmountInput
+                id="sale-jecaAmount"
+                value={values.jecaAmount}
+                onChange={(v) => update("jecaAmount", v)}
+              />
             </Field>
 
             <Field label="판매무기" htmlFor="sale-weaponType">

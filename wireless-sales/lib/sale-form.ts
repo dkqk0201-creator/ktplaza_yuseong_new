@@ -22,7 +22,6 @@ export type SecuredKey = (typeof SECURED_ITEMS)[number]["key"];
 
 /** 고객혜택 / 사용금액 항목 */
 export const USED_ITEMS = [
-  { key: "customerBenefit", label: "고객혜택" },
   { key: "modelPlan", label: "모델/요금" },
   { key: "dicho", label: "디초/삼초" },
   { key: "second", label: "2ND" },
@@ -60,7 +59,6 @@ export interface SaleFormValues {
   usedPhoneSale: string;
   usedPhoneUsed: string;
   // 6. 추가 관리
-  jecaApplied: boolean;
   jecaAmount: string;
   weaponType: string;
   weaponRegistered: boolean;
@@ -94,7 +92,6 @@ export function createInitialValues(today: string): SaleFormValues {
     used: emptyRecord(USED_ITEMS, ""),
     usedPhoneSale: "",
     usedPhoneUsed: "",
-    jecaApplied: false,
     jecaAmount: "",
     weaponType: "",
     weaponRegistered: false,
