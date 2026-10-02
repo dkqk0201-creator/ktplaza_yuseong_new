@@ -1,8 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CategoryBadge } from "@/components/category-badge";
+import { useSalesData } from "@/components/sales-data-provider";
 import { postDeleteSale } from "@/lib/delete-sale-api";
 import { formatCtn, formatNumber } from "@/lib/format";
 import { amountText, dateText, maskedCtn, sumAmount } from "@/lib/sale-display";
@@ -27,8 +27,7 @@ export function SalesList({
   sheet: string;
   sales: SheetSale[];
 }) {
-  const router = useRouter();
-  const [refreshing, startRefresh] = useTransition();
+  const { invalidate } = useSalesData();
   const [keyword, setKeyword] = useState("");
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -91,14 +90,6 @@ export function SalesList({
           aria-label="판매내역 검색"
           className="h-10 w-full rounded-lg border border-line bg-white px-3 text-base outline-none focus:border-brand focus:ring-2 focus:ring-brand/15 sm:w-64 sm:text-sm"
         />
-        <button
-          type="button"
-          onClick={() => startRefresh(() => router.refresh())}
-          disabled={refreshing}
-          className="h-10 rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink-sub hover:bg-zinc-50 disabled:opacity-60"
-        >
-          {refreshing ? "불러오는 중..." : "새로고침"}
-        </button>
       </div>
 
       {sales.length === 0 ? (
@@ -250,28 +241,12 @@ export function SalesList({
           onDeleted={(message) => {
             setSelectedRow(null);
             setNotice(message);
-            // 장표의 최신 내용으로 목록·요약을 다시 불러온다
-            startRefresh(() => router.refresh());
+            // 공유 데이터를 무효화하고 장표에서 다시 읽는다 (대시보드도 함께 갱신)
+            void invalidate();
           }}
         />
       )}
     </>
-  );
-}
-
-/** 조회 실패 화면의 "다시 불러오기" 버튼 */
-export function RetryButton() {
-  const router = useRouter();
-  const [pending, startTransition] = useTransition();
-  return (
-    <button
-      type="button"
-      onClick={() => startTransition(() => router.refresh())}
-      disabled={pending}
-      className="mt-3 text-sm font-semibold text-rose-700 underline underline-offset-2 disabled:opacity-60"
-    >
-      {pending ? "불러오는 중..." : "다시 불러오기"}
-    </button>
   );
 }
 

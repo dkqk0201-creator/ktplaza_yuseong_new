@@ -27,6 +27,7 @@ import {
   type RequiredField,
   type SaleFormValues,
 } from "@/lib/sale-form";
+import { useSalesData } from "@/components/sales-data-provider";
 import { postSale } from "@/lib/save-sale-api";
 
 interface SaveError {
@@ -53,6 +54,7 @@ export function SaleForm({
     null,
   );
   const [lastSavedKey, setLastSavedKey] = useState<string | null>(null);
+  const { invalidate } = useSalesData();
 
   const totals = calculateTotals(values);
   // 첫 등록 시도 이후부터 오류를 표시하고, 입력하는 즉시 사라지게 한다
@@ -103,6 +105,8 @@ export function SaleForm({
     if (response.ok) {
       setSaved({ sheet: response.sheet, no: response.no });
       setLastSavedKey(key);
+      // 대시보드·판매 현황이 최신 장표를 보도록 공유 데이터를 무효화하고 다시 읽는다
+      void invalidate();
     } else {
       // 실패해도 입력값은 그대로 둔다
       setSaveError({ message: response.message, errors: response.errors });

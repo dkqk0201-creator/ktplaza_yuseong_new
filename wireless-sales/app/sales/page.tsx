@@ -1,14 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
-import { RetryButton, SalesList } from "@/components/sales-list";
-import { getSheetSales } from "@/lib/data/sheet-sales";
+import { SalesView } from "@/components/sales-view";
 
 export const metadata: Metadata = { title: "판매 현황" };
 
-export default async function SalesPage() {
-  const result = await getSheetSales();
-
+/*
+ * 판매 현황: 화면 틀은 바로 보여주고, 장표 데이터는 화면이 열린 뒤
+ * 공유 저장소(SalesDataProvider)를 통해 불러온다.
+ */
+export default function SalesPage() {
   return (
     <>
       <PageHeader
@@ -23,17 +24,7 @@ export default async function SalesPage() {
           </Link>
         }
       />
-      {result.ok ? (
-        <SalesList sheet={result.sheet} sales={result.sales} />
-      ) : (
-        <div
-          role="alert"
-          className="rounded-xl border border-rose-200 bg-rose-50 px-5 py-6 text-center"
-        >
-          <p className="font-semibold text-rose-700">⚠ {result.message}</p>
-          <RetryButton />
-        </div>
-      )}
+      <SalesView />
     </>
   );
 }
