@@ -2,9 +2,11 @@ import "server-only";
 import type { SheetRowArray } from "@/lib/sheet-mapping";
 
 /*
- * Google Apps Script 웹앱으로 판매 1건(A~AK 37칸)을 보낸다.
+ * Google Apps Script 웹앱과 통신한다.
+ * - 저장: { secret, row } → 판매 1건(A~AK 37칸) 저장
+ * - 조회: { secret, action: "list" } → 이번 달 시트의 판매내역
  * 주소와 비밀값은 서버 환경변수에서만 읽고, 어떤 경우에도 응답·로그에 넣지 않는다.
- * 어느 월 시트·어느 행에 저장할지는 Apps Script가 정한다.
+ * 어느 월 시트·어느 행인지는 Apps Script가 정한다.
  */
 
 export type AppsScriptErrorCode =
@@ -57,12 +59,11 @@ function shortText(value: unknown, maxLength = 200): string {
   return typeof value === "string" ? value.slice(0, maxLength) : "";
 }
 
-export async function saveRowToAppsScript(
-  row: SheetRowArray,
-): Promise<AppsScriptSaveResult> {
-  if (row.length !== 37) {
-    throw new AppsScriptError("bad_response", "전송할 행이 37칸이 아닙니다.");
-  }
+/** Apps Script에 요청을 보내고 ok: true 인 JSON 응답만 돌려준다. */
+async function postToAppsScript(
+  payload: Record<string, unknown>,
+  rejectedMessage: string,
+): Promise<Record<string, unknown>> {
   const { url, secret } = readConfig();
 
   let response: Response;
@@ -71,7 +72,7 @@ export async function saveRowToAppsScript(
     response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ secret, row }),
+      body: JSON.stringify({ secret, ...payload }),
       redirect: "follow",
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -102,9 +103,22 @@ export async function saveRowToAppsScript(
   if (data.ok !== true) {
     throw new AppsScriptError(
       "rejected",
-      shortText(data.message) || "Apps Script가 저장을 거부했습니다.",
+      shortText(data.message) || rejectedMessage,
     );
   }
+  return data;
+}
+
+export async function saveRowToAppsScript(
+  row: SheetRowArray,
+): Promise<AppsScriptSaveResult> {
+  if (row.length !== 37) {
+    throw new AppsScriptError("bad_response", "전송할 행이 37칸이 아닙니다.");
+  }
+  const data = await postToAppsScript(
+    { row },
+    "Apps Script가 저장을 거부했습니다.",
+  );
 
   const sheet = shortText(data.sheet, 50);
   const no = data.no === undefined || data.no === null ? "" : String(data.no);
@@ -117,4 +131,48 @@ export async function saveRowToAppsScript(
   }
 
   return { sheet, row: rowNumber, no, message: shortText(data.message) };
+}
+
+export interface AppsScriptListRow {
+  /** 장표의 실제 행 번호 (9행부터) */
+  row: number;
+  /** B열 No. */
+  no: string;
+  /** A~AK 37칸 값 */
+  values: unknown[];
+}
+
+export interface AppsScriptListResult {
+  sheet: string;
+  rows: AppsScriptListRow[];
+}
+
+/** 이번 달 시트의 판매내역을 읽어 온다. 어느 시트인지는 Apps Script가 정한다. */
+export async function listRowsFromAppsScript(): Promise<AppsScriptListResult> {
+  const data = await postToAppsScript(
+    { action: "list" },
+    "Apps Script가 조회를 거부했습니다.",
+  );
+
+  const sheet = shortText(data.sheet, 50);
+  if (!sheet || !Array.isArray(data.rows)) {
+    throw new AppsScriptError(
+      "bad_response",
+      "Apps Script 조회 응답에 sheet 또는 rows가 없습니다.",
+    );
+  }
+
+  const rows: AppsScriptListRow[] = [];
+  for (const item of data.rows as unknown[]) {
+    if (typeof item !== "object" || item === null) continue;
+    const { row, no, values } = item as Record<string, unknown>;
+    const rowNumber = Number(row);
+    if (!Number.isInteger(rowNumber) || !Array.isArray(values)) continue;
+    rows.push({
+      row: rowNumber,
+      no: no === undefined || no === null ? "" : String(no),
+      values: values.slice(0, 37),
+    });
+  }
+  return { sheet, rows };
 }
