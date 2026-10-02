@@ -1,24 +1,73 @@
-export default function Home() {
-  return (
-    <div className="flex flex-1 flex-col bg-zinc-50">
-      <header className="bg-brand text-white">
-        <div className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6">
-          <h1 className="text-lg font-bold sm:text-xl">무선 판매 관리</h1>
-        </div>
-      </header>
+import Link from "next/link";
+import { PageHeader } from "@/components/page-header";
+import { RecentSalesTable } from "@/components/recent-sales-table";
+import { StatCard } from "@/components/stat-card";
+import { getDashboardSummary, getRecentSales } from "@/lib/data/sales";
+import { formatMonth, formatNumber } from "@/lib/format";
 
-      <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center justify-center px-4 py-12 sm:px-6">
-        <div className="w-full max-w-md rounded-2xl border border-zinc-200 bg-white p-6 text-center shadow-sm sm:p-8">
-          <p className="text-2xl font-bold text-zinc-900 sm:text-3xl">
-            무선 판매 관리
-          </p>
-          <p className="mt-3 text-sm text-zinc-600 sm:text-base">
-            기본 프로젝트가 준비되었습니다.
-            <br />
-            판매 실적 입력 화면은 곧 추가될 예정입니다.
-          </p>
+export default async function DashboardPage() {
+  const [summary, recentSales] = await Promise.all([
+    getDashboardSummary(),
+    getRecentSales(10),
+  ]);
+
+  return (
+    <>
+      <PageHeader
+        title="대시보드"
+        description={`${formatMonth(summary.month)} 기준 무선 판매 실적`}
+        aside={
+          <Link
+            href="/sales/new"
+            className="inline-flex h-10 items-center rounded-lg bg-brand px-4 text-sm font-semibold text-white hover:bg-brand-strong"
+          >
+            + 판매 등록
+          </Link>
+        }
+      />
+
+      <section
+        aria-label="이번 달 요약"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4"
+      >
+        <StatCard
+          label="총 개통 건수"
+          value={formatNumber(summary.activationCount)}
+          unit="건"
+        />
+        <StatCard
+          label="총 확보금액"
+          value={formatNumber(summary.securedTotal)}
+          unit="원"
+        />
+        <StatCard
+          label="총 사용금액"
+          value={formatNumber(summary.usedTotal)}
+          unit="원"
+        />
+        <StatCard
+          label="가용가능금액"
+          value={formatNumber(summary.availableTotal)}
+          unit="원"
+          hint="총 확보금액 − 총 사용금액"
+          emphasis
+        />
+      </section>
+
+      <section aria-labelledby="recent-sales-title" className="mt-8">
+        <div className="mb-3 flex items-center justify-between">
+          <h2 id="recent-sales-title" className="text-lg font-bold text-ink">
+            최근 판매 내역
+          </h2>
+          <Link
+            href="/sales"
+            className="text-sm font-medium text-ink-sub hover:text-brand"
+          >
+            전체 보기 →
+          </Link>
         </div>
-      </main>
-    </div>
+        <RecentSalesTable sales={recentSales} />
+      </section>
+    </>
   );
 }

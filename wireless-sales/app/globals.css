@@ -1,21 +1,26 @@
 @import "tailwindcss";
 
-:root {
-  --background: #fafafa;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-brand: #25a25a;
+  /* KT 레드 계열 포인트 색상 (절제해서 사용) */
+  --color-brand: #e4002b;
+  --color-brand-strong: #c00024;
+  --color-brand-soft: #fff1f3;
+
+  /* 글자·선 색상 */
+  --color-ink: #18181b;
+  --color-ink-sub: #52525b;
+  --color-ink-muted: #8b8b93;
+  --color-line: #e7e7ea;
+
+  --color-canvas: #fafafa;
+
   --font-sans: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic",
     "맑은 고딕", "Noto Sans KR", system-ui, sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--color-canvas);
+  color: var(--color-ink);
   font-family: var(--font-sans);
   word-break: keep-all;
 }
