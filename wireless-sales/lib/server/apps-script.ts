@@ -176,3 +176,39 @@ export async function listRowsFromAppsScript(): Promise<AppsScriptListResult> {
   }
   return { sheet, rows };
 }
+
+/** 삭제 대상: 화면에서 본 판매 건의 위치와 확인용 값 */
+export interface DeleteTarget {
+  sheet: string;
+  row: number;
+  no: string;
+  activatedAt: string;
+  customer: string;
+  ctn: string;
+}
+
+/**
+ * 판매 1건 삭제를 요청한다. Apps Script가 장표의 현재 값(No.·개통일·고객·CTN)을
+ * 다시 확인한 뒤 A열·C~AK열 값만 비운다 (행 삭제 아님, B열 유지).
+ */
+export async function deleteRowFromAppsScript(
+  target: DeleteTarget,
+): Promise<{ sheet: string; row: number; no: string }> {
+  const data = await postToAppsScript(
+    { action: "delete", target },
+    "Apps Script가 삭제를 거부했습니다.",
+  );
+  const sheet = shortText(data.sheet, 50);
+  const rowNumber = Number(data.row);
+  if (!sheet || !Number.isInteger(rowNumber)) {
+    throw new AppsScriptError(
+      "bad_response",
+      "Apps Script 삭제 응답에 sheet 또는 row가 없습니다.",
+    );
+  }
+  return {
+    sheet,
+    row: rowNumber,
+    no: data.no === undefined || data.no === null ? "" : String(data.no),
+  };
+}

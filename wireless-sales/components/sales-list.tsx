@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { CategoryBadge } from "@/components/category-badge";
+import { postDeleteSale } from "@/lib/delete-sale-api";
 import { formatCtn, formatNumber } from "@/lib/format";
 import { amountText, dateText, maskedCtn, sumAmount } from "@/lib/sale-display";
 import type { SheetSale } from "@/lib/sheet-record";
@@ -30,6 +31,7 @@ export function SalesList({
   const [refreshing, startRefresh] = useTransition();
   const [keyword, setKeyword] = useState("");
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const filtered = useMemo(
     () => sales.filter((sale) => matches(sale, keyword)),
@@ -61,6 +63,22 @@ export function SalesList({
           emphasis
         />
       </section>
+
+      {notice && (
+        <div
+          role="status"
+          className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800"
+        >
+          <span>✓ {notice}</span>
+          <button
+            type="button"
+            onClick={() => setNotice(null)}
+            className="text-xs font-medium text-emerald-700 underline underline-offset-2"
+          >
+            닫기
+          </button>
+        </div>
+      )}
 
       {/* 검색·새로고침 */}
       <div className="mt-6 mb-3 flex flex-wrap items-center gap-2">
@@ -229,6 +247,12 @@ export function SalesList({
           sheet={sheet}
           sale={selected}
           onClose={() => setSelectedRow(null)}
+          onDeleted={(message) => {
+            setSelectedRow(null);
+            setNotice(message);
+            // 장표의 최신 내용으로 목록·요약을 다시 불러온다
+            startRefresh(() => router.refresh());
+          }}
         />
       )}
     </>
@@ -331,16 +355,53 @@ function SaleDetail({
   sheet,
   sale,
   onClose,
+  onDeleted,
 }: {
   sheet: string;
   sale: SheetSale;
   onClose: () => void;
+  onDeleted: (message: string) => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // 삭제 요청 중에는 창을 닫지 않는다 (Esc·배경 클릭·닫기 버튼 모두)
+  const deletingRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+  const close = () => {
+    if (!deletingRef.current) onCloseRef.current();
+  };
+
+  async function handleDelete() {
+    if (deletingRef.current) return;
+    if (!window.confirm("이 판매내역을 삭제하시겠습니까?")) return;
+    deletingRef.current = true;
+    setDeleting(true);
+    setDeleteError(null);
+    const result = await postDeleteSale({
+      sheet,
+      row: sale.row,
+      no: sale.no,
+      activatedAt: sale.activatedAt,
+      customer: sale.customer,
+      ctn: sale.ctn,
+    });
+    deletingRef.current = false;
+    setDeleting(false);
+    if (result.ok) onDeleted(result.message);
+    else setDeleteError(result.message);
+  }
+
+  // 상세창이 열릴 때 한 번만 실행
   useEffect(() => {
     closeRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !deletingRef.current) onCloseRef.current();
+    };
     window.addEventListener("keydown", onKey);
     // 상세창이 열린 동안 뒤 화면이 스크롤되지 않게 한다
     const previous = document.body.style.overflow;
@@ -349,14 +410,14 @@ function SaleDetail({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = previous;
     };
-  }, [onClose]);
+  }, []);
 
   const a = amountText;
 
   return (
     <div
       className="fixed inset-0 z-50 flex justify-end bg-black/40"
-      onClick={onClose}
+      onClick={close}
     >
       <div
         role="dialog"
@@ -383,7 +444,8 @@ function SaleDetail({
           <button
             ref={closeRef}
             type="button"
-            onClick={onClose}
+            onClick={close}
+            disabled={deleting}
             className="h-9 shrink-0 rounded-lg border border-line px-3 text-sm font-semibold text-ink-sub hover:bg-zinc-50"
           >
             닫기
@@ -544,6 +606,35 @@ function SaleDetail({
             ]}
           />
         </div>
+
+        <footer className="border-t border-line px-5 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
+          {deleteError && (
+            <p
+              role="alert"
+              className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
+            >
+              ⚠ {deleteError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={deleting}
+            aria-busy={deleting}
+            className="flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-rose-300 bg-white text-[15px] font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-wait disabled:opacity-70"
+          >
+            {deleting && (
+              <span
+                aria-hidden
+                className="h-4 w-4 animate-spin rounded-full border-2 border-rose-200 border-t-rose-600"
+              />
+            )}
+            {deleting ? "삭제 중..." : "판매 삭제"}
+          </button>
+          <p className="mt-1.5 text-center text-xs text-ink-muted">
+            장표의 행과 No.는 그대로 두고 이 판매 건의 입력 내용만 지웁니다.
+          </p>
+        </footer>
       </div>
     </div>
   );
