@@ -589,7 +589,8 @@ export function normalizeQuick(
     });
   }
 
-  // 동판: 신동/순동/약동/X, 비어 있으면 X. X 이면 가능일도 X, 아니면 가능일 필수
+  // 동판: 신동/순동/약동/X, 비어 있으면 X.
+  // 동판이 X(또는 빈칸)이면 가능일 필수, 그 외(신동/순동/약동)는 가능일 입력 불필요
   const dongpan =
     v("dongpan") === ""
       ? "X"
@@ -599,14 +600,15 @@ export function normalizeQuick(
   if (["신동", "순동", "약동", "X"].includes(dongpan)) {
     row.dongpan = dongpan;
     display.dongpan = dongpan;
-    if (dongpan === "X") {
-      row.wiredAvailableDate = "X";
-      display.availableDate = "X";
-    } else if (!v("availableDate")) {
-      issues.push({
-        field: "availableDate",
-        message: "동판이 X 가 아니면 가능일이 필요합니다. (예: 27.10.15)",
-      });
+    if (!v("availableDate")) {
+      if (dongpan === "X") {
+        issues.push({
+          field: "availableDate",
+          message:
+            "동판이 X 이거나 빈칸이면 가능일이 필요합니다. (예: 27.10.15)",
+        });
+      }
+      // 신동/순동/약동이고 가능일이 없으면 가능일 칸은 건드리지 않는다 (빈칸 유지)
     } else {
       const date = parseAvailableDate(v("availableDate"));
       if (date) {
