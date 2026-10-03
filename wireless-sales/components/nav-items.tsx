@@ -39,16 +39,6 @@ export const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
-    href: "/sales/new",
-    label: "판매등록",
-    icon: (
-      <svg {...iconProps}>
-        <circle cx="12" cy="12" r="9" />
-        <path d="M12 8v8M8 12h8" />
-      </svg>
-    ),
-  },
-  {
     href: "/cards",
     label: "카드실적",
     icon: (

@@ -64,7 +64,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {/* 모바일: 하단 탭 메뉴 */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-6 border-t border-line bg-white pb-[env(safe-area-inset-bottom)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-line bg-white pb-[env(safe-area-inset-bottom)] md:hidden"
         aria-label="주 메뉴"
       >
         {NAV_ITEMS.map((item) => {

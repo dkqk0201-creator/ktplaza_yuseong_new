@@ -15,7 +15,7 @@ import {
   type QuickNormalized,
 } from "@/lib/quick-report";
 import { COLUMN_LABEL, COLUMN_LETTER } from "@/lib/sheet-columns";
-import type { SaveSaleResponse } from "@/lib/save-sale-api";
+import type { QuickBatchResponse, SaveSaleResponse } from "@/lib/save-sale-api";
 
 /*
  * 간편등록: 붙여넣기 → 분석 → 검수(수정) → 등록 버튼 → 장표 저장.
@@ -58,22 +58,34 @@ const STATUS_TONE: Record<Status, "warn" | "good" | "muted"> = {
   failed: "warn",
 };
 
-async function postQuick(fields: QuickFields): Promise<SaveSaleResponse> {
+/** 한 번에 보낼 최대 건수 (서버·Apps Script 와 같은 30건) */
+const BATCH_SIZE = 30;
+
+/** 여러 건을 한 번에 저장 요청한다. 보낸 순서대로 건별 결과를 돌려준다. */
+async function postQuickBatch(
+  list: QuickFields[],
+): Promise<SaveSaleResponse[]> {
+  const unknown = (message: string): SaveSaleResponse[] =>
+    list.map(() => ({ ok: false, message }));
   try {
     const response = await fetch("/api/sales/quick", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fields }),
+      body: JSON.stringify({ items: list.map((fields) => ({ fields })) }),
     });
-    const body = (await response.json()) as SaveSaleResponse;
-    if (typeof body?.ok !== "boolean") throw new Error("invalid");
-    return body;
+    const body = (await response.json()) as QuickBatchResponse;
+    if (body?.ok === true && Array.isArray(body.results)) {
+      if (body.results.length !== list.length) throw new Error("invalid");
+      return body.results;
+    }
+    if (body?.ok === false && typeof body.message === "string") {
+      return unknown(body.message);
+    }
+    throw new Error("invalid");
   } catch {
-    return {
-      ok: false,
-      message:
-        "서버와 통신하지 못했습니다. 장표에 저장되었는지 확인한 뒤 다시 시도해 주세요.",
-    };
+    return unknown(
+      "서버와 통신하지 못했습니다. 장표에 저장되었는지 확인한 뒤 다시 시도해 주세요.",
+    );
   }
 }
 
@@ -208,34 +220,51 @@ export function QuickRegister({
     let saved = 0;
     // 이번에 등록에 성공한 건 (id → 저장 위치)
     const succeeded = new Map<number, { sheet: string; no: string }>();
-    for (const id of targets) {
-      const item = itemsRef.current.find((i) => i.id === id);
-      // 등록 완료·등록 중인 건은 절대 다시 보내지 않는다
-      if (
-        !item ||
-        item.submit.state === "done" ||
-        item.submit.state === "saving"
-      )
-        continue;
-      updateItem(id, (i) => ({ ...i, submit: { state: "saving" } }));
-      const result = await postQuick(item.fields);
-      if (result.ok) {
-        saved++;
-        succeeded.set(id, { sheet: result.sheet, no: result.no });
-        updateItem(id, (i) => ({
-          ...i,
-          submit: { state: "done", sheet: result.sheet, no: result.no },
-        }));
-      } else {
-        updateItem(id, (i) => ({
-          ...i,
-          submit: {
-            state: "failed",
-            message: result.message,
-            errors: result.errors,
-          },
-        }));
+    // 등록 완료·등록 중인 건은 절대 다시 보내지 않는다
+    const queue = targets
+      .map((id) => itemsRef.current.find((i) => i.id === id))
+      .filter(
+        (item): item is Item =>
+          !!item &&
+          item.submit.state !== "done" &&
+          item.submit.state !== "saving",
+      );
+    const ids = new Set(queue.map((i) => i.id));
+    setItems((prev) =>
+      prev.map((i) =>
+        ids.has(i.id) ? { ...i, submit: { state: "saving" } } : i,
+      ),
+    );
+    // 여러 건을 한 번의 요청으로 보낸다 (Apps Script 호출·잠금·장표 읽기가 1번)
+    for (let start = 0; start < queue.length; start += BATCH_SIZE) {
+      const chunk = queue.slice(start, start + BATCH_SIZE);
+      const results = await postQuickBatch(chunk.map((i) => i.fields));
+      const byId = new Map(chunk.map((item, k) => [item.id, results[k]]));
+      for (const [id, result] of byId) {
+        if (result.ok) {
+          saved++;
+          succeeded.set(id, { sheet: result.sheet, no: result.no });
+        }
       }
+      setItems((prev) =>
+        prev.map((i) => {
+          const result = byId.get(i.id);
+          if (!result) return i;
+          return result.ok
+            ? {
+                ...i,
+                submit: { state: "done", sheet: result.sheet, no: result.no },
+              }
+            : {
+                ...i,
+                submit: {
+                  state: "failed",
+                  message: result.message,
+                  errors: result.errors,
+                },
+              };
+        }),
+      );
     }
     runningRef.current = false;
     setRunning(false);
@@ -611,6 +640,11 @@ function QuickItemCard({
                 <input
                   id={inputId}
                   value={dateBlocked ? "" : item.fields[field.id]}
+                  placeholder={
+                    field.id === "availableDate" && !dateBlocked
+                      ? "년.월 (예: 27.03)"
+                      : undefined
+                  }
                   onChange={(e) => onChange(field.id, e.target.value)}
                   disabled={locked || dateBlocked}
                   aria-invalid={problems ? true : undefined}

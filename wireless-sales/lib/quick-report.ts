@@ -368,13 +368,17 @@ export function parseActivatedAt(raw: string, today: string): string | null {
   return null;
 }
 
-/** 동판 가능일 "27.10.15" (YY.MM.DD) → 2027-10-15 */
-export function parseAvailableDate(raw: string): string | null {
+/**
+ * 동판 가능일 (년.월, 일은 쓰지 않음) → "YY.MM"
+ *   "27.03" / "27.3" / "2027.03" / "27-3" → "27.03". 월은 1~12만.
+ */
+export function parseAvailableMonth(raw: string): string | null {
   const s = raw.replace(/\s+/g, "");
-  const ymd = s.match(/^(\d{2}|\d{4})[./-](\d{1,2})[./-](\d{1,2})\.?$/);
-  if (!ymd) return null;
-  const year = ymd[1].length === 2 ? 2000 + Number(ymd[1]) : Number(ymd[1]);
-  return validDate(year, Number(ymd[2]), Number(ymd[3]));
+  const ym = s.match(/^(\d{2}|20\d{2})[./-](\d{1,2})\.?$/);
+  if (!ym) return null;
+  const month = Number(ym[2]);
+  if (month < 1 || month > 12) return null;
+  return `${ym[1].slice(-2)}.${String(month).padStart(2, "0")}`;
 }
 
 /** 동판 저장값: 빈칸·x → "X", 그 외 글자는 그대로 */
@@ -601,7 +605,7 @@ export function normalizeQuick(
   }
 
   // 동판: 자유입력. 입력한 글자를 그대로 AK열에 저장하고, 빈칸이면 X 로 저장한다.
-  // 동판이 X(또는 빈칸)일 때만 가능일 입력 가능·필수, 그 외 글자가 있으면 가능일 입력 불가(AL열 빈칸)
+  // 동판이 X(또는 빈칸)일 때만 가능일(년.월) 입력 가능·필수, 그 외 글자가 있으면 가능일 입력 불가(AL열 빈칸)
   const dongpan = normalizeDongpan(v("dongpan"));
   row.dongpan = dongpan;
   display.dongpan = dongpan;
@@ -610,17 +614,18 @@ export function normalizeQuick(
   } else if (!v("availableDate")) {
     issues.push({
       field: "availableDate",
-      message: "동판이 X이거나 빈칸이면 가능일을 입력해 주세요. (예: 27.10.15)",
+      message: "동판이 X이거나 빈칸이면 가능일을 입력해 주세요. (예: 27.03)",
     });
   } else {
-    const date = parseAvailableDate(v("availableDate"));
-    if (date) {
-      row.wiredAvailableDate = date;
-      display.availableDate = date;
+    const month = parseAvailableMonth(v("availableDate"));
+    if (month) {
+      // 앞의 ' 는 구글 시트가 27.03 을 숫자(27.03)·날짜로 바꾸지 않고 글자 그대로 두게 한다
+      row.wiredAvailableDate = `'${month}`;
+      display.availableDate = month;
     } else {
       issues.push({
         field: "availableDate",
-        message: `가능일 "${v("availableDate")}" 를 확인해 주세요. (예: 27.10.15)`,
+        message: `가능일 "${v("availableDate")}" 를 확인해 주세요. 년.월로 입력해 주세요. (예: 27.03)`,
       });
     }
   }

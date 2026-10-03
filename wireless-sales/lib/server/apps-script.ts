@@ -4,6 +4,7 @@ import { COLUMN_COUNT, type SheetRowArray } from "@/lib/sheet-columns";
 /*
  * Google Apps Script 웹앱과 통신한다.
  * - 저장: { secret, action: "save", row } → 판매 1건(A~AL 38칸, null 칸은 건드리지 않음)
+ *         { secret, action: "save", rows } → 여러 건을 한 번에 (잠금·장표 읽기 1번)
  * - 조회: { secret, action: "list", sheet? } → 월 시트의 판매내역 (없으면 이번 달)
  * - 삭제: { secret, action: "delete", target }
  * - 목표: { secret, action: "goal-get" | "goal-set", month, goal? }
@@ -38,6 +39,10 @@ export interface AppsScriptSaveResult {
 }
 
 const REQUEST_TIMEOUT_MS = 30_000;
+/** 여러 건 저장은 건수만큼 쓰기가 늘어나므로 조금 더 기다린다 */
+const BATCH_TIMEOUT_MS = 60_000;
+/** Apps Script save-handler.gs 의 WS_SAVE_BATCH_MAX 와 같아야 한다 */
+export const SAVE_BATCH_MAX = 30;
 
 function readConfig(): { url: string; secret: string } {
   const url = process.env.APPS_SCRIPT_URL?.trim();
@@ -67,6 +72,7 @@ function shortText(value: unknown, maxLength = 200): string {
 async function postToAppsScript(
   payload: Record<string, unknown>,
   rejectedMessage: string,
+  timeoutMs = REQUEST_TIMEOUT_MS,
 ): Promise<Record<string, unknown>> {
   const { url, secret } = readConfig();
 
@@ -79,7 +85,7 @@ async function postToAppsScript(
       body: JSON.stringify({ secret, ...payload }),
       redirect: "follow",
       cache: "no-store",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     const timedOut =
@@ -117,15 +123,7 @@ async function postToAppsScript(
 export async function saveRowToAppsScript(
   row: SheetRowArray,
 ): Promise<AppsScriptSaveResult> {
-  if (row.length !== COLUMN_COUNT) {
-    throw new AppsScriptError(
-      "bad_response",
-      `전송할 행이 ${COLUMN_COUNT}칸(A~AL)이 아닙니다.`,
-    );
-  }
-  if (row[1] !== null) {
-    throw new AppsScriptError("bad_response", "B열(No.)은 보낼 수 없습니다.");
-  }
+  checkRow(row);
   const data = await postToAppsScript(
     { action: "save", row },
     "Apps Script가 저장을 거부했습니다.",
@@ -142,6 +140,101 @@ export async function saveRowToAppsScript(
   }
 
   return { sheet, row: rowNumber, no, message: shortText(data.message) };
+}
+
+function checkRow(row: SheetRowArray) {
+  if (row.length !== COLUMN_COUNT) {
+    throw new AppsScriptError(
+      "bad_response",
+      `전송할 행이 ${COLUMN_COUNT}칸(A~AL)이 아닙니다.`,
+    );
+  }
+  if (row[1] !== null) {
+    throw new AppsScriptError("bad_response", "B열(No.)은 보낼 수 없습니다.");
+  }
+}
+
+export type AppsScriptBatchItem =
+  | { ok: true; sheet: string; row: number; no: string }
+  | { ok: false; error: AppsScriptError };
+
+/**
+ * 여러 건을 Apps Script 한 번 호출로 저장한다 (잠금·열 구조 확인·장표 읽기 1번).
+ * 결과는 보낸 순서대로 건별 성공/실패.
+ * Apps Script 가 아직 예전 버전(여러 건 저장 미지원)이면, 아무것도 쓰지 않고
+ * 거부한 것이 확실하므로 1건씩 저장하는 예전 방식으로 이어서 처리한다.
+ */
+export async function saveRowsToAppsScript(
+  rows: SheetRowArray[],
+): Promise<AppsScriptBatchItem[]> {
+  if (rows.length === 0 || rows.length > SAVE_BATCH_MAX) {
+    throw new AppsScriptError(
+      "bad_response",
+      `한 번에 1~${SAVE_BATCH_MAX}건까지 저장할 수 있습니다.`,
+    );
+  }
+  rows.forEach(checkRow);
+
+  let data: Record<string, unknown>;
+  try {
+    data = await postToAppsScript(
+      { action: "save", rows },
+      "Apps Script가 저장을 거부했습니다.",
+      BATCH_TIMEOUT_MS,
+    );
+  } catch (error) {
+    // 예전 save-handler 는 row 가 없으면 저장 전에 "38칸(A~AL)이 아닙니다" 로 거부한다
+    if (
+      error instanceof AppsScriptError &&
+      error.code === "rejected" &&
+      error.message.includes("칸(A~AL)이 아닙니다")
+    ) {
+      const fallback: AppsScriptBatchItem[] = [];
+      for (const row of rows) {
+        try {
+          fallback.push({ ok: true, ...(await saveRowToAppsScript(row)) });
+        } catch (e) {
+          if (!(e instanceof AppsScriptError)) throw e;
+          fallback.push({ ok: false, error: e });
+        }
+      }
+      return fallback;
+    }
+    throw error;
+  }
+
+  const sheet = shortText(data.sheet, 50);
+  const results = Array.isArray(data.results) ? data.results : null;
+  if (!sheet || !results || results.length !== rows.length) {
+    throw new AppsScriptError(
+      "bad_response",
+      "Apps Script 응답에 건별 저장 결과가 없습니다.",
+    );
+  }
+  return results.map((item): AppsScriptBatchItem => {
+    const r = (item ?? {}) as Record<string, unknown>;
+    const rowNumber = Number(r.row);
+    const no = r.no === undefined || r.no === null ? "" : String(r.no);
+    if (r.ok === true && no && Number.isInteger(rowNumber)) {
+      return { ok: true, sheet, row: rowNumber, no };
+    }
+    if (r.ok === true) {
+      return {
+        ok: false,
+        error: new AppsScriptError(
+          "bad_response",
+          "Apps Script 응답에 저장 위치(row, no)가 없습니다.",
+        ),
+      };
+    }
+    return {
+      ok: false,
+      error: new AppsScriptError(
+        "rejected",
+        shortText(r.message) || "Apps Script가 저장을 거부했습니다.",
+      ),
+    };
+  });
 }
 
 export interface AppsScriptListRow {

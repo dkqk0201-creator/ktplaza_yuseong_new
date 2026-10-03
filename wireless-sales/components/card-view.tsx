@@ -1,16 +1,19 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { copyText } from "@/components/copy-text";
 import { OXMark } from "@/components/inspection-view";
 import { useFreshSalesData } from "@/components/sales-data-provider";
 import { SalesDataGate } from "@/components/sales-data-status";
 import {
   EmptyBox,
   FilterChips,
+  Notice,
   StaffSelect,
   StatusBadge,
   SummaryTile,
 } from "@/components/work-ui";
+import { cardPendingListMessage, cardPendingMessage } from "@/lib/card-message";
 import { dateText, maskedCtn } from "@/lib/sale-display";
 import { isO, type SheetSale } from "@/lib/sheet-record";
 
@@ -18,6 +21,7 @@ import { isO, type SheetSale } from "@/lib/sheet-record";
  * 카드실적: 제카(AE)가 O 인 판매 중 카드실적 검수(AG)가 O 가 아닌 건을 찾는다.
  * 제카가 X 인 판매(카드 없음)는 목록에 절대 나오지 않는다.
  * 점장이 장표 AG 칸에 O 를 입력하고 새로고침하면 완료로 바뀐다.
+ * 행을 누르면 상세보기, 미검수 건은 직원에게 보낼 카톡용 글을 복사할 수 있다 (CTN 은 가린 번호).
  */
 
 type Filter = "pending" | "all" | "done";
@@ -36,6 +40,23 @@ export function CardView() {
 function CardList({ sales }: { sales: SheetSale[] }) {
   const [filter, setFilter] = useState<Filter>("pending");
   const [staff, setStaff] = useState("");
+  const [selectedRow, setSelectedRow] = useState<number | null>(null);
+  const [copyState, setCopyState] = useState<
+    { ok: true; message: string } | { ok: false; text: string } | null
+  >(null);
+  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => clearTimeout(hideTimer.current ?? undefined), []);
+
+  async function copy(text: string, message: string) {
+    clearTimeout(hideTimer.current ?? undefined);
+    if (await copyText(text)) {
+      setCopyState({ ok: true, message });
+      hideTimer.current = setTimeout(() => setCopyState(null), 2500);
+    } else {
+      // 자동 복사가 막힌 환경: 글을 보여주고 직접 복사하게 한다
+      setCopyState({ ok: false, text });
+    }
+  }
 
   const cards = useMemo(() => cardSales(sales), [sales]);
   const staffNames = useMemo(
@@ -48,9 +69,19 @@ function CardList({ sales }: { sales: SheetSale[] }) {
   const rows = (filter === "all" ? byStaff : filter === "done" ? done : pending)
     .slice()
     .sort((a, b) => a.row - b.row);
+  const selected = cards.find((s) => s.row === selectedRow) ?? null;
 
   return (
     <>
+      {copyState?.ok && (
+        <Notice
+          message={copyState.message}
+          onClose={() => setCopyState(null)}
+        />
+      )}
+      {copyState && !copyState.ok && (
+        <ManualCopy text={copyState.text} onClose={() => setCopyState(null)} />
+      )}
       <section aria-label="카드실적 요약" className="grid grid-cols-3 gap-3">
         <SummaryTile
           label="총 카드건수"
@@ -85,8 +116,21 @@ function CardList({ sales }: { sales: SheetSale[] }) {
             { value: "done", label: "완료", count: done.length },
           ]}
         />
-        <div className="ml-auto">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <StaffSelect staff={staffNames} value={staff} onChange={setStaff} />
+          <button
+            type="button"
+            onClick={() =>
+              void copy(
+                cardPendingListMessage(pending),
+                `미검수 ${pending.length}건 카톡용 내용이 복사되었습니다.`,
+              )
+            }
+            disabled={pending.length === 0}
+            className="h-9 rounded-lg bg-brand px-3 text-sm font-semibold text-white disabled:opacity-40"
+          >
+            미검수 전체 복사{staff ? ` (${staff})` : ""}
+          </button>
         </div>
       </div>
 
@@ -125,9 +169,23 @@ function CardList({ sales }: { sales: SheetSale[] }) {
               </thead>
               <tbody className="divide-y divide-line">
                 {rows.map((sale) => (
-                  <tr key={sale.row}>
+                  <tr
+                    key={sale.row}
+                    onClick={() => setSelectedRow(sale.row)}
+                    className="cursor-pointer hover:bg-zinc-50"
+                  >
                     <td className="px-3 py-3 text-ink-muted tabular-nums">
-                      {sale.no}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedRow(sale.row);
+                        }}
+                        aria-label={`No.${sale.no} ${sale.customer} 카드 상세 보기`}
+                        className="font-medium text-ink-sub hover:underline"
+                      >
+                        {sale.no}
+                      </button>
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-ink-sub tabular-nums">
                       {dateText(sale.activatedAt)}
@@ -162,32 +220,35 @@ function CardList({ sales }: { sales: SheetSale[] }) {
 
           <ul className="space-y-2.5 md:hidden">
             {rows.map((sale) => (
-              <li
-                key={sale.row}
-                className="rounded-xl border border-line bg-white p-4"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs text-ink-muted tabular-nums">
-                    No.{sale.no} · {dateText(sale.activatedAt)}
-                  </span>
-                  <StatusBadge tone={isO(sale.cardChecked) ? "good" : "warn"}>
-                    {isO(sale.cardChecked) ? "완료" : "미검수"}
-                  </StatusBadge>
-                </div>
-                <div className="mt-2 flex items-baseline justify-between gap-2">
-                  <span className="text-base font-semibold text-ink">
-                    {sale.customer || "-"}
-                  </span>
-                  <span className="text-sm font-semibold text-ink">
-                    {sale.cardType || "-"}
-                  </span>
-                </div>
-                <div className="mt-1 flex justify-between text-sm text-ink-sub">
-                  <span>{sale.staff || "-"}</span>
-                  <span className="tabular-nums">
-                    {sale.ctn ? maskedCtn(sale.ctn) : ""}
-                  </span>
-                </div>
+              <li key={sale.row}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedRow(sale.row)}
+                  className="w-full rounded-xl border border-line bg-white p-4 text-left active:bg-zinc-50"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-ink-muted tabular-nums">
+                      No.{sale.no} · {dateText(sale.activatedAt)}
+                    </span>
+                    <StatusBadge tone={isO(sale.cardChecked) ? "good" : "warn"}>
+                      {isO(sale.cardChecked) ? "완료" : "미검수"}
+                    </StatusBadge>
+                  </div>
+                  <div className="mt-2 flex items-baseline justify-between gap-2">
+                    <span className="text-base font-semibold text-ink">
+                      {sale.customer || "-"}
+                    </span>
+                    <span className="text-sm font-semibold text-ink">
+                      {sale.cardType || "-"}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex justify-between text-sm text-ink-sub">
+                    <span>{sale.staff || "-"}</span>
+                    <span className="tabular-nums">
+                      {sale.ctn ? maskedCtn(sale.ctn) : ""}
+                    </span>
+                  </div>
+                </button>
               </li>
             ))}
           </ul>
@@ -197,6 +258,155 @@ function CardList({ sales }: { sales: SheetSale[] }) {
         장표의 카드실적 검수(AG열)에 O 를 입력한 뒤 새로고침하면 완료로
         바뀝니다.
       </p>
+
+      {selected && (
+        <CardDetail
+          sale={selected}
+          copyNotice={copyState}
+          onCopy={() =>
+            void copy(
+              cardPendingMessage(selected),
+              "카톡용 내용이 복사되었습니다.",
+            )
+          }
+          onClose={() => setSelectedRow(null)}
+        />
+      )}
     </>
+  );
+}
+
+function ManualCopy({ text, onClose }: { text: string; onClose: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold">
+          자동 복사가 안 되는 환경입니다. 아래 내용을 길게 눌러 직접 복사해
+          주세요.
+        </span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-xs font-medium underline underline-offset-2"
+        >
+          닫기
+        </button>
+      </div>
+      <pre className="mt-2 rounded bg-white p-2 text-xs whitespace-pre-wrap text-ink">
+        {text}
+      </pre>
+    </div>
+  );
+}
+
+function CardDetail({
+  sale,
+  copyNotice,
+  onCopy,
+  onClose,
+}: {
+  sale: SheetSale;
+  copyNotice:
+    | { ok: true; message: string }
+    | { ok: false; text: string }
+    | null;
+  onCopy: () => void;
+  onClose: () => void;
+}) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const pending = !isO(sale.cardChecked);
+
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (e: KeyboardEvent) =>
+      e.key === "Escape" && onCloseRef.current();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const rows: [string, string][] = [
+    ["No.", sale.no || "-"],
+    ["개통일", dateText(sale.activatedAt)],
+    ["직원명", sale.staff || "-"],
+    ["고객명", sale.customer || "-"],
+    ["CTN", sale.ctn ? maskedCtn(sale.ctn) : "-"],
+    ["카드 종류", sale.cardType || "-"],
+    [
+      "카드실적 검수",
+      pending ? `미검수 (${sale.cardChecked || "빈칸"})` : "완료 (O)",
+    ],
+  ];
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="card-detail-title"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-t-2xl bg-white p-5 shadow-xl sm:rounded-2xl"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <h2 id="card-detail-title" className="text-lg font-bold text-ink">
+            카드실적 상세
+          </h2>
+          <StatusBadge tone={pending ? "warn" : "good"}>
+            {pending ? "미검수" : "완료"}
+          </StatusBadge>
+        </div>
+        <dl className="mt-4 divide-y divide-line rounded-xl border border-line">
+          {rows.map(([label, value]) => (
+            <div key={label} className="flex justify-between gap-3 px-4 py-2.5">
+              <dt className="text-sm text-ink-sub">{label}</dt>
+              <dd className="text-right text-sm font-semibold text-ink tabular-nums">
+                {value}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        {copyNotice?.ok && (
+          <p
+            role="status"
+            className="mt-3 text-sm font-semibold text-emerald-700"
+          >
+            ✓ {copyNotice.message}
+          </p>
+        )}
+        <div className="mt-5 grid grid-cols-2 gap-2">
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            className="h-11 rounded-lg border border-line text-[15px] font-semibold text-ink-sub hover:bg-zinc-50"
+          >
+            닫기
+          </button>
+          <button
+            type="button"
+            onClick={onCopy}
+            disabled={!pending}
+            title={pending ? undefined : "검수 완료된 카드입니다."}
+            className="h-11 rounded-lg bg-brand text-[15px] font-semibold text-white disabled:opacity-40"
+          >
+            카톡용 복사
+          </button>
+        </div>
+        {!pending && (
+          <p className="mt-2 text-center text-xs text-ink-muted">
+            검수 완료된 카드는 안내를 보낼 필요가 없습니다.
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
