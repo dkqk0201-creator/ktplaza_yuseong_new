@@ -13,14 +13,20 @@ import {
   StatusBadge,
   SummaryTile,
 } from "@/components/work-ui";
-import { cardPendingListMessage, cardPendingMessage } from "@/lib/card-message";
+import {
+  cardName,
+  cardPendingListMessage,
+  cardPendingMessage,
+  isCardTarget,
+} from "@/lib/card-message";
 import { formatCtn } from "@/lib/format";
 import { dateText } from "@/lib/sale-display";
 import { isO, type SheetSale } from "@/lib/sheet-record";
 
 /*
- * 카드실적: 제카(AE)가 O 인 판매 중 카드실적 검수(AG)가 O 가 아닌 건을 찾는다.
- * 제카가 X 인 판매(카드 없음)는 목록에 절대 나오지 않는다.
+ * 카드실적: 제카(AE)가 X·빈칸·"-" 가 아닌 판매(예: 우리, 신한) 중 카드실적 검수(AG)가 O 가 아닌 건을 찾는다.
+ * 제카가 X·빈칸인 판매(카드 없음)는 목록에 나오지 않는다. AF열은 대상 판정에 쓰지 않는다.
+ * 카드 종류는 AE열 제카 값을 보여준다.
  * 점장이 장표 AG 칸에 O 를 입력하고 새로고침하면 완료로 바뀐다.
  * 행을 누르면 상세보기, 미검수 건은 직원에게 보낼 카톡용 글을 복사할 수 있다 (CTN 은 전체 번호).
  */
@@ -28,7 +34,7 @@ import { isO, type SheetSale } from "@/lib/sheet-record";
 type Filter = "pending" | "all" | "done";
 
 export function cardSales(sales: SheetSale[]): SheetSale[] {
-  return sales.filter((s) => isO(s.jeca));
+  return sales.filter(isCardTarget);
 }
 
 export function CardView() {
@@ -201,7 +207,7 @@ function CardList({ sales }: { sales: SheetSale[] }) {
                       {sale.ctn ? formatCtn(sale.ctn) : "-"}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-ink">
-                      {sale.cardType || "-"}
+                      {cardName(sale)}
                     </td>
                     <td className="px-3 py-3">
                       <OXMark value={sale.cardChecked} />
@@ -240,7 +246,7 @@ function CardList({ sales }: { sales: SheetSale[] }) {
                       {sale.customer || "-"}
                     </span>
                     <span className="text-sm font-semibold text-ink">
-                      {sale.cardType || "-"}
+                      {cardName(sale)}
                     </span>
                   </div>
                   <div className="mt-1 flex justify-between text-sm text-ink-sub">
@@ -338,7 +344,7 @@ function CardDetail({
     ["직원명", sale.staff || "-"],
     ["고객명", sale.customer || "-"],
     ["CTN", sale.ctn ? formatCtn(sale.ctn) : "-"],
-    ["카드 종류", sale.cardType || "-"],
+    ["카드 종류", cardName(sale)],
     [
       "카드실적 검수",
       pending ? `미검수 (${sale.cardChecked || "빈칸"})` : "완료 (O)",

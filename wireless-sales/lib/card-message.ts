@@ -7,6 +7,30 @@ import type { SheetSale } from "@/lib/sheet-record";
  * CTN 은 전체 번호(010-1234-5678)를 쓴다 (카드실적 화면에서만).
  */
 
+/** 카드실적 대상 아님으로 보는 AE열 값 */
+const NOT_CARD = new Set(["", "X", "-"]);
+
+/**
+ * 카드실적 대상 여부: AE열 '제카' 값만 본다 (AF열은 판정에 쓰지 않는다).
+ * X·빈칸·"-" 가 아니면 대상 (예: 우리, 신한, 현대, O).
+ */
+export function isCardTarget(sale: SheetSale): boolean {
+  return !NOT_CARD.has(sale.jeca.trim().toUpperCase());
+}
+
+/**
+ * 화면·카톡에 보여줄 카드 종류 = AE열 제카 값 (예: 우리).
+ * 예전 방식으로 AE 에 "O" 만 있고 카드 이름이 AF열에 있는 판매는 AF 값을 보여준다.
+ */
+export function cardName(sale: SheetSale): string {
+  const jeca = sale.jeca.trim();
+  if (jeca.toUpperCase() === "O") {
+    const af = sale.cardType.trim();
+    return af && !NOT_CARD.has(af.toUpperCase()) ? af : "O";
+  }
+  return jeca || "-";
+}
+
 const TITLE = "[카드실적 미검수 안내]";
 const CLOSING = "카드실적 검수 확인 부탁드립니다.";
 
@@ -23,7 +47,7 @@ export function cardPendingMessage(sale: SheetSale): string {
     `고객 : ${sale.customer || "-"}`,
     `개통일 : ${dateText(sale.activatedAt)}`,
     `CTN : ${ctnText(sale)}`,
-    `카드 : ${sale.cardType || "-"}`,
+    `카드 : ${cardName(sale)}`,
     "",
     CLOSING,
   ].join("\n");
@@ -44,7 +68,7 @@ export function cardPendingListMessage(sales: readonly SheetSale[]): string {
       "",
       ...list.map(
         (sale, i) =>
-          `${i + 1}. ${sale.customer || "-"} / ${dateText(sale.activatedAt)} / ${sale.cardType || "-"} / ${ctnText(sale)}`,
+          `${i + 1}. ${sale.customer || "-"} / ${dateText(sale.activatedAt)} / ${cardName(sale)} / ${ctnText(sale)}`,
       ),
     ].join("\n");
   });
