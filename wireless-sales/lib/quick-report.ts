@@ -377,6 +377,17 @@ export function parseAvailableDate(raw: string): string | null {
   return validDate(year, Number(ymd[2]), Number(ymd[3]));
 }
 
+/** 동판 저장값: 빈칸·x → "X", 그 외 글자는 그대로 */
+export function normalizeDongpan(raw: string): string {
+  const value = raw.trim();
+  return value === "" || value.toUpperCase() === "X" ? "X" : value;
+}
+
+/** 가능일은 동판이 X 이거나 빈칸일 때만 입력할 수 있다 */
+export function availableDateAllowed(dongpanRaw: string): boolean {
+  return normalizeDongpan(dongpanRaw) === "X";
+}
+
 const CATEGORY_MAP: Record<string, string> = {
   기변: "기기변경",
   기기변경: "기기변경",
@@ -589,43 +600,29 @@ export function normalizeQuick(
     });
   }
 
-  // 동판: 신동/순동/약동/X, 비어 있으면 X.
-  // 동판이 X(또는 빈칸)이면 가능일 필수, 그 외(신동/순동/약동)는 가능일 입력 불필요
-  const dongpan =
-    v("dongpan") === ""
-      ? "X"
-      : v("dongpan").toUpperCase() === "X"
-        ? "X"
-        : v("dongpan");
-  if (["신동", "순동", "약동", "X"].includes(dongpan)) {
-    row.dongpan = dongpan;
-    display.dongpan = dongpan;
-    if (!v("availableDate")) {
-      if (dongpan === "X") {
-        issues.push({
-          field: "availableDate",
-          message:
-            "동판이 X 이거나 빈칸이면 가능일이 필요합니다. (예: 27.10.15)",
-        });
-      }
-      // 신동/순동/약동이고 가능일이 없으면 가능일 칸은 건드리지 않는다 (빈칸 유지)
-    } else {
-      const date = parseAvailableDate(v("availableDate"));
-      if (date) {
-        row.wiredAvailableDate = date;
-        display.availableDate = date;
-      } else {
-        issues.push({
-          field: "availableDate",
-          message: `가능일 "${v("availableDate")}" 를 확인해 주세요. (예: 27.10.15)`,
-        });
-      }
-    }
-  } else {
+  // 동판: 자유입력. 입력한 글자를 그대로 AK열에 저장하고, 빈칸이면 X 로 저장한다.
+  // 동판이 X(또는 빈칸)일 때만 가능일 입력 가능·필수, 그 외 글자가 있으면 가능일 입력 불가(AL열 빈칸)
+  const dongpan = normalizeDongpan(v("dongpan"));
+  row.dongpan = dongpan;
+  display.dongpan = dongpan;
+  if (!availableDateAllowed(fields.dongpan)) {
+    row.wiredAvailableDate = "";
+  } else if (!v("availableDate")) {
     issues.push({
-      field: "dongpan",
-      message: "동판은 신동 / 순동 / 약동 / X 중 하나여야 합니다.",
+      field: "availableDate",
+      message: "동판이 X이거나 빈칸이면 가능일을 입력해 주세요. (예: 27.10.15)",
     });
+  } else {
+    const date = parseAvailableDate(v("availableDate"));
+    if (date) {
+      row.wiredAvailableDate = date;
+      display.availableDate = date;
+    } else {
+      issues.push({
+        field: "availableDate",
+        message: `가능일 "${v("availableDate")}" 를 확인해 주세요. (예: 27.10.15)`,
+      });
+    }
   }
 
   if (v("customerPromise")) {

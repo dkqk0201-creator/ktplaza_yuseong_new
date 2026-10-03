@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/work-ui";
 import {
   QUICK_FIELDS,
   STAFF_REPORT_TEMPLATE,
+  availableDateAllowed,
   normalizeQuick,
   parseQuickReports,
   saleDuplicateKey,
@@ -575,6 +576,10 @@ function QuickItemCard({
           const saved = field.column !== null;
           const shown = normalized.display[field.id];
           const inputId = `quick-${item.id}-${field.id}`;
+          // 동판에 X 이외의 글자가 있으면 가능일은 입력 불가 (AL열 빈칸 저장)
+          const dateBlocked =
+            field.id === "availableDate" &&
+            !availableDateAllowed(item.fields.dongpan);
           return (
             <div
               key={field.id}
@@ -605,9 +610,9 @@ function QuickItemCard({
               ) : (
                 <input
                   id={inputId}
-                  value={item.fields[field.id]}
+                  value={dateBlocked ? "" : item.fields[field.id]}
                   onChange={(e) => onChange(field.id, e.target.value)}
-                  disabled={locked}
+                  disabled={locked || dateBlocked}
                   aria-invalid={problems ? true : undefined}
                   className={`mt-1 h-10 w-full rounded-lg border px-3 text-base outline-none focus:border-brand disabled:bg-zinc-50 ${
                     problems
@@ -618,7 +623,13 @@ function QuickItemCard({
                   }`}
                 />
               )}
+              {dateBlocked && (
+                <p className="mt-0.5 text-xs text-ink-muted">
+                  동판에 값이 있어 가능일은 입력할 수 없습니다. (AL열 빈칸)
+                </p>
+              )}
               {saved &&
+                !dateBlocked &&
                 shown !== undefined &&
                 shown !== item.fields[field.id].trim() && (
                   <p className="mt-0.5 text-xs text-ink-muted">
