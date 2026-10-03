@@ -10,7 +10,7 @@ import {
   editText,
   isAmountKey,
   parseEditAmount,
-  saleChecks,
+  saleRecalcBase,
   validateEdits,
   type SaleChange,
 } from "@/lib/sale-edit";
@@ -186,7 +186,7 @@ export function SaleDetail({
         ctn: sale.ctn,
       },
       changes: list,
-      checks: saleChecks(sale, list),
+      base: saleRecalcBase(sale),
     });
     deletingRef.current = false;
     setSaving(false);

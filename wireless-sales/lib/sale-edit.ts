@@ -52,8 +52,8 @@ export interface SaleChange {
 }
 
 /**
- * 쓰지는 않고 장표 현재 값이 화면에서 본 값(before)과 같은지만 확인하는 칸.
- * AB·AC 재계산에 쓰였지만 이번에 바꾸지 않는 칸(N·U·Z·AA·AB·AC)을
+ * 쓰지는 않고 장표 현재 값이 before 와 같은지만 확인하는 칸.
+ * AB·AC 계산에 쓴 N·U·Z·AA 중 이번에 바꾸지 않는 칸을
  * 그사이 다른 사람이 고쳤다면 Apps Script 가 수정을 거부한다.
  */
 export interface SaleCheck {
@@ -151,20 +151,83 @@ export function calcUsedPhone(values: {
   };
 }
 
-function touchesRecalc(keys: Iterable<ColumnKey>): boolean {
-  for (const key of keys)
-    if ((USED_PHONE_RECALC_KEYS as readonly ColumnKey[]).includes(key))
-      return true;
-  return false;
+type RecalcKey = (typeof USED_PHONE_RECALC_KEYS)[number];
+/** AB·AC 계산 기준값: N·U·Z·AA·AB·AC 의 장표 값 (화면에서 본 값 또는 서버가 방금 읽은 값) */
+export type RecalcBase = Record<RecalcKey, string>;
+
+/** 금액 비교용: "-"·빈칸·숫자가 아님 → null */
+function baseAmount(text: string): number | null {
+  const t = text.replace(/[\s,]/g, "").replace(/원$/, "");
+  return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : null;
+}
+
+export interface UsedPhonePlan {
+  /** 써야 하는 AB·AC (before = 기준값, after = 계산값) */
+  writes: {
+    key: "usedPhoneRemaining" | "finalTotal";
+    before: string;
+    after: number;
+  }[];
+  /** 쓰지 않고 대조만 하는 N·U·Z·AA */
+  checks: SaleCheck[];
 }
 
 /**
- * 판매 수정 저장 때마다 최종값(바꾼 칸은 새 값, 안 바꾼 칸은 화면 값)으로 AB·AC 를 계산해
- * 지금 값과 다르면 자동 변경으로 함께 저장한다.
- *   - Z·AA 를 바꾸지 않아도 AB·AC 가 계산 결과와 다르면 바로잡는다 (예: Z="-", AA=50000, AB=0 → AB=-50000).
- *   - 직접 입력한 AB·AC 는 계산값으로 대체한다.
- *   - 이미 계산 결과와 같으면 AB·AC 는 쓰지 않는다.
+ * 판매 수정 1건의 AB·AC 처리 계획 (화면 표시와 서버 저장이 같은 함수를 쓴다).
+ *   - 최종값 = 이번에 바꾸는 칸은 새 값, 나머지는 base(장표 값)
+ *   - AB = Z − AA, AC = N + U + AB ("-"·빈칸은 계산 시에만 0, 음수 그대로)
+ *   - AB·AC 가 base 와 다르면 쓴다 → 이미 틀어져 있던 AB·AC 도 바로잡는다 (거부하지 않음)
+ *   - AB·AC 를 쓸 때만, 계산에 쓴 N·U·Z·AA 중 이번에 바꾸지 않는 칸을 checks 로 보내
+ *     그사이 다른 사람이 고쳤는지 Apps Script 가 대조하게 한다.
+ *   - AB·AC 가 이미 맞으면 아무것도 추가하지 않는다 (일반 수정은 기존과 동일).
+ * changes 에 AB·AC 가 있어도 무시한다 (AB·AC 는 항상 계산값).
  */
+export function planUsedPhoneRecalc(
+  changes: readonly { key: ColumnKey; after: string }[],
+  base: RecalcBase,
+): UsedPhonePlan {
+  const changed = new Map<ColumnKey, string>();
+  for (const c of changes) {
+    if (c.key !== "usedPhoneRemaining" && c.key !== "finalTotal") {
+      changed.set(c.key, c.after);
+    }
+  }
+  const final = (key: RecalcKey) => changed.get(key) ?? base[key];
+  const result = calcUsedPhone({
+    securedTotal: final("securedTotal"),
+    usedTotal: final("usedTotal"),
+    usedPhoneSale: final("usedPhoneSale"),
+    usedPhoneUsed: final("usedPhoneUsed"),
+  });
+  const writes: UsedPhonePlan["writes"] = [];
+  for (const key of ["usedPhoneRemaining", "finalTotal"] as const) {
+    if (baseAmount(base[key]) !== result[key]) {
+      writes.push({ key, before: base[key], after: result[key] });
+    }
+  }
+  const inputs = [
+    "securedTotal",
+    "usedTotal",
+    "usedPhoneSale",
+    "usedPhoneUsed",
+  ] as const;
+  const checks: SaleCheck[] =
+    writes.length === 0
+      ? []
+      : inputs
+          .filter((key) => !changed.has(key))
+          .map((key) => ({ key, before: base[key] }));
+  return { writes, checks };
+}
+
+/** 화면에서 본 N·U·Z·AA·AB·AC (판매 수정 요청과 함께 보내 서버 계산 기준으로 쓴다) */
+export function saleRecalcBase(sale: SheetSale): RecalcBase {
+  return Object.fromEntries(
+    USED_PHONE_RECALC_KEYS.map((key) => [key, editText(sale, key)]),
+  ) as RecalcBase;
+}
+
+/** 화면 표시용: 바꾼 칸 + AB·AC 자동 변경 (서버가 같은 planUsedPhoneRecalc 로 다시 계산해 저장) */
 function applyUsedPhoneRule(
   sale: SheetSale,
   changes: SaleChange[],
@@ -172,85 +235,17 @@ function applyUsedPhoneRule(
   const rest = changes.filter(
     (c) => c.key !== "usedPhoneRemaining" && c.key !== "finalTotal",
   );
-  const final = (key: ColumnKey) =>
-    rest.find((c) => c.key === key)?.after ?? editText(sale, key);
-  const result = calcUsedPhone({
-    securedTotal: final("securedTotal"),
-    usedTotal: final("usedTotal"),
-    usedPhoneSale: final("usedPhoneSale"),
-    usedPhoneUsed: final("usedPhoneUsed"),
-  });
-  const auto: SaleChange[] = [];
-  for (const key of ["usedPhoneRemaining", "finalTotal"] as const) {
-    const before = editText(sale, key);
-    if (parseEditAmount(before) !== result[key]) {
-      auto.push({
-        key,
-        before,
-        after: String(result[key]),
-        auto: true,
-        autoNote: USED_PHONE_NOTE,
-      });
-    }
-  }
-  return [...rest, ...auto];
-}
-
-/**
- * 판매 수정 요청과 함께 보낼 "확인만 하는 칸".
- * N·U·Z·AA·AB·AC 중 하나라도 바꾸면, 나머지(이번에 쓰지 않는 칸)의 화면 값을 보내
- * 그사이 다른 사람이 고쳤는지 Apps Script 가 대조하게 한다.
- */
-export function saleChecks(
-  sale: SheetSale,
-  changes: SaleChange[],
-): SaleCheck[] {
-  if (!touchesRecalc(changes.map((c) => c.key))) return [];
-  const changed = new Set<ColumnKey>(changes.map((c) => c.key));
-  return USED_PHONE_RECALC_KEYS.filter((key) => !changed.has(key)).map(
-    (key) => ({ key, before: editText(sale, key) }),
-  );
-}
-
-/**
- * 서버 재검증: N·U·Z·AA·AB·AC 중 하나라도 바꾸는 요청이면 6칸이 모두 (바꾸는 칸 또는 확인 칸으로) 있어야 하고,
- * 최종 AB·AC 가 위 규칙으로 계산한 값과 같아야 한다. 맞으면 null, 아니면 오류 문구.
- * 6칸을 건드리지 않는 요청에는 확인 칸이 없어야 한다.
- */
-export function verifyUsedPhoneRecalc(
-  changes: readonly { key: ColumnKey; before: string; after: string }[],
-  checks: readonly SaleCheck[],
-): string | null {
-  const refresh =
-    "중고판매·합계(N·U·Z·AA·AB·AC) 값이 맞지 않습니다. 화면을 새로고침한 뒤 다시 수정해 주세요.";
-  if (!touchesRecalc(changes.map((c) => c.key))) {
-    return checks.length === 0 ? null : refresh;
-  }
-  const screen = new Map<ColumnKey, string>();
-  const final = new Map<ColumnKey, string>();
-  for (const c of changes) {
-    screen.set(c.key, c.before);
-    final.set(c.key, c.after);
-  }
-  for (const c of checks) {
-    if (screen.has(c.key)) return refresh; // 바꾸는 칸과 확인 칸이 겹침
-    if (!(USED_PHONE_RECALC_KEYS as readonly ColumnKey[]).includes(c.key)) {
-      return refresh;
-    }
-    screen.set(c.key, c.before);
-    final.set(c.key, c.before);
-  }
-  for (const key of USED_PHONE_RECALC_KEYS) if (!screen.has(key)) return refresh;
-  const result = calcUsedPhone({
-    securedTotal: final.get("securedTotal")!,
-    usedTotal: final.get("usedTotal")!,
-    usedPhoneSale: final.get("usedPhoneSale")!,
-    usedPhoneUsed: final.get("usedPhoneUsed")!,
-  });
-  for (const key of ["usedPhoneRemaining", "finalTotal"] as const) {
-    if (parseEditAmount(final.get(key)!) !== result[key]) return refresh;
-  }
-  return null;
+  const plan = planUsedPhoneRecalc(rest, saleRecalcBase(sale));
+  return [
+    ...rest,
+    ...plan.writes.map((w) => ({
+      key: w.key,
+      before: w.before,
+      after: String(w.after),
+      auto: true,
+      autoNote: USED_PHONE_NOTE,
+    })),
+  ];
 }
 
 /** 금액 칸에 숫자가 아닌 값이 있으면 오류 문구 */

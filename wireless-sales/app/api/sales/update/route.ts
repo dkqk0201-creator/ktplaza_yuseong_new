@@ -4,16 +4,18 @@ import {
   USED_PHONE_RECALC_KEYS,
   isAmountKey,
   parseEditAmount,
-  verifyUsedPhoneRecalc,
-  type SaleCheck,
+  planUsedPhoneRecalc,
+  type RecalcBase,
 } from "@/lib/sale-edit";
 import {
   AppsScriptError,
+  listRowsFromAppsScript,
   updateRowInAppsScript,
   type UpdateCell,
   type UpdateCheckCell,
 } from "@/lib/server/apps-script";
-import type { ColumnKey } from "@/lib/sheet-columns";
+import { COLUMN_INDEX, type ColumnKey } from "@/lib/sheet-columns";
+import { cellText } from "@/lib/sheet-record";
 import type {
   UpdateSaleResponse,
   UpdateSaleTarget,
@@ -25,8 +27,12 @@ import type {
  * - 새 판매 등록(빈 행 찾기) 로직은 쓰지 않는다.
  * - No.(B)·개통일(C)은 바꿀 수 없다.
  * - 실제로 고칠지는 Apps Script 가 장표의 현재 값을 다시 확인해 결정한다.
- * - 중고판매 Z·AA 를 고치면 AB = Z − AA, AC = N + U + AB 가 함께 와야 하고(서버에서 다시 계산해 확인),
- *   이번에 쓰지 않는 N·U·Z·AA·AB·AC 는 checks(확인만 하는 칸)로 장표 현재 값과 대조한다.
+ * - AB·AC 는 서버가 계산한다: AB = Z − AA, AC = N + U + AB (최종값 기준, "-"·빈칸은 0, 음수 그대로).
+ *   화면이 보낸 AB·AC 는 쓰지 않고, 계산값이 장표 값과 다를 때만 함께 저장한다
+ *   (이미 틀어져 있던 AB·AC 도 바로잡는다. 틀어져 있다는 이유로 거부하지 않는다).
+ * - 계산 기준: 화면에서 본 값(base). 예전 화면이라 base 가 없으면 장표에서 그 행을 방금 읽은 값.
+ * - AB·AC 를 쓸 때는 계산에 쓴 N·U·Z·AA 중 바꾸지 않는 칸을 "확인만 하는 칸"으로 보내,
+ *   그사이 다른 사람이 고쳤으면 Apps Script 가 아무것도 쓰지 않고 거부한다.
  */
 
 function reply(body: UpdateSaleResponse, status: number) {
@@ -140,34 +146,32 @@ function parseChanges(input: unknown): ParsedChanges | string {
   return { cells, list };
 }
 
-const CHECKABLE = new Set<string>(USED_PHONE_RECALC_KEYS);
+/** 화면에서 본 N·U·Z·AA·AB·AC. 6칸이 모두 올바른 글자여야 쓰고, 아니면 null */
+function parseBase(input: unknown): RecalcBase | null {
+  if (typeof input !== "object" || input === null) return null;
+  const raw = input as Record<string, unknown>;
+  const base: Record<string, string> = {};
+  for (const key of USED_PHONE_RECALC_KEYS) {
+    const value = raw[key];
+    if (typeof value !== "string" || value.length > 600) return null;
+    base[key] = value;
+  }
+  return base as RecalcBase;
+}
 
-/** 확인만 하는 칸 검사 (없으면 빈 목록) */
-function parseChecks(input: unknown): SaleCheck[] | string {
-  if (input === undefined) return [];
-  if (!Array.isArray(input) || input.length > CHECKABLE.size) {
-    return "수정 요청 형식이 올바르지 않습니다.";
-  }
-  const seen = new Set<string>();
-  const checks: SaleCheck[] = [];
-  for (const item of input) {
-    if (typeof item !== "object" || item === null) {
-      return "수정 요청 형식이 올바르지 않습니다.";
-    }
-    const { key, before } = item as Record<string, unknown>;
-    if (
-      typeof key !== "string" ||
-      !CHECKABLE.has(key) ||
-      seen.has(key) ||
-      typeof before !== "string" ||
-      before.length > 600
-    ) {
-      return "수정 요청 형식이 올바르지 않습니다.";
-    }
-    seen.add(key);
-    checks.push({ key: key as ColumnKey, before });
-  }
-  return checks;
+/** 예전 화면(base 없음): 장표에서 그 행의 N·U·Z·AA·AB·AC 를 방금 읽은 값 */
+async function readBase(
+  target: UpdateSaleTarget,
+): Promise<RecalcBase | null> {
+  const list = await listRowsFromAppsScript(target.sheet);
+  const found = list.rows.find((r) => r.row === target.row);
+  if (!found) return null;
+  return Object.fromEntries(
+    USED_PHONE_RECALC_KEYS.map((key) => [
+      key,
+      cellText(found.values[COLUMN_INDEX[key]]),
+    ]),
+  ) as RecalcBase;
 }
 
 export async function POST(request: Request) {
@@ -189,27 +193,47 @@ export async function POST(request: Request) {
   if (typeof parsed === "string") {
     return reply({ ok: false, message: parsed }, 400);
   }
-  const checks = parseChecks(raw.checks);
-  if (typeof checks === "string") {
-    return reply({ ok: false, message: checks }, 400);
-  }
-  // 중고판매 Z·AA 수정: AB·AC 가 간편등록과 같은 규칙으로 계산되었는지 서버에서 다시 확인
-  const recalcError = verifyUsedPhoneRecalc(parsed.list, checks);
-  if (recalcError) {
-    return reply({ ok: false, message: recalcError }, 400);
-  }
-  const checkCells: UpdateCheckCell[] = checks.map((c) => ({
-    col: columnIndexOf(c.key),
-    before: c.before,
-    check: true,
-  }));
 
   try {
-    const result = await updateRowInAppsScript(
-      target,
-      parsed.cells,
-      checkCells,
+    // AB·AC 는 서버가 계산한다 (화면이 보낸 AB·AC 칸은 버림)
+    const derived = new Set<number>([
+      columnIndexOf("usedPhoneRemaining"),
+      columnIndexOf("finalTotal"),
+    ]);
+    const userCells = parsed.cells.filter((c) => !derived.has(c.col));
+    const userList = parsed.list.filter(
+      (c) => c.key !== "usedPhoneRemaining" && c.key !== "finalTotal",
     );
+    const base = parseBase(raw.base) ?? (await readBase(target));
+    if (!base) {
+      return reply(
+        {
+          ok: false,
+          message:
+            "장표에서 해당 판매 행을 찾지 못했습니다. 화면을 새로고침해 주세요.",
+        },
+        409,
+      );
+    }
+    const plan = planUsedPhoneRecalc(userList, base);
+    const cells: UpdateCell[] = [
+      ...userCells,
+      ...plan.writes.map((w) => ({
+        col: columnIndexOf(w.key),
+        before: w.before,
+        value: w.after,
+      })),
+    ];
+    if (cells.length === 0) {
+      return reply({ ok: false, message: "수정된 항목이 없습니다." }, 400);
+    }
+    const checkCells: UpdateCheckCell[] = plan.checks.map((c) => ({
+      col: columnIndexOf(c.key),
+      before: c.before,
+      check: true,
+    }));
+
+    const result = await updateRowInAppsScript(target, cells, checkCells);
     return reply(
       {
         ok: true,
