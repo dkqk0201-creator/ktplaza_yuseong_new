@@ -1,8 +1,13 @@
 /**
- * 무선 판매 관리 웹앱 — 기존 판매 수정 (Apps Script 에 새 파일 update-handler.gs 로 추가)
+ * 무선 판매 관리 웹앱 — 기존 판매 수정 (Apps Script 의 update-handler.gs 전체를 이 내용으로 교체)
+ *
+ * 다른 수정 코드와 섞이지 않도록 전용 이름을 쓴다:
+ *   요청 action = "sale-update", 함수 = wsHandleSaleUpdate_, 응답 handler = "ws-sale-update"
+ * doPost 맨 위에 아래 한 줄이 있어야 한다:
+ *   var saleUpdateResponse = wsHandleSaleUpdate_(e); if (saleUpdateResponse) return saleUpdateResponse;
  *
  * 요청: {
- *   secret, action: "update",
+ *   secret, action: "sale-update",
  *   target: { sheet, row, no, activatedAt, customer, ctn },   ← 화면에서 본 판매 건
  *   changes: [{ col, before, value }, ...]                     ← 바꿀 칸만 (col: 0=A … 37=AL)
  * }
@@ -14,29 +19,43 @@
  * - 수식이 들어 있는 칸은 고치지 않는다 (요청에 있으면 거부).
  * - 열 구조(6·7행 제목)가 웹앱과 다르면 아무것도 하지 않는다.
  * - LockService 로 저장·삭제·수정이 한 번에 하나만 처리되게 한다.
- * 응답: { ok, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
+ * 시트 이름은 실제 월 시트 이름 "1월"~"12월" 형식 (예: "10월"). "2026년 10월" 같은 화면 표시용 글자는 받지 않는다.
+ * 응답: { ok, handler, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
  */
-function handleUpdateRequest_(e) {
+var WS_SALE_UPDATE_HANDLER = "ws-sale-update";
+
+function wsHandleSaleUpdate_(e) {
   var body = wsBody_(e);
-  if (!body || body.action !== "update") return null;
+  if (!body || body.action !== "sale-update") return null;
+  // 이 handler 의 응답에는 항상 handler 표시를 붙인다 (웹앱이 올바른 코드가 배포됐는지 확인)
+  var reply = function (obj) {
+    obj.handler = WS_SALE_UPDATE_HANDLER;
+    return wsJson_(obj);
+  };
   if (!wsAuthorized_(body)) {
-    return wsJson_({ ok: false, message: "인증에 실패했습니다." });
+    return reply({ ok: false, message: "인증에 실패했습니다." });
   }
 
   var target = body.target || {};
-  var sheetName = String(target.sheet || "");
+  var sheetName = String(target.sheet || "").replace(/\s/g, "");
   var rowNumber = Number(target.row);
   if (!wsIsMonthSheetName_(sheetName)) {
-    return wsJson_({ ok: false, message: "시트 이름이 올바르지 않습니다." });
+    return reply({
+      ok: false,
+      message:
+        "월 시트 이름이 올바르지 않습니다. (받은 값: " +
+        String(target.sheet || "") +
+        " / 필요한 형식: 1월~12월)",
+    });
   }
   if (!(rowNumber >= WS_FIRST_ROW) || Math.floor(rowNumber) !== rowNumber) {
-    return wsJson_({ ok: false, message: "행 번호가 올바르지 않습니다." });
+    return reply({ ok: false, message: "행 번호가 올바르지 않습니다." });
   }
 
   // 바꿀 칸 검사: A, D~AL 만 (B No.·C 개통일 금지), 같은 칸 두 번 금지
   var changes = body.changes;
   if (!Array.isArray(changes) || changes.length === 0 || changes.length > WS_COLUMN_COUNT) {
-    return wsJson_({ ok: false, message: "수정할 항목이 없습니다." });
+    return reply({ ok: false, message: "수정할 항목이 없습니다." });
   }
   var seen = {};
   for (var i = 0; i < changes.length; i++) {
@@ -52,14 +71,14 @@ function handleUpdateRequest_(e) {
       (typeof ch.value !== "string" && typeof ch.value !== "number") ||
       typeof ch.before !== "string"
     ) {
-      return wsJson_({ ok: false, message: "수정할 항목 형식이 올바르지 않습니다." });
+      return reply({ ok: false, message: "수정할 항목 형식이 올바르지 않습니다." });
     }
     seen[col] = true;
   }
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) {
-    return wsJson_({
+    return reply({
       ok: false,
       message: "다른 작업이 진행 중입니다. 잠시 후 다시 시도해 주세요.",
     });
@@ -70,12 +89,21 @@ function handleUpdateRequest_(e) {
     var tz = ss.getSpreadsheetTimeZone();
     var sheet = ss.getSheetByName(sheetName);
     if (!sheet) {
-      return wsJson_({ ok: false, message: sheetName + " 시트를 찾을 수 없습니다." });
+      return reply({ ok: false, message: sheetName + " 시트를 찾을 수 없습니다." });
     }
-    var layoutError = wsLayoutError_(sheet);
-    if (layoutError) return layoutError;
+    var problem = wsLayoutProblem_(sheet);
+    if (problem) {
+      return reply({
+        ok: false,
+        message:
+          sheetName +
+          " 시트의 열 구조가 웹앱과 다릅니다 (" +
+          problem +
+          ") 잘못된 칸에 저장되지 않도록 작업을 멈췄습니다.",
+      });
+    }
     if (rowNumber > sheet.getLastRow()) {
-      return wsJson_({ ok: false, message: "해당 행이 장표에 없습니다." });
+      return reply({ ok: false, message: "해당 행이 장표에 없습니다." });
     }
 
     var range = sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT);
@@ -89,7 +117,7 @@ function handleUpdateRequest_(e) {
     };
 
     if (wsIsEmptySale_(current)) {
-      return wsJson_({
+      return reply({
         ok: false,
         message: "판매 내용이 없는 행입니다. 화면을 새로고침해 주세요.",
       });
@@ -102,7 +130,7 @@ function handleUpdateRequest_(e) {
     for (var k = 0; k < changes.length; k++) {
       var c = Number(changes[k].col);
       if (formulas[c] !== "") {
-        return wsJson_({
+        return reply({
           ok: false,
           message: wsColumnLetter_(c + 1) + "열은 수식 칸이라 수정할 수 없습니다.",
         });
@@ -112,7 +140,7 @@ function handleUpdateRequest_(e) {
       }
     }
     if (mismatches.length > 0) {
-      return wsJson_({
+      return reply({
         ok: false,
         message:
           "장표 내용이 화면과 달라 수정하지 않았습니다 (" +
@@ -128,7 +156,7 @@ function handleUpdateRequest_(e) {
     SpreadsheetApp.flush();
 
     var after = sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT).getValues()[0];
-    return wsJson_({
+    return reply({
       ok: true,
       sheet: sheetName,
       row: rowNumber,

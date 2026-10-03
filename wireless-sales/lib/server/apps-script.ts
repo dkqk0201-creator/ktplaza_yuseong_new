@@ -367,8 +367,12 @@ export interface UpdateCell {
   value: string | number;
 }
 
+/** update-handler.gs 가 모든 응답에 붙이는 표시 (다른 수정 코드의 응답과 구분) */
+export const SALE_UPDATE_HANDLER = "ws-sale-update";
+
 /**
- * 기존 판매 1건 수정: { action: "update", target, changes }
+ * 기존 판매 1건 수정: { action: "sale-update", target, changes }
+ * target.sheet 는 실제 월 시트 이름("10월")이어야 한다 ("2026년 10월" 같은 화면 표시용 글자 금지).
  * Apps Script 가 같은 시트·같은 행의 No.·개통일·고객·CTN 과 바꿀 칸의 현재 값을 확인한 뒤
  * 바뀐 칸만 고친다. 새 행을 찾지 않는다.
  */
@@ -382,10 +386,37 @@ export async function updateRowInAppsScript(
       "No.(B열)·개통일(C열)은 수정할 수 없습니다.",
     );
   }
-  const data = await postToAppsScript(
-    { action: "update", target, changes },
-    "Apps Script가 수정을 거부했습니다.",
-  );
+  if (!/^(1[0-2]|[1-9])월$/.test(target.sheet)) {
+    throw new AppsScriptError(
+      "bad_response",
+      `월 시트 이름이 올바르지 않습니다: ${target.sheet}`,
+    );
+  }
+  const notDeployed = (reply: string) =>
+    new AppsScriptError(
+      "rejected",
+      "Apps Script에 최신 판매 수정 코드(update-handler.gs)가 배포되어 있지 않아 수정하지 않았습니다. " +
+        "안내대로 update-handler.gs 교체·doPost 한 줄 추가 후 새 버전으로 배포해 주세요." +
+        (reply ? ` (Apps Script 응답: ${reply})` : ""),
+    );
+  let data: Record<string, unknown>;
+  try {
+    data = await postToAppsScript(
+      { action: "sale-update", target, changes },
+      "Apps Script가 수정을 거부했습니다.",
+    );
+  } catch (error) {
+    // 우리 update-handler 가 아닌 다른 코드가 대답했으면 원인을 분명히 알려준다
+    if (
+      error instanceof AppsScriptError &&
+      error.code === "rejected" &&
+      error.details.handler !== SALE_UPDATE_HANDLER
+    ) {
+      throw notDeployed(error.message);
+    }
+    throw error;
+  }
+  if (data.handler !== SALE_UPDATE_HANDLER) throw notDeployed("");
   const sheet = shortText(data.sheet, 50);
   const rowNumber = Number(data.row);
   if (
