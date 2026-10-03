@@ -1,13 +1,17 @@
 import {
   EDITABLE_KEYS,
   columnIndexOf,
+  USED_PHONE_RECALC_KEYS,
   isAmountKey,
   parseEditAmount,
+  verifyUsedPhoneRecalc,
+  type SaleCheck,
 } from "@/lib/sale-edit";
 import {
   AppsScriptError,
   updateRowInAppsScript,
   type UpdateCell,
+  type UpdateCheckCell,
 } from "@/lib/server/apps-script";
 import type { ColumnKey } from "@/lib/sheet-columns";
 import type {
@@ -21,6 +25,8 @@ import type {
  * - 새 판매 등록(빈 행 찾기) 로직은 쓰지 않는다.
  * - No.(B)·개통일(C)은 바꿀 수 없다.
  * - 실제로 고칠지는 Apps Script 가 장표의 현재 값을 다시 확인해 결정한다.
+ * - 중고판매 Z·AA 를 고치면 AB = Z − AA, AC = N + U + AB 가 함께 와야 하고(서버에서 다시 계산해 확인),
+ *   이번에 쓰지 않는 N·U·Z·AA·AB·AC 는 checks(확인만 하는 칸)로 장표 현재 값과 대조한다.
  */
 
 function reply(body: UpdateSaleResponse, status: number) {
@@ -87,14 +93,20 @@ function parseTarget(input: unknown): UpdateSaleTarget | null {
   return { sheet, row, no, activatedAt, customer, ctn };
 }
 
+interface ParsedChanges {
+  cells: UpdateCell[];
+  list: { key: ColumnKey; before: string; after: string }[];
+}
+
 /** 바꿀 칸 검사 → Apps Script 로 보낼 칸 (금액은 숫자, 글자는 '로 글자 그대로 저장) */
-function parseChanges(input: unknown): UpdateCell[] | string {
+function parseChanges(input: unknown): ParsedChanges | string {
   if (!Array.isArray(input) || input.length === 0) {
     return "수정된 항목이 없습니다.";
   }
   if (input.length > EDITABLE.size) return "수정할 항목이 너무 많습니다.";
   const seen = new Set<string>();
   const cells: UpdateCell[] = [];
+  const list: ParsedChanges["list"] = [];
   for (const item of input) {
     if (typeof item !== "object" || item === null) return "형식 오류";
     const { key, before, after } = item as Record<string, unknown>;
@@ -123,8 +135,39 @@ function parseChanges(input: unknown): UpdateCell[] | string {
       value = text === "" ? "" : `'${text}`;
     }
     cells.push({ col: columnIndexOf(columnKey), before, value });
+    list.push({ key: columnKey, before, after: text });
   }
-  return cells;
+  return { cells, list };
+}
+
+const CHECKABLE = new Set<string>(USED_PHONE_RECALC_KEYS);
+
+/** 확인만 하는 칸 검사 (없으면 빈 목록) */
+function parseChecks(input: unknown): SaleCheck[] | string {
+  if (input === undefined) return [];
+  if (!Array.isArray(input) || input.length > CHECKABLE.size) {
+    return "수정 요청 형식이 올바르지 않습니다.";
+  }
+  const seen = new Set<string>();
+  const checks: SaleCheck[] = [];
+  for (const item of input) {
+    if (typeof item !== "object" || item === null) {
+      return "수정 요청 형식이 올바르지 않습니다.";
+    }
+    const { key, before } = item as Record<string, unknown>;
+    if (
+      typeof key !== "string" ||
+      !CHECKABLE.has(key) ||
+      seen.has(key) ||
+      typeof before !== "string" ||
+      before.length > 600
+    ) {
+      return "수정 요청 형식이 올바르지 않습니다.";
+    }
+    seen.add(key);
+    checks.push({ key: key as ColumnKey, before });
+  }
+  return checks;
 }
 
 export async function POST(request: Request) {
@@ -142,13 +185,31 @@ export async function POST(request: Request) {
       400,
     );
   }
-  const cells = parseChanges(raw.changes);
-  if (typeof cells === "string") {
-    return reply({ ok: false, message: cells }, 400);
+  const parsed = parseChanges(raw.changes);
+  if (typeof parsed === "string") {
+    return reply({ ok: false, message: parsed }, 400);
   }
+  const checks = parseChecks(raw.checks);
+  if (typeof checks === "string") {
+    return reply({ ok: false, message: checks }, 400);
+  }
+  // 중고판매 Z·AA 수정: AB·AC 가 간편등록과 같은 규칙으로 계산되었는지 서버에서 다시 확인
+  const recalcError = verifyUsedPhoneRecalc(parsed.list, checks);
+  if (recalcError) {
+    return reply({ ok: false, message: recalcError }, 400);
+  }
+  const checkCells: UpdateCheckCell[] = checks.map((c) => ({
+    col: columnIndexOf(c.key),
+    before: c.before,
+    check: true,
+  }));
 
   try {
-    const result = await updateRowInAppsScript(target, cells);
+    const result = await updateRowInAppsScript(
+      target,
+      parsed.cells,
+      checkCells,
+    );
     return reply(
       {
         ok: true,

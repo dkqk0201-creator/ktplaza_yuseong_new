@@ -10,7 +10,10 @@
  *   secret, action: "sale-update",
  *   target: { sheet, row, no, activatedAt, customer, ctn },   ← 화면에서 본 판매 건
  *   changes: [{ col, before, value }, ...]                     ← 바꿀 칸만 (col: 0=A … 37=AL)
+ *            + [{ col, before, check: true }, ...]               ← 쓰지 않고 현재 값만 확인하는 칸 (선택)
  * }
+ * - check: true 칸은 장표에 쓰지 않는다. 지금 값이 before 와 같은지만 확인한다
+ *   (중고판매 Z·AA 수정 시 AB·AC 재계산에 쓴 N·U·Z·AA·AB·AC 를 그사이 다른 사람이 고쳤으면 거부).
  * - 새 행을 찾지 않는다. target 의 "같은 월 시트 / 같은 행"만 고친다.
  * - B열(No.)·C열(개통일)은 절대 고치지 않는다 (요청에 있으면 거부).
  * - 행 번호만 믿지 않고 No.(B)·개통일(C)·고객(D)·CTN(E) 이 화면에서 본 값과 모두 같을 때만 고친다.
@@ -58,9 +61,11 @@ function wsHandleSaleUpdate_(e) {
     return reply({ ok: false, message: "수정할 항목이 없습니다." });
   }
   var seen = {};
+  var writes = 0;
   for (var i = 0; i < changes.length; i++) {
     var ch = changes[i] || {};
     var col = Number(ch.col);
+    var checkOnly = ch.check === true;
     if (
       Math.floor(col) !== col ||
       col < 0 ||
@@ -68,12 +73,16 @@ function wsHandleSaleUpdate_(e) {
       col === WS_B_INDEX ||
       col === 2 ||
       seen[col] ||
-      (typeof ch.value !== "string" && typeof ch.value !== "number") ||
+      (!checkOnly && typeof ch.value !== "string" && typeof ch.value !== "number") ||
       typeof ch.before !== "string"
     ) {
       return reply({ ok: false, message: "수정할 항목 형식이 올바르지 않습니다." });
     }
     seen[col] = true;
+    if (!checkOnly) writes++;
+  }
+  if (writes === 0) {
+    return reply({ ok: false, message: "수정할 항목이 없습니다." });
   }
 
   var lock = LockService.getScriptLock();
@@ -129,7 +138,7 @@ function wsHandleSaleUpdate_(e) {
     if (digits(current[4]) !== digits(target.ctn)) mismatches.push("CTN");
     for (var k = 0; k < changes.length; k++) {
       var c = Number(changes[k].col);
-      if (formulas[c] !== "") {
+      if (changes[k].check !== true && formulas[c] !== "") {
         return reply({
           ok: false,
           message: wsColumnLetter_(c + 1) + "열은 수식 칸이라 수정할 수 없습니다.",
@@ -149,8 +158,9 @@ function wsHandleSaleUpdate_(e) {
       });
     }
 
-    // 바뀐 칸만 그 칸에 쓴다 (B·C 열과 다른 칸은 그대로)
+    // 바뀐 칸만 그 칸에 쓴다 (B·C 열과 다른 칸, 확인만 하는 칸은 그대로)
     for (var w = 0; w < changes.length; w++) {
+      if (changes[w].check === true) continue;
       sheet.getRange(rowNumber, Number(changes[w].col) + 1).setValue(changes[w].value);
     }
     SpreadsheetApp.flush();

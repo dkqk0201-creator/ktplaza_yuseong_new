@@ -367,6 +367,20 @@ export interface UpdateCell {
   value: string | number;
 }
 
+/**
+ * 쓰지 않고 현재 값만 확인하는 칸 (중고판매 Z·AA 수정 시 AB·AC 재계산에 쓴 N·U·Z·AA·AB·AC).
+ * value 가 없으므로 이 확인 기능이 없는 예전 update-handler.gs 는 요청 전체를
+ * "형식 오류"로 거부한다 → 아무 칸도 쓰지 않는다 (확인 없이 덮어쓰는 일이 없다).
+ */
+export interface UpdateCheckCell {
+  col: number;
+  before: string;
+  check: true;
+}
+
+/** 예전 update-handler.gs 가 확인 칸을 받았을 때 돌려주는 거부 문구 */
+const OLD_HANDLER_FORMAT_ERROR = "수정할 항목 형식이 올바르지 않습니다.";
+
 /** update-handler.gs 가 모든 응답에 붙이는 표시 (다른 수정 코드의 응답과 구분) */
 export const SALE_UPDATE_HANDLER = "ws-sale-update";
 
@@ -379,8 +393,12 @@ export const SALE_UPDATE_HANDLER = "ws-sale-update";
 export async function updateRowInAppsScript(
   target: DeleteTarget,
   changes: UpdateCell[],
+  checks: UpdateCheckCell[] = [],
 ): Promise<{ sheet: string; row: number; no: string; values: unknown[] }> {
-  if (changes.length === 0 || changes.some((c) => c.col === 1 || c.col === 2)) {
+  if (
+    changes.length === 0 ||
+    [...changes, ...checks].some((c) => c.col === 1 || c.col === 2)
+  ) {
     throw new AppsScriptError(
       "bad_response",
       "No.(B열)·개통일(C열)은 수정할 수 없습니다.",
@@ -402,10 +420,24 @@ export async function updateRowInAppsScript(
   let data: Record<string, unknown>;
   try {
     data = await postToAppsScript(
-      { action: "sale-update", target, changes },
+      { action: "sale-update", target, changes: [...changes, ...checks] },
       "Apps Script가 수정을 거부했습니다.",
     );
   } catch (error) {
+    // 확인 칸을 모르는 예전 update-handler.gs: 아무것도 쓰지 않고 거부했다
+    if (
+      checks.length > 0 &&
+      error instanceof AppsScriptError &&
+      error.code === "rejected" &&
+      error.details.handler === SALE_UPDATE_HANDLER &&
+      error.message === OLD_HANDLER_FORMAT_ERROR
+    ) {
+      throw new AppsScriptError(
+        "rejected",
+        "중고판매(Z·AA) 수정은 Apps Script에 최신 update-handler.gs 를 배포해야 저장할 수 있습니다. " +
+          "이번 수정은 장표에 저장되지 않았습니다. (다른 항목 수정은 지금도 가능합니다)",
+      );
+    }
     // 우리 update-handler 가 아닌 다른 코드가 대답했으면 원인을 분명히 알려준다
     if (
       error instanceof AppsScriptError &&

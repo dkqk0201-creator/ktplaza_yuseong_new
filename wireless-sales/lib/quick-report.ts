@@ -677,8 +677,8 @@ export function normalizeQuick(
 
 /* ---------- 3) 신규 저장 시 열 위치 기준 기본값·합계 ---------- */
 
-/** 금액 칸 숫자 (없음·"-"·숫자가 아님 → 0) */
-function amountOf(value: SheetRowValues[ColumnKey]): number {
+/** 금액 칸 숫자 (없음·"-"·숫자가 아님 → 0). 판매 수정의 AB·AC 재계산도 이 함수를 그대로 쓴다. */
+export function amountOf(value: SheetRowValues[ColumnKey]): number {
   if (typeof value === "number") return value;
   const t = String(value ?? "")
     .replace(/[,\s]/g, "")

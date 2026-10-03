@@ -1,5 +1,5 @@
 import type { DeleteSaleRequest } from "@/lib/delete-sale-api";
-import type { SaleChange } from "@/lib/sale-edit";
+import type { SaleChange, SaleCheck } from "@/lib/sale-edit";
 
 /*
  * 화면 ↔ 우리 서버(/api/sales/update) 사이의 약속 (기존 판매 수정).
@@ -12,6 +12,8 @@ export type UpdateSaleTarget = DeleteSaleRequest;
 export interface UpdateSaleRequest {
   target: UpdateSaleTarget;
   changes: SaleChange[];
+  /** 쓰지 않고 현재 값만 확인하는 칸 (중고판매 Z·AA 수정 시 AB·AC 재계산용) */
+  checks?: SaleCheck[];
 }
 
 export type UpdateSaleResponse =
