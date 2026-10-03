@@ -68,9 +68,18 @@ export const QUICK_FIELDS = [
     label: "정책 → 2ND연계정책",
     column: "securedSecond",
   },
-  { id: "useExtraSupport", label: "정책사용 → 추가지원금", column: null },
-  { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: null },
-  { id: "usePlan", label: "정책사용 → 고혜(요금)", column: null },
+  {
+    id: "useExtraSupport",
+    label: "정책사용 → 추가지원금",
+    column: "usedExtraSupport",
+  },
+  // 고혜(기존할부금)·고혜(요금)은 둘 다 V열(모델/요금) — 둘 다 적혀 있으면 더해서 저장
+  {
+    id: "useInstallment",
+    label: "정책사용 → 고혜(기존할부금)",
+    column: "usedModelPlan",
+  },
+  { id: "usePlan", label: "정책사용 → 고혜(요금)", column: "usedModelPlan" },
   { id: "second", label: "2ND", column: null },
   { id: "secondBenefit", label: "2ND → 고객혜택", column: "usedSecond" },
   { id: "secondSelfPay", label: "2ND → 자부담", column: null },
@@ -473,12 +482,10 @@ export function normalizeQuick(
     }
   }
 
-  // 실력지표제외: O/X. 비어 있으면 임의로 정하지 않는다
+  // 실력지표제외: O/X. 공란이면 X 로 저장
   if (!v("excludeIndicator")) {
-    issues.push({
-      field: "excludeIndicator",
-      message: "실력지표제외(O/X)가 비어 있습니다. 확인 필요",
-    });
+    row.excludeIndicator = "X";
+    display.excludeIndicator = "X (공란 → X)";
   } else {
     const value = ox(v("excludeIndicator"));
     if (value) {
@@ -546,11 +553,12 @@ export function normalizeQuick(
     }
   }
 
-  // 장표에 저장하는 금액 4가지 (비어 있으면 장표 칸을 건드리지 않음)
+  // 장표에 저장하는 금액. 공란이면 "-" 로 저장 (직원이 금액을 적으면 그 금액)
   for (const id of [
     "policyBenefit",
     "policyOther",
     "policySecond",
+    "useExtraSupport",
     "dichoBenefit",
     "secondBenefit",
   ] as const) {
@@ -561,6 +569,37 @@ export function normalizeQuick(
     } else if (parsed.value !== null) {
       row[column] = parsed.value;
       display[id] = `${parsed.value.toLocaleString("ko-KR")}원`;
+    } else {
+      row[column] = "-";
+      display[id] = "- (공란)";
+    }
+  }
+  // 고혜(기존할부금) + 고혜(요금) → V열(모델/요금) 합계. 둘 다 공란이면 "-"
+  {
+    let total: number | null = null;
+    let failed = false;
+    for (const id of ["useInstallment", "usePlan"] as const) {
+      const parsed = parseAmount(fields[id]);
+      if ("error" in parsed) {
+        issues.push({ field: id, message: parsed.error });
+        failed = true;
+      } else if (parsed.value !== null) {
+        total = (total ?? 0) + parsed.value;
+        display[id] = `${parsed.value.toLocaleString("ko-KR")}원`;
+      }
+    }
+    if (!failed) {
+      row.usedModelPlan = total === null ? "-" : total;
+      const both =
+        display.useInstallment !== undefined && display.usePlan !== undefined;
+      if (total === null) {
+        display.useInstallment = "- (공란)";
+        display.usePlan = "- (공란)";
+      } else if (both) {
+        const sum = `V열 합계 ${total.toLocaleString("ko-KR")}원`;
+        display.useInstallment += ` · ${sum}`;
+        display.usePlan += ` · ${sum}`;
+      }
     }
   }
 
@@ -616,18 +655,15 @@ export function normalizeQuick(
     });
   }
 
-  // 동판: 자유입력. 입력한 글자를 그대로 AK열에 저장하고, 빈칸이면 X 로 저장한다.
-  // 동판이 X(또는 빈칸)일 때만 가능일(년.월) 입력 가능·필수, 그 외 글자가 있으면 가능일 입력 불가(AL열 빈칸)
+  // 동판: 자유입력. 입력한 글자를 그대로 AK열에 저장하고, 공란이면 X 로 저장한다.
+  // 가능일(년.월): 동판이 X(또는 공란)일 때만 입력 가능. 적으면 YY.MM, 공란이면 X.
+  // 동판에 X 이외의 글자가 있으면 가능일은 입력 불가 → AL열 X.
   const dongpan = normalizeDongpan(v("dongpan"));
   row.dongpan = dongpan;
   display.dongpan = dongpan;
-  if (!availableDateAllowed(fields.dongpan)) {
-    row.wiredAvailableDate = "";
-  } else if (!v("availableDate")) {
-    issues.push({
-      field: "availableDate",
-      message: "동판이 X이거나 빈칸이면 가능일을 입력해 주세요. (예: 27.03)",
-    });
+  if (!availableDateAllowed(fields.dongpan) || !v("availableDate")) {
+    row.wiredAvailableDate = "X";
+    display.availableDate = "X";
   } else {
     const month = parseAvailableMonth(v("availableDate"));
     if (month) {

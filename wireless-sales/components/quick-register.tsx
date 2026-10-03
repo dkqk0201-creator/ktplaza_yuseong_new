@@ -605,7 +605,7 @@ function QuickItemCard({
           const saved = field.column !== null;
           const shown = normalized.display[field.id];
           const inputId = `quick-${item.id}-${field.id}`;
-          // 동판에 X 이외의 글자가 있으면 가능일은 입력 불가 (AL열 빈칸 저장)
+          // 동판에 X 이외의 글자가 있으면 가능일은 입력 불가 (AL열 X 저장)
           const dateBlocked =
             field.id === "availableDate" &&
             !availableDateAllowed(item.fields.dongpan);
@@ -659,7 +659,7 @@ function QuickItemCard({
               )}
               {dateBlocked && (
                 <p className="mt-0.5 text-xs text-ink-muted">
-                  동판에 값이 있어 가능일은 입력할 수 없습니다. (AL열 빈칸)
+                  동판에 값이 있어 가능일은 입력할 수 없습니다. (AL열 X)
                 </p>
               )}
               {saved &&
