@@ -22,6 +22,7 @@ export const STAFF_REPORT_TEMPLATE = [
   "정책 ",
   "ㄴ고객혜택 : ",
   "ㄴ그외(스팟제외) :",
+  "ㄴ2ND연계정책 : ",
   "",
   "정책사용",
   "ㄴ추가지원금 : ",
@@ -62,6 +63,11 @@ export const QUICK_FIELDS = [
   { id: "planChange", label: "요금제 → 유지/변경", column: "planChange" },
   { id: "policyBenefit", label: "정책 → 고객혜택", column: "customerBenefit" },
   { id: "policyOther", label: "정책 → 그외(스팟제외)", column: "modelPolicy" },
+  {
+    id: "policySecond",
+    label: "정책 → 2ND연계정책",
+    column: "securedSecond",
+  },
   { id: "useExtraSupport", label: "정책사용 → 추가지원금", column: null },
   { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: null },
   { id: "usePlan", label: "정책사용 → 고혜(요금)", column: null },
@@ -112,7 +118,12 @@ const TOP_LEVEL: {
   {
     key: "정책",
     id: null,
-    children: { 고객혜택: "policyBenefit", "그외(스팟제외)": "policyOther" },
+    // 항목명은 소문자로 비교한다 (2ND연계정책 → 2nd연계정책). 아래쪽 "2ND" 묶음과는 다른 항목
+    children: {
+      고객혜택: "policyBenefit",
+      "그외(스팟제외)": "policyOther",
+      "2nd연계정책": "policySecond",
+    },
   },
   {
     key: "정책사용",
@@ -539,6 +550,7 @@ export function normalizeQuick(
   for (const id of [
     "policyBenefit",
     "policyOther",
+    "policySecond",
     "dichoBenefit",
     "secondBenefit",
   ] as const) {

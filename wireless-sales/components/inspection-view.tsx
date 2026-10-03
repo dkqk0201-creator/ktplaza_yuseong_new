@@ -296,6 +296,11 @@ function InspectionList({
             setNotice(message);
             void invalidate();
           }}
+          onUpdated={(message) => {
+            // 상세창은 열어 둔 채 목록·상단 건수를 장표에서 다시 읽는다
+            setNotice(message);
+            void invalidate();
+          }}
         />
       )}
     </>

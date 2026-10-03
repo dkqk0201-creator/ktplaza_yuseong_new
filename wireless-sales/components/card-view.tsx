@@ -14,14 +14,15 @@ import {
   SummaryTile,
 } from "@/components/work-ui";
 import { cardPendingListMessage, cardPendingMessage } from "@/lib/card-message";
-import { dateText, maskedCtn } from "@/lib/sale-display";
+import { formatCtn } from "@/lib/format";
+import { dateText } from "@/lib/sale-display";
 import { isO, type SheetSale } from "@/lib/sheet-record";
 
 /*
  * 카드실적: 제카(AE)가 O 인 판매 중 카드실적 검수(AG)가 O 가 아닌 건을 찾는다.
  * 제카가 X 인 판매(카드 없음)는 목록에 절대 나오지 않는다.
  * 점장이 장표 AG 칸에 O 를 입력하고 새로고침하면 완료로 바뀐다.
- * 행을 누르면 상세보기, 미검수 건은 직원에게 보낼 카톡용 글을 복사할 수 있다 (CTN 은 가린 번호).
+ * 행을 누르면 상세보기, 미검수 건은 직원에게 보낼 카톡용 글을 복사할 수 있다 (CTN 은 전체 번호).
  */
 
 type Filter = "pending" | "all" | "done";
@@ -197,7 +198,7 @@ function CardList({ sales }: { sales: SheetSale[] }) {
                       {sale.customer || "-"}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-ink-sub tabular-nums">
-                      {sale.ctn ? maskedCtn(sale.ctn) : "-"}
+                      {sale.ctn ? formatCtn(sale.ctn) : "-"}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-ink">
                       {sale.cardType || "-"}
@@ -245,7 +246,7 @@ function CardList({ sales }: { sales: SheetSale[] }) {
                   <div className="mt-1 flex justify-between text-sm text-ink-sub">
                     <span>{sale.staff || "-"}</span>
                     <span className="tabular-nums">
-                      {sale.ctn ? maskedCtn(sale.ctn) : ""}
+                      {sale.ctn ? formatCtn(sale.ctn) : ""}
                     </span>
                   </div>
                 </button>
@@ -336,7 +337,7 @@ function CardDetail({
     ["개통일", dateText(sale.activatedAt)],
     ["직원명", sale.staff || "-"],
     ["고객명", sale.customer || "-"],
-    ["CTN", sale.ctn ? maskedCtn(sale.ctn) : "-"],
+    ["CTN", sale.ctn ? formatCtn(sale.ctn) : "-"],
     ["카드 종류", sale.cardType || "-"],
     [
       "카드실적 검수",

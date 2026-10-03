@@ -6,7 +6,7 @@ import { COLUMN_INDEX, type ColumnKey } from "@/lib/sheet-columns";
  * 장표에는 "-", "50,000", 빈 칸처럼 손으로 입력한 값도 있으므로 너그럽게 읽는다.
  */
 
-const AMOUNT_KEYS = [
+export const AMOUNT_KEYS = [
   "securedTotal",
   "spot",
   "securedDicho",

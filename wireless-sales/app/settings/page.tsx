@@ -1,13 +1,6 @@
-import type { Metadata } from "next";
-import { PlaceholderPage } from "@/components/placeholder-page";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "설정" };
-
+/* 예전 "설정" 메뉴 주소 → 고객조회로 옮겼다 (예전 링크·즐겨찾기 유지) */
 export default function SettingsPage() {
-  return (
-    <PlaceholderPage
-      title="설정"
-      description="직원, 요금제 등 기본 정보를 관리합니다."
-    />
-  );
+  redirect("/customer");
 }

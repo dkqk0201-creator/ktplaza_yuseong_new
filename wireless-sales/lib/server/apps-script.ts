@@ -357,3 +357,52 @@ export async function setGoalInAppsScript(
   );
   return Number(data.goal);
 }
+
+/** 수정할 칸 1개: col 0=A … 37=AL (B·C 는 서버·Apps Script 모두에서 거부) */
+export interface UpdateCell {
+  col: number;
+  /** 화면에서 본 값 (장표 현재 값과 대조) */
+  before: string;
+  /** 새 값 (금액은 숫자, 지우기는 "") */
+  value: string | number;
+}
+
+/**
+ * 기존 판매 1건 수정: { action: "update", target, changes }
+ * Apps Script 가 같은 시트·같은 행의 No.·개통일·고객·CTN 과 바꿀 칸의 현재 값을 확인한 뒤
+ * 바뀐 칸만 고친다. 새 행을 찾지 않는다.
+ */
+export async function updateRowInAppsScript(
+  target: DeleteTarget,
+  changes: UpdateCell[],
+): Promise<{ sheet: string; row: number; no: string; values: unknown[] }> {
+  if (changes.length === 0 || changes.some((c) => c.col === 1 || c.col === 2)) {
+    throw new AppsScriptError(
+      "bad_response",
+      "No.(B열)·개통일(C열)은 수정할 수 없습니다.",
+    );
+  }
+  const data = await postToAppsScript(
+    { action: "update", target, changes },
+    "Apps Script가 수정을 거부했습니다.",
+  );
+  const sheet = shortText(data.sheet, 50);
+  const rowNumber = Number(data.row);
+  if (
+    !sheet ||
+    rowNumber !== target.row ||
+    !Array.isArray(data.values) ||
+    data.values.length < COLUMN_COUNT
+  ) {
+    throw new AppsScriptError(
+      "bad_response",
+      "Apps Script 수정 응답을 확인하지 못했습니다. update-handler.gs 가 추가·배포되었는지 확인해 주세요.",
+    );
+  }
+  return {
+    sheet,
+    row: rowNumber,
+    no: data.no === undefined || data.no === null ? "" : String(data.no),
+    values: data.values.slice(0, COLUMN_COUNT),
+  };
+}

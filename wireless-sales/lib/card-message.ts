@@ -1,16 +1,17 @@
-import { dateText, maskedCtn } from "@/lib/sale-display";
+import { formatCtn } from "@/lib/format";
+import { dateText } from "@/lib/sale-display";
 import type { SheetSale } from "@/lib/sheet-record";
 
 /*
  * 카드실적 미검수 안내 — 직원에게 카카오톡으로 보낼 글.
- * CTN 은 화면과 같이 가운데를 가린 번호(010-****-1234)만 쓴다.
+ * CTN 은 전체 번호(010-1234-5678)를 쓴다 (카드실적 화면에서만).
  */
 
 const TITLE = "[카드실적 미검수 안내]";
 const CLOSING = "카드실적 검수 확인 부탁드립니다.";
 
 function ctnText(sale: SheetSale): string {
-  return sale.ctn ? maskedCtn(sale.ctn) : "-";
+  return sale.ctn ? formatCtn(sale.ctn) : "-";
 }
 
 /** 1명 상세보기용 */
