@@ -44,6 +44,42 @@ export interface SaleChange {
   key: ColumnKey;
   before: string;
   after: string;
+  /** 제휴카드 규칙으로 자동으로 바뀌는 칸 (화면 안내용) */
+  auto?: boolean;
+}
+
+/** 카드사명이 아닌 값 (X·빈칸·"-") */
+function isCardName(value: string): boolean {
+  const v = value.trim().toUpperCase();
+  return v !== "" && v !== "X" && v !== "-";
+}
+
+/**
+ * 제휴카드 규칙: 카드 종류(AF)를 카드사명으로 새로 입력하거나 바꾸면
+ *   AE 제카 = "O", AF = 입력한 카드사명, AG 카드실적 검수(등록) = 빈칸 (다시 검수받도록)
+ * 카드 종류를 바꾸지 않은 수정에서는 AE/AF/AG 를 건드리지 않는다.
+ */
+function applyCardRule(sale: SheetSale, changes: SaleChange[]): SaleChange[] {
+  const card = changes.find((c) => c.key === "cardType");
+  if (!card || !isCardName(card.after)) return changes;
+  const rest = changes.filter(
+    (c) => c.key !== "jeca" && c.key !== "cardChecked",
+  );
+  const auto: SaleChange[] = [];
+  const jecaBefore = editText(sale, "jeca");
+  if (jecaBefore.trim() !== "O") {
+    auto.push({ key: "jeca", before: jecaBefore, after: "O", auto: true });
+  }
+  const checkedBefore = editText(sale, "cardChecked");
+  if (checkedBefore.trim() !== "") {
+    auto.push({
+      key: "cardChecked",
+      before: checkedBefore,
+      after: "",
+      auto: true,
+    });
+  }
+  return [...rest, ...auto];
 }
 
 /** 원래 값과 입력값을 비교해 바뀐 칸만 (금액은 숫자로 비교) */
@@ -65,7 +101,7 @@ export function diffSale(
     }
     changes.push({ key, before, after });
   }
-  return changes;
+  return applyCardRule(sale, changes);
 }
 
 /** 금액 칸에 숫자가 아닌 값이 있으면 오류 문구 */

@@ -424,7 +424,9 @@ function SaleEditForm({
         <p className="font-semibold">판매 수정</p>
         <p className="mt-0.5 text-xs">
           바꾼 칸만 장표의 같은 행에 저장됩니다. No.와 개통일은 수정할 수
-          없습니다. 총액 칸(N·U·AB·AC)은 자동으로 다시 계산되지 않습니다.
+          없습니다. 총액 칸(N·U·AB·AC)은 자동으로 다시 계산되지 않습니다. 카드
+          종류(AF)에 카드사명을 넣으면 제카(AE)는 O, 카드실적 검수(AG)는
+          빈칸으로 함께 저장됩니다.
         </p>
       </div>
       <section className="rounded-xl border border-line">
@@ -545,9 +547,16 @@ function ChangeList({ changes }: { changes: SaleChange[] }) {
         변경된 항목 {changes.length}개
       </h3>
       <ul className="divide-y divide-line">
-        {changes.map(({ key, before, after }) => (
+        {changes.map(({ key, before, after, auto }) => (
           <li key={key} className="px-4 py-3 text-sm">
-            <p className="font-semibold text-ink">{changeLabel(key)}</p>
+            <p className="font-semibold text-ink">
+              {changeLabel(key)}
+              {auto && (
+                <span className="ml-1.5 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] font-semibold text-amber-700">
+                  카드 종류 변경으로 자동
+                </span>
+              )}
+            </p>
             <p className="mt-1 text-ink-sub">
               기존:{" "}
               <span className="whitespace-pre-wrap text-ink">

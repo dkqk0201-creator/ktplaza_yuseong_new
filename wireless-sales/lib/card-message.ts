@@ -7,28 +7,17 @@ import type { SheetSale } from "@/lib/sheet-record";
  * CTN 은 전체 번호(010-1234-5678)를 쓴다 (카드실적 화면에서만).
  */
 
-/** 카드실적 대상 아님으로 보는 AE열 값 */
-const NOT_CARD = new Set(["", "X", "-"]);
-
 /**
- * 카드실적 대상 여부: AE열 '제카' 값만 본다 (AF열은 판정에 쓰지 않는다).
- * X·빈칸·"-" 가 아니면 대상 (예: 우리, 신한, 현대, O).
+ * 카드실적 대상 여부: 장표 정상 구조 기준 AE열 '제카' = "O" 인 판매만.
+ * (AE=O / AF=카드사명 / AG=카드실적 검수(등록))
  */
 export function isCardTarget(sale: SheetSale): boolean {
-  return !NOT_CARD.has(sale.jeca.trim().toUpperCase());
+  return sale.jeca.trim().toUpperCase() === "O";
 }
 
-/**
- * 화면·카톡에 보여줄 카드 종류 = AE열 제카 값 (예: 우리).
- * 예전 방식으로 AE 에 "O" 만 있고 카드 이름이 AF열에 있는 판매는 AF 값을 보여준다.
- */
+/** 화면·카톡에 보여줄 카드 종류 = AF열 값 (예: 우리) */
 export function cardName(sale: SheetSale): string {
-  const jeca = sale.jeca.trim();
-  if (jeca.toUpperCase() === "O") {
-    const af = sale.cardType.trim();
-    return af && !NOT_CARD.has(af.toUpperCase()) ? af : "O";
-  }
-  return jeca || "-";
+  return sale.cardType.trim() || "-";
 }
 
 const TITLE = "[카드실적 미검수 안내]";
