@@ -78,8 +78,8 @@ export const QUICK_FIELDS = [
   { id: "dicho", label: "디초/삼초", column: null },
   { id: "dichoBenefit", label: "디초/삼초 → 고객혜택", column: "usedDicho" },
   { id: "dichoGift", label: "디초/삼초 → 사은품판매or수령", column: null },
-  { id: "usedPhone", label: "중고폰 리본or폰삼", column: null },
-  { id: "usedPhoneUse", label: "중고폰 → 사용", column: null },
+  { id: "usedPhone", label: "중고폰 리본or폰삼", column: "usedPhoneSale" },
+  { id: "usedPhoneUse", label: "중고폰 → 사용", column: "usedPhoneUsed" },
   { id: "jeca", label: "제카", column: "jeca" },
   { id: "insurance", label: "보험", column: "insurance" },
   { id: "addon", label: "부가", column: "addon" },
@@ -562,6 +562,23 @@ export function normalizeQuick(
     }
   }
 
+  // 중고폰: "중고폰 리본or폰삼" 금액 → Z(중고판매 판매), "ㄴ사용" 금액 → AA(중고판매 사용).
+  // 숫자 없이 글자만 적은 경우(예: 리본, 폰삼)는 금액이 아니므로 저장하지 않는다 (→ "-").
+  // 숫자가 섞였는데 금액으로 읽을 수 없으면 확인 필요.
+  for (const [id, column] of [
+    ["usedPhone", "usedPhoneSale"],
+    ["usedPhoneUse", "usedPhoneUsed"],
+  ] as const) {
+    if (!/\d/.test(fields[id])) continue;
+    const parsed = parseAmount(fields[id]);
+    if ("error" in parsed) {
+      issues.push({ field: id, message: parsed.error });
+    } else if (parsed.value !== null) {
+      row[column] = parsed.value;
+      display[id] = `${parsed.value.toLocaleString("ko-KR")}원`;
+    }
+  }
+
   // 제카: 비어 있거나 X → 제카·종류·카드실적 검수 모두 X / 카드 종류 → O·종류·검수 칸은 비워 둠
   const jeca = v("jeca");
   if (jeca === "" || jeca.toUpperCase() === "X") {
@@ -677,7 +694,7 @@ const EMPTY = (v: SheetRowValues[ColumnKey]) =>
  *   G·H              → X (검수·수납은 신규 등록 시 항상 X)
  *   O~T              → 값이 없으면 "-",  N = O+P+Q+R+S+T
  *   V~AA             → 값이 없으면 "-",  U = V+W+X+Y (Z·AA 제외)
- *   AB = Z − AA,  AC = N + U + AB   ("-"·빈칸은 0 으로 계산)
+ *   AB = Z − AA,  AC = N + U + AB   ("-"·빈칸은 0 으로 계산, AB 가 음수여도 0 으로 바꾸지 않음)
  *   AD~AG, AI·AJ     → 값이 없으면 X
  *   AH·AK·AL 및 그 밖의 칸은 기존 규칙 그대로 (여기서 바꾸지 않음)
  */
