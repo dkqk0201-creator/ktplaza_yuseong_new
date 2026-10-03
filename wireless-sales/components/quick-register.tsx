@@ -96,6 +96,10 @@ export function QuickRegister({
   const [text, setText] = useState("");
   const [items, setItems] = useState<Item[]>([]);
   const [copied, setCopied] = useState<string | null>(null);
+  /** 모두 등록 완료되어 처음 상태로 돌아갔을 때 보여줄 저장 결과 */
+  const [doneNotice, setDoneNotice] = useState<
+    { customer: string; sheet: string; no: string }[] | null
+  >(null);
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
   const nextId = useRef(1);
@@ -182,6 +186,7 @@ export function QuickRegister({
       ...prev.filter((i) => i.submit.state === "done"),
       ...added,
     ]);
+    setDoneNotice(null);
     void refresh(); // 중복 확인을 위해 장표 최신 내용 확인
   }
 
@@ -200,6 +205,8 @@ export function QuickRegister({
     runningRef.current = true;
     setRunning(true);
     let saved = 0;
+    // 이번에 등록에 성공한 건 (id → 저장 위치)
+    const succeeded = new Map<number, { sheet: string; no: string }>();
     for (const id of targets) {
       const item = itemsRef.current.find((i) => i.id === id);
       // 등록 완료·등록 중인 건은 절대 다시 보내지 않는다
@@ -213,6 +220,7 @@ export function QuickRegister({
       const result = await postQuick(item.fields);
       if (result.ok) {
         saved++;
+        succeeded.set(id, { sheet: result.sheet, no: result.no });
         updateItem(id, (i) => ({
           ...i,
           submit: { state: "done", sheet: result.sheet, no: result.no },
@@ -231,6 +239,30 @@ export function QuickRegister({
     runningRef.current = false;
     setRunning(false);
     if (saved > 0) void invalidate(); // 검수관리·카드실적·예산관리가 최신 장표를 보도록
+
+    // 분석한 모든 건이 등록 완료일 때만 입력창·분석 결과를 비워 처음 상태로 돌린다.
+    // 실패·확인 필요·중복 가능성·미등록 건이 하나라도 있으면 아무것도 지우지 않는다.
+    const all = itemsRef.current;
+    const allDone =
+      saved > 0 &&
+      all.length > 0 &&
+      all.every((i) => i.submit.state === "done" || succeeded.has(i.id));
+    if (allDone) {
+      setDoneNotice(
+        all.map((i) => {
+          const at =
+            succeeded.get(i.id) ??
+            (i.submit.state === "done"
+              ? { sheet: i.submit.sheet, no: i.submit.no }
+              : { sheet: "", no: "" });
+          return { customer: i.fields.customer, ...at };
+        }),
+      );
+      setItems([]);
+      setText("");
+      setCopied(null);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   }
 
   async function copyTemplate() {
@@ -254,6 +286,35 @@ export function QuickRegister({
 
   return (
     <div className="space-y-5">
+      {doneNotice && (
+        <div
+          role="status"
+          className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <p className="font-bold">
+              ✓ {doneNotice.length}건 등록이 완료되었습니다. 다음 판매보고를
+              붙여넣어 주세요.
+            </p>
+            <button
+              type="button"
+              onClick={() => setDoneNotice(null)}
+              aria-label="등록 완료 안내 닫기"
+              className="shrink-0 rounded px-1.5 text-emerald-700 hover:bg-emerald-100"
+            >
+              ✕
+            </button>
+          </div>
+          <ul className="mt-1 space-y-0.5 text-xs">
+            {doneNotice.map((d, i) => (
+              <li key={i}>
+                {d.customer || "(고객명 없음)"} → {d.sheet} / No.{d.no}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <section className="rounded-xl border border-line bg-white p-4 sm:p-5">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-bold text-ink">
