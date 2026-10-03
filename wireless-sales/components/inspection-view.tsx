@@ -16,11 +16,13 @@ import {
   SummaryTile,
 } from "@/components/work-ui";
 import { dateText, maskedCtn } from "@/lib/sale-display";
+import { matchesSaleSearch } from "@/lib/sale-search";
 import { isO, type SheetSale } from "@/lib/sheet-record";
 
 /*
- * 검수관리: 장표의 검수(G)·수납(H) 칸이 O 가 아닌 판매를 찾는다.
- * 점장은 장표에서 직접 O 를 입력하고, 웹앱은 읽기만 한다.
+ * 검수관리: 선택한 월의 판매 전체를 보여주고(기본 "전체"), 검수(G)·수납(H) 상태로 거른다.
+ * 고객명·CTN·직원명 검색은 목록에만 적용하고, 상단 요약 숫자는 월(·직원) 전체 기준으로 유지한다.
+ * 검수·수납 O 는 점장이 장표에서 직접 입력한다 (판매 상세의 판매 수정으로도 고칠 수 있음).
  */
 
 type Filter = "pending" | "all" | "inspect" | "paid" | "both" | "done";
@@ -76,7 +78,8 @@ function InspectionList({
   sales: SheetSale[];
 }) {
   const { invalidate } = useSalesData();
-  const [filter, setFilter] = useState<Filter>("pending");
+  const [filter, setFilter] = useState<Filter>("all");
+  const [search, setSearch] = useState("");
   const [staff, setStaff] = useState("");
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -85,11 +88,17 @@ function InspectionList({
     () => [...new Set(sales.map((s) => s.staff).filter(Boolean))].sort(),
     [sales],
   );
+  // 상단 요약 숫자: 선택한 월(·직원)의 판매 전체 기준. 검색·상태 필터와 상관없이 유지
   const byStaff = sales.filter((s) => !staff || s.staff === staff);
   const statuses = byStaff.map((s) => inspectionStatus(s));
   const count = (f: Filter) =>
     statuses.filter((st) => matchFilter(st, f)).length;
-  const rows = byStaff
+  // 목록·필터 칩 숫자: 검색어까지 적용
+  const searched = byStaff.filter((s) => matchesSaleSearch(s, search));
+  const searchedStatuses = searched.map((s) => inspectionStatus(s));
+  const chipCount = (f: Filter) =>
+    searchedStatuses.filter((st) => matchFilter(st, f)).length;
+  const rows = searched
     .filter((s) => matchFilter(inspectionStatus(s), filter))
     .sort((a, b) => a.row - b.row);
   const selected = sales.find((s) => s.row === selectedRow) ?? null;
@@ -131,18 +140,54 @@ function InspectionList({
         />
       </section>
 
-      <div className="mt-5 mb-3 flex flex-wrap items-center gap-2">
+      <div className="mt-5">
+        <label htmlFor="inspection-search" className="sr-only">
+          고객명·CTN·직원명 검색
+        </label>
+        <div className="relative">
+          <input
+            id="inspection-search"
+            type="text"
+            enterKeyHint="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="고객명 · CTN · 직원명 검색 (일부만 입력해도 됩니다)"
+            autoComplete="off"
+            className="h-11 w-full rounded-lg border border-line bg-white pr-10 pl-3 text-base outline-none focus:border-brand focus:ring-2 focus:ring-brand/15"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => setSearch("")}
+              aria-label="검색어 지우기"
+              className="absolute top-1/2 right-2 h-7 w-7 -translate-y-1/2 rounded-full text-ink-muted hover:bg-zinc-100"
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 mb-3 flex flex-wrap items-center gap-2">
         <FilterChips
           label="검수 상태"
           value={filter}
           onChange={setFilter}
           options={[
-            { value: "pending", label: "미처리 전체", count: count("pending") },
-            { value: "all", label: "전체", count: count("all") },
-            { value: "inspect", label: "검수 미완료", count: count("inspect") },
-            { value: "paid", label: "수납 미완료", count: count("paid") },
-            { value: "both", label: "둘 다 미완료", count: count("both") },
-            { value: "done", label: "완료", count: count("done") },
+            {
+              value: "pending",
+              label: "미처리 전체",
+              count: chipCount("pending"),
+            },
+            { value: "all", label: "전체", count: chipCount("all") },
+            {
+              value: "inspect",
+              label: "검수 미완료",
+              count: chipCount("inspect"),
+            },
+            { value: "paid", label: "수납 미완료", count: chipCount("paid") },
+            { value: "both", label: "둘 다 미완료", count: chipCount("both") },
+            { value: "done", label: "완료", count: chipCount("done") },
           ]}
         />
         <div className="ml-auto">
@@ -155,7 +200,9 @@ function InspectionList({
           text={
             sales.length === 0
               ? `${sheet} 시트에 등록된 판매가 없습니다.`
-              : "조건에 맞는 판매가 없습니다."
+              : search.trim()
+                ? `"${search.trim()}" 검색 결과가 없습니다.`
+                : "조건에 맞는 판매가 없습니다."
           }
         />
       ) : (
