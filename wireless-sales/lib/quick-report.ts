@@ -68,18 +68,9 @@ export const QUICK_FIELDS = [
     label: "정책 → 2ND연계정책",
     column: "securedSecond",
   },
-  {
-    id: "useExtraSupport",
-    label: "정책사용 → 추가지원금",
-    column: "usedExtraSupport",
-  },
-  // 고혜(기존할부금)·고혜(요금)은 둘 다 V열(모델/요금) — 둘 다 적혀 있으면 더해서 저장
-  {
-    id: "useInstallment",
-    label: "정책사용 → 고혜(기존할부금)",
-    column: "usedModelPlan",
-  },
-  { id: "usePlan", label: "정책사용 → 고혜(요금)", column: "usedModelPlan" },
+  { id: "useExtraSupport", label: "정책사용 → 추가지원금", column: null },
+  { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: null },
+  { id: "usePlan", label: "정책사용 → 고혜(요금)", column: null },
   { id: "second", label: "2ND", column: null },
   { id: "secondBenefit", label: "2ND → 고객혜택", column: "usedSecond" },
   { id: "secondSelfPay", label: "2ND → 자부담", column: null },
@@ -553,12 +544,11 @@ export function normalizeQuick(
     }
   }
 
-  // 장표에 저장하는 금액. 공란이면 "-" 로 저장 (직원이 금액을 적으면 그 금액)
+  // 장표에 저장하는 금액 (공란 칸의 "-" 와 합계는 아래 applyQuickColumnRules 가 열 위치 기준으로 채움)
   for (const id of [
     "policyBenefit",
     "policyOther",
     "policySecond",
-    "useExtraSupport",
     "dichoBenefit",
     "secondBenefit",
   ] as const) {
@@ -569,37 +559,6 @@ export function normalizeQuick(
     } else if (parsed.value !== null) {
       row[column] = parsed.value;
       display[id] = `${parsed.value.toLocaleString("ko-KR")}원`;
-    } else {
-      row[column] = "-";
-      display[id] = "- (공란)";
-    }
-  }
-  // 고혜(기존할부금) + 고혜(요금) → V열(모델/요금) 합계. 둘 다 공란이면 "-"
-  {
-    let total: number | null = null;
-    let failed = false;
-    for (const id of ["useInstallment", "usePlan"] as const) {
-      const parsed = parseAmount(fields[id]);
-      if ("error" in parsed) {
-        issues.push({ field: id, message: parsed.error });
-        failed = true;
-      } else if (parsed.value !== null) {
-        total = (total ?? 0) + parsed.value;
-        display[id] = `${parsed.value.toLocaleString("ko-KR")}원`;
-      }
-    }
-    if (!failed) {
-      row.usedModelPlan = total === null ? "-" : total;
-      const both =
-        display.useInstallment !== undefined && display.usePlan !== undefined;
-      if (total === null) {
-        display.useInstallment = "- (공란)";
-        display.usePlan = "- (공란)";
-      } else if (both) {
-        const sum = `V열 합계 ${total.toLocaleString("ko-KR")}원`;
-        display.useInstallment += ` · ${sum}`;
-        display.usePlan += ` · ${sum}`;
-      }
     }
   }
 
@@ -691,12 +650,77 @@ export function normalizeQuick(
   }
 
   return {
-    row,
+    row: applyQuickColumnRules(row),
     issues,
     display,
     duplicateKey:
       activatedAt && ctnDigits ? `${activatedAt}|${ctnDigits}` : null,
   };
+}
+
+/* ---------- 3) 신규 저장 시 열 위치 기준 기본값·합계 ---------- */
+
+/** 금액 칸 숫자 (없음·"-"·숫자가 아님 → 0) */
+function amountOf(value: SheetRowValues[ColumnKey]): number {
+  if (typeof value === "number") return value;
+  const t = String(value ?? "")
+    .replace(/[,\s]/g, "")
+    .replace(/원$/, "");
+  return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : 0;
+}
+
+const EMPTY = (v: SheetRowValues[ColumnKey]) =>
+  v === undefined || v === null || String(v).trim() === "";
+
+/**
+ * 간편등록 신규 저장 행에 장표 열 위치 기준 규칙을 적용한다 (항목 이름이 아니라 열 위치 기준).
+ *   G·H              → X (검수·수납은 신규 등록 시 항상 X)
+ *   O~T              → 값이 없으면 "-",  N = O+P+Q+R+S+T
+ *   V~AA             → 값이 없으면 "-",  U = V+W+X+Y (Z·AA 제외)
+ *   AB = Z − AA,  AC = N + U + AB   ("-"·빈칸은 0 으로 계산)
+ *   AD~AG, AI·AJ     → 값이 없으면 X
+ *   AH·AK·AL 및 그 밖의 칸은 기존 규칙 그대로 (여기서 바꾸지 않음)
+ */
+export function applyQuickColumnRules(input: SheetRowValues): SheetRowValues {
+  const row: SheetRowValues = { ...input };
+  row.inspected = "X"; // G
+  row.paid = "X"; // H
+  const dash = (keys: readonly ColumnKey[]) => {
+    for (const key of keys) if (EMPTY(row[key])) row[key] = "-";
+  };
+  const xIfEmpty = (keys: readonly ColumnKey[]) => {
+    for (const key of keys) if (EMPTY(row[key])) row[key] = "X";
+  };
+  const sum = (keys: readonly ColumnKey[]) =>
+    keys.reduce((total, key) => total + amountOf(row[key]), 0);
+
+  const OT = [
+    "spot",
+    "securedDicho",
+    "appleMania",
+    "securedSecond",
+    "modelPolicy",
+    "customerBenefit",
+  ] as const; // O P Q R S T
+  const VY = [
+    "usedModelPlan",
+    "usedExtraSupport",
+    "usedDicho",
+    "usedSecond",
+  ] as const; // V W X Y
+  dash(OT);
+  dash([...VY, "usedPhoneSale", "usedPhoneUsed"]); // V~AA
+  row.securedTotal = sum(OT); // N
+  row.usedTotal = sum(VY); // U
+  row.usedPhoneRemaining =
+    amountOf(row.usedPhoneSale) - amountOf(row.usedPhoneUsed); // AB = Z − AA
+  row.finalTotal =
+    amountOf(row.securedTotal) +
+    amountOf(row.usedTotal) +
+    amountOf(row.usedPhoneRemaining); // AC = N + U + AB
+  xIfEmpty(["secondPerformance", "jeca", "cardType", "cardChecked"]); // AD~AG
+  xIfEmpty(["addon", "insurance"]); // AI·AJ
+  return row;
 }
 
 /** 장표 판매 1건의 중복 확인 키 */
