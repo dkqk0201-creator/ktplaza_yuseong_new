@@ -119,12 +119,6 @@ export function diffSale(
 
 /* ---------- 중고판매 AB·AC 재계산 (간편등록과 같은 규칙) ---------- */
 
-/** Z·AA 중 하나라도 바뀌면 재계산 */
-export const USED_PHONE_TRIGGER_KEYS = [
-  "usedPhoneSale", // Z
-  "usedPhoneUsed", // AA
-] as const satisfies readonly ColumnKey[];
-
 /** 재계산에 쓰이는 칸 N·U·Z·AA 와 결과 칸 AB·AC */
 export const USED_PHONE_RECALC_KEYS = [
   "securedTotal", // N
@@ -135,7 +129,7 @@ export const USED_PHONE_RECALC_KEYS = [
   "finalTotal", // AC
 ] as const satisfies readonly ColumnKey[];
 
-const USED_PHONE_NOTE = "중고판매(Z·AA) 변경으로 자동 계산";
+const USED_PHONE_NOTE = "AB=Z−AA, AC=N+U+AB 자동 계산";
 
 /**
  * AB = Z − AA,  AC = N + U + AB
@@ -157,24 +151,24 @@ export function calcUsedPhone(values: {
   };
 }
 
-function hasUsedPhoneTrigger(keys: Iterable<ColumnKey>): boolean {
+function touchesRecalc(keys: Iterable<ColumnKey>): boolean {
   for (const key of keys)
-    if ((USED_PHONE_TRIGGER_KEYS as readonly ColumnKey[]).includes(key))
+    if ((USED_PHONE_RECALC_KEYS as readonly ColumnKey[]).includes(key))
       return true;
   return false;
 }
 
 /**
- * Z 또는 AA 를 바꾸면 최종값(바꾼 값, 안 바꾼 칸은 화면 값) 기준으로 AB·AC 를 다시 계산해
- * 자동 변경으로 함께 저장한다. 직접 입력한 AB·AC 는 계산값으로 대체한다.
- * 계산값이 지금 값과 같으면 쓰지 않는다 (saleChecks 로 현재 값만 확인).
- * Z·AA 를 바꾸지 않은 수정에서는 AB·AC 를 건드리지 않는다.
+ * 판매 수정 저장 때마다 최종값(바꾼 칸은 새 값, 안 바꾼 칸은 화면 값)으로 AB·AC 를 계산해
+ * 지금 값과 다르면 자동 변경으로 함께 저장한다.
+ *   - Z·AA 를 바꾸지 않아도 AB·AC 가 계산 결과와 다르면 바로잡는다 (예: Z="-", AA=50000, AB=0 → AB=-50000).
+ *   - 직접 입력한 AB·AC 는 계산값으로 대체한다.
+ *   - 이미 계산 결과와 같으면 AB·AC 는 쓰지 않는다.
  */
 function applyUsedPhoneRule(
   sale: SheetSale,
   changes: SaleChange[],
 ): SaleChange[] {
-  if (!hasUsedPhoneTrigger(changes.map((c) => c.key))) return changes;
   const rest = changes.filter(
     (c) => c.key !== "usedPhoneRemaining" && c.key !== "finalTotal",
   );
@@ -204,13 +198,14 @@ function applyUsedPhoneRule(
 
 /**
  * 판매 수정 요청과 함께 보낼 "확인만 하는 칸".
- * Z·AA 를 바꿀 때 N·U·Z·AA·AB·AC 중 이번에 쓰지 않는 칸의 화면 값.
+ * N·U·Z·AA·AB·AC 중 하나라도 바꾸면, 나머지(이번에 쓰지 않는 칸)의 화면 값을 보내
+ * 그사이 다른 사람이 고쳤는지 Apps Script 가 대조하게 한다.
  */
 export function saleChecks(
   sale: SheetSale,
   changes: SaleChange[],
 ): SaleCheck[] {
-  if (!hasUsedPhoneTrigger(changes.map((c) => c.key))) return [];
+  if (!touchesRecalc(changes.map((c) => c.key))) return [];
   const changed = new Set<ColumnKey>(changes.map((c) => c.key));
   return USED_PHONE_RECALC_KEYS.filter((key) => !changed.has(key)).map(
     (key) => ({ key, before: editText(sale, key) }),
@@ -218,17 +213,17 @@ export function saleChecks(
 }
 
 /**
- * 서버 재검증: Z·AA 를 바꾸는 요청이면 N·U·Z·AA·AB·AC 가 모두 (바꾸는 칸 또는 확인 칸으로) 있어야 하고,
- * AB·AC 가 위 규칙으로 계산한 값과 같아야 한다. 맞으면 null, 아니면 오류 문구.
- * Z·AA 를 바꾸지 않는 요청에는 확인 칸이 없어야 한다.
+ * 서버 재검증: N·U·Z·AA·AB·AC 중 하나라도 바꾸는 요청이면 6칸이 모두 (바꾸는 칸 또는 확인 칸으로) 있어야 하고,
+ * 최종 AB·AC 가 위 규칙으로 계산한 값과 같아야 한다. 맞으면 null, 아니면 오류 문구.
+ * 6칸을 건드리지 않는 요청에는 확인 칸이 없어야 한다.
  */
 export function verifyUsedPhoneRecalc(
   changes: readonly { key: ColumnKey; before: string; after: string }[],
   checks: readonly SaleCheck[],
 ): string | null {
   const refresh =
-    "중고판매(Z·AA) 수정에 필요한 값이 맞지 않습니다. 화면을 새로고침한 뒤 다시 수정해 주세요.";
-  if (!hasUsedPhoneTrigger(changes.map((c) => c.key))) {
+    "중고판매·합계(N·U·Z·AA·AB·AC) 값이 맞지 않습니다. 화면을 새로고침한 뒤 다시 수정해 주세요.";
+  if (!touchesRecalc(changes.map((c) => c.key))) {
     return checks.length === 0 ? null : refresh;
   }
   const screen = new Map<ColumnKey, string>();
@@ -239,17 +234,13 @@ export function verifyUsedPhoneRecalc(
   }
   for (const c of checks) {
     if (screen.has(c.key)) return refresh; // 바꾸는 칸과 확인 칸이 겹침
+    if (!(USED_PHONE_RECALC_KEYS as readonly ColumnKey[]).includes(c.key)) {
+      return refresh;
+    }
     screen.set(c.key, c.before);
     final.set(c.key, c.before);
   }
   for (const key of USED_PHONE_RECALC_KEYS) if (!screen.has(key)) return refresh;
-  if (
-    checks.some(
-      (c) => !(USED_PHONE_RECALC_KEYS as readonly ColumnKey[]).includes(c.key),
-    )
-  ) {
-    return refresh;
-  }
   const result = calcUsedPhone({
     securedTotal: final.get("securedTotal")!,
     usedTotal: final.get("usedTotal")!,
