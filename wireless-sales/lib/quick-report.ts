@@ -411,6 +411,9 @@ const CATEGORY_MAP: Record<string, string> = {
   신규: "신규",
 };
 
+/** UMNP: 대소문자 구분 없이 인식하고 장표에는 "UMNP" 로 저장 */
+const UMNP = "UMNP";
+
 function ox(raw: string): "O" | "X" | null {
   const s = raw.trim().toUpperCase();
   return s === "O" || s === "X" ? s : null;
@@ -506,14 +509,16 @@ export function normalizeQuick(
   }
 
   if (need("category", "개통구분")) {
-    const value = CATEGORY_MAP[v("category").replace(/\s+/g, "")];
+    const key = v("category").replace(/\s+/g, "");
+    const value =
+      key.toUpperCase() === UMNP ? UMNP : CATEGORY_MAP[key];
     if (value) {
       row.category = value;
       display.category = value;
     } else {
       issues.push({
         field: "category",
-        message: "개통구분은 기변 / 번이 / 신규 중 하나여야 합니다.",
+        message: "개통구분은 기변 / 번이 / 신규 / UMNP 중 하나여야 합니다.",
       });
     }
   }
