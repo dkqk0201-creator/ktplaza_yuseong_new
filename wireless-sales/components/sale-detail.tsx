@@ -91,6 +91,35 @@ const SECTIONS: { title: string; keys: ColumnKey[]; strong?: ColumnKey[] }[] = [
   { title: "합계", keys: ["finalTotal"], strong: ["finalTotal"] },
 ];
 
+/*
+ * 판매 수정 입력 화면 전용 배치: T열 고객혜택을 3. 확보금액(O~T, N) 안으로 옮기고
+ * 4번 영역에서는 뺀다. 화면 배치만 다르며 열 위치·저장 위치·계산은 그대로.
+ * (상세 보기·고객조회는 SECTIONS 그대로)
+ */
+const EDIT_SECTIONS: typeof SECTIONS = SECTIONS.map((section) => {
+  if (section.title === "3. 확보금액") {
+    return {
+      ...section,
+      keys: [
+        "spot", // O
+        "securedDicho", // P
+        "appleMania", // Q
+        "securedSecond", // R
+        "modelPolicy", // S
+        "customerBenefit", // T
+        "securedTotal", // N
+      ],
+    };
+  }
+  if (section.title === "4. 고객혜택 / 고객혜택사용") {
+    return {
+      ...section,
+      keys: section.keys.filter((key) => key !== "customerBenefit"),
+    };
+  }
+  return section;
+});
+
 function valueText(sale: SheetSale, key: ColumnKey): string {
   const value = (sale as Record<string, unknown>)[key];
   if (typeof value === "number" || value === null) return amountText(value);
@@ -461,7 +490,7 @@ function SaleEditForm({
           ))}
         </dl>
       </section>
-      {SECTIONS.map((section) => {
+      {EDIT_SECTIONS.map((section) => {
         const keys = section.keys.filter((k) => k !== "activatedAt");
         return (
           <section
