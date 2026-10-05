@@ -4,6 +4,7 @@
  * 요청: { secret, action: "delete", target: { sheet, row, no, activatedAt, customer, ctn } }
  *   - 행 자체는 지우지 않는다. 대상 행의 A열과 C~AL열의 "값"만 비운다 (서식 유지).
  *   - B열(No.)과 수식이 들어 있는 칸은 절대 건드리지 않는다.
+ *     단 N·U열의 행별 합계 수식(save-handler.gs 의 판매 행 수식)은 빈 행 모양("-")으로 되돌린다.
  *   - "무선장표 양식" 시트의 같은 행에서 "-" 인 칸은 "-" 를 다시 넣어 처음 빈 행 모양으로 되돌린다.
  *     (양식 시트가 없으면 가장 가까운 빈 판매 행을 참고한다)
  *   - 행 번호만 믿지 않고 No.(B)·개통일(C)·고객(D)·CTN(E) 이 화면에서 본 값과 모두 같을 때만 지운다.
@@ -117,16 +118,19 @@ function handleDeleteRequest_(e) {
       // 참고내용 정리에 실패해도 판매 삭제는 진행 (조회 시 키가 맞는 판매가 없으면 붙지 않음)
     }
 
-    // 5) A열·C~AL열만, 수식 칸은 건너뛰고, 이어진 칸끼리 묶어서 값만 바꾼다
+    // 5) A열·C~AL열만, 수식 칸은 건너뛰고(N·U 합계 수식은 비움), 이어진 칸끼리 묶어서 값만 바꾼다
+    var clearable = function (col) {
+      return col !== WS_B_INDEX && (formulas[col] === "" || wsIsSumColumn_(col));
+    };
     var c = 0;
     while (c < WS_COLUMN_COUNT) {
-      if (c === WS_B_INDEX || formulas[c] !== "") {
+      if (!clearable(c)) {
         c++;
         continue;
       }
       var start = c;
       var segment = [];
-      while (c < WS_COLUMN_COUNT && c !== WS_B_INDEX && formulas[c] === "") {
+      while (c < WS_COLUMN_COUNT && clearable(c)) {
         segment.push(reference && reference[c] === "-" ? "-" : "");
         c++;
       }

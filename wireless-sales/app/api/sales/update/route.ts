@@ -1,5 +1,6 @@
 import {
   EDITABLE_KEYS,
+  SUM_FORMULA_KEYS,
   columnIndexOf,
   USED_PHONE_RECALC_KEYS,
   isAmountKey,
@@ -30,6 +31,8 @@ import type {
  * - AB·AC 는 서버가 계산한다: AB = Z − AA, AC = N + U + AB (최종값 기준, "-"·빈칸은 0, 음수 그대로).
  *   화면이 보낸 AB·AC 는 쓰지 않고, 계산값이 장표 값과 다를 때만 함께 저장한다
  *   (이미 틀어져 있던 AB·AC 도 바로잡는다. 틀어져 있다는 이유로 거부하지 않는다).
+ * - N·U 는 장표의 같은 행 합계 수식(SUM(O:T)·SUM(V:Y))이라 쓰지 않는다. 화면이 보낸 N·U 자동 항목은 버리고,
+ *   AC 계산의 N·U 는 O~T·V~Y 최종값의 합으로 구한다 (Apps Script 가 숫자로 남아 있던 N·U 는 수식으로 바꿈).
  * - 계산 기준: 화면에서 본 값(base). 예전 화면이라 base 가 없으면 장표에서 그 행을 방금 읽은 값.
  * - AB·AC 를 쓸 때는 계산에 쓴 N·U·Z·AA 중 바꾸지 않는 칸을 "확인만 하는 칸"으로 보내,
  *   그사이 다른 사람이 고쳤으면 Apps Script 가 아무것도 쓰지 않고 거부한다.
@@ -146,7 +149,7 @@ function parseChanges(input: unknown): ParsedChanges | string {
   return { cells, list };
 }
 
-/** 화면에서 본 N·U·Z·AA·AB·AC. 6칸이 모두 올바른 글자여야 쓰고, 아니면 null */
+/** 화면에서 본 O~T·V~Y·Z·AA·AB·AC. 모든 칸이 올바른 글자여야 쓰고, 아니면 null */
 function parseBase(input: unknown): RecalcBase | null {
   if (typeof input !== "object" || input === null) return null;
   const raw = input as Record<string, unknown>;
@@ -159,7 +162,7 @@ function parseBase(input: unknown): RecalcBase | null {
   return base as RecalcBase;
 }
 
-/** 예전 화면(base 없음): 장표에서 그 행의 N·U·Z·AA·AB·AC 를 방금 읽은 값 */
+/** 예전 화면(base 없음): 장표에서 그 행의 O~T·V~Y·Z·AA·AB·AC 를 방금 읽은 값 */
 async function readBase(
   target: UpdateSaleTarget,
 ): Promise<RecalcBase | null> {
@@ -189,7 +192,15 @@ export async function POST(request: Request) {
       400,
     );
   }
-  const parsed = parseChanges(raw.changes);
+  // N·U(행별 합계 수식)는 화면 표시용 자동 항목 → 쓰지 않으므로 버린다
+  const sumKeys = new Set<unknown>(SUM_FORMULA_KEYS);
+  const submitted = Array.isArray(raw.changes)
+    ? raw.changes.filter(
+        (c: unknown) =>
+          !(typeof c === "object" && c !== null && sumKeys.has((c as Record<string, unknown>).key)),
+      )
+    : raw.changes;
+  const parsed = parseChanges(submitted);
   if (typeof parsed === "string") {
     return reply({ ok: false, message: parsed }, 400);
   }

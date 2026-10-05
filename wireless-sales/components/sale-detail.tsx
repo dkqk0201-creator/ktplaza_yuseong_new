@@ -8,6 +8,7 @@ import {
   changeLabel,
   diffSale,
   editText,
+  formulaTotal,
   isAmountKey,
   parseEditAmount,
   saleRecalcBase,
@@ -484,7 +485,8 @@ function SaleEditForm({
           바꾼 칸만 장표의 같은 행에 저장됩니다. No.와 개통일은 수정할 수
           없습니다. 저장할 때 AB(Z−AA)와 AC(N+U+AB)를 다시 계산해, 지금 값과
           다르면 자동으로 바로잡아 함께 저장합니다 (Z·AA를 바꾸지 않아도
-          적용). N·U는 자동으로 다시 계산되지 않습니다. 카드
+          적용). N(O~T 합계)·U(V~Y 합계)는 장표 수식이 자동으로 다시
+          계산합니다. 카드
           종류(AF)에 카드사명을 넣으면 제카(AE)는 O, 카드실적 검수(AG)는
           빈칸으로 함께 저장됩니다.
         </p>
@@ -529,6 +531,28 @@ function SaleEditForm({
             </h3>
             <div className="space-y-3 px-4 py-3">
               {keys.map((key) => {
+                // N·U: 장표 행별 합계 수식 → 직접 수정하지 않고, 입력값 기준 합계만 보여준다
+                if (key === "securedTotal" || key === "usedTotal") {
+                  return (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between gap-4 rounded-lg bg-zinc-50 px-3 py-2.5 text-sm"
+                    >
+                      <span className="text-xs font-semibold text-ink-sub">
+                        {COLUMN_LABEL[key]}
+                        <span className="ml-1.5 font-normal text-ink-muted">
+                          {COLUMN_LETTER[key]}열
+                        </span>
+                      </span>
+                      <span className="text-right text-ink tabular-nums">
+                        {formatNumber(formulaTotal(sale, edited, key))}원
+                        <span className="ml-1.5 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-ink-muted">
+                          {key === "securedTotal" ? "O~T 합계 자동" : "V~Y 합계 자동"}
+                        </span>
+                      </span>
+                    </div>
+                  );
+                }
                 const id = `edit-${key}`;
                 const original = editText(sale, key);
                 const value = edited[key] ?? original;

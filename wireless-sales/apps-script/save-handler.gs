@@ -15,15 +15,42 @@
  *   - 판매 1건 = A~AL 한 행 전체(B열 제외)가 함께 움직인다. B열(No.)은 행에 그대로 → 9행=1, 10행=2 …
  *   - 중간에 삭제로 비어 있던 행은 판매 행들 아래로 내려간다.
  *   - 8행(합계)과 그 위는 건드리지 않는다. 값만 옮기며 서식·메모는 행 위치에 그대로 남는다.
+ *   - 판매·빈 행에 수식이 있거나(N·U열 행별 합계 수식은 제외) 개통일이 날짜가 아닌 판매 행이 있으면
+ *     정렬하지 않고 예전 방식(위에서부터 첫 빈 행)으로 저장한다 (응답 sorted: false).
+ * N·U열: 판매 행에는 숫자 대신 같은 행 합계 수식을 넣는다 → 시트에서 O~T·V~Y 를 고치면 바로 다시 계산.
+ *   N = SUM(O행:T행), U = SUM(V행:Y행). 정렬로 판매가 다른 행으로 옮겨지면 그 행 번호의 수식을 새로 쓴다.
+ *   빈 행(판매 없음)은 기존 빈 행 모양 그대로 ("-"). 8행 합계 수식은 건드리지 않는다.
  * C열 개통일 표시: 저장할 때마다 9행부터 C열의 "표시 형식"만 mm.dd (예: 10.05) 로 맞춘다.
  *   값은 실제 날짜 그대로라 날짜 정렬·조회·참고내용 연결(yyyy-MM-dd 로 읽음)은 바뀌지 않는다.
- *   - 판매·빈 행에 수식이 있거나 개통일이 날짜가 아닌 판매 행이 있으면 정렬하지 않고
- *     예전 방식(위에서부터 첫 빈 행)으로 저장한다 (응답 sorted: false).
  * LockService 로 한 번에 하나의 저장·삭제만 처리한다.
  * 여러 건 저장은 잠금·열 구조 확인·장표 읽기를 한 번만 해서 1건씩 여러 번 부르는 것보다 훨씬 빠르다.
  * 응답: 1건 → { ok, sheet, row, no } / 여러 건 → { ok: true, sheet, results: [{ ok, row, no } | { ok: false, message }], notesSaved }
  */
 var WS_SAVE_BATCH_MAX = 30;
+
+/* N·U열 행별 합계 수식 (update-handler.gs·delete-handler.gs 도 함께 사용) */
+var WS_N_INDEX = 13; // N열 총 확보금액 = SUM(O:T)
+var WS_U_INDEX = 20; // U열 총 사용금액 = SUM(V:Y)
+
+/** N·U열인지 */
+function wsIsSumColumn_(index) {
+  return index === WS_N_INDEX || index === WS_U_INDEX;
+}
+
+/** 그 행의 N·U 수식 */
+function wsSumFormula_(index, rowNumber) {
+  return index === WS_N_INDEX
+    ? "=SUM(O" + rowNumber + ":T" + rowNumber + ")"
+    : "=SUM(V" + rowNumber + ":Y" + rowNumber + ")";
+}
+
+/** 판매 행 38칸에 N·U 수식을 넣은 사본 (rowNumber = 실제로 쓰일 행) */
+function wsWithSumFormulas_(cells, rowNumber) {
+  var out = cells.slice();
+  out[WS_N_INDEX] = wsSumFormula_(WS_N_INDEX, rowNumber);
+  out[WS_U_INDEX] = wsSumFormula_(WS_U_INDEX, rowNumber);
+  return out;
+}
 
 function handleSaveRequest_(e) {
   var body = wsBody_(e);
@@ -112,7 +139,12 @@ function handleSaveRequest_(e) {
         continue;
       }
       next = index + 1;
-      wsWriteSaleRow_(sheet, WS_FIRST_ROW + index, rows[k], allFormulas[index]);
+      wsWriteSaleRow_(
+        sheet,
+        WS_FIRST_ROW + index,
+        wsWithSumFormulas_(rows[k], WS_FIRST_ROW + index),
+        allFormulas[index],
+      );
       results.push({
         ok: true,
         row: WS_FIRST_ROW + index,
@@ -203,7 +235,8 @@ function wsPlanSortedSave_(all, formulas, newRows, tz) {
   for (var i = 0; i < all.length; i++) {
     if (wsText_(all[i][WS_B_INDEX], tz) === "") continue;
     for (var f = 0; f < WS_COLUMN_COUNT; f++) {
-      if (f !== WS_B_INDEX && formulas[i][f] !== "") return null; // 수식 칸이 있으면 옮기지 않는다
+      // 수식 칸이 있으면 옮기지 않는다 (N·U 행별 합계 수식은 행마다 다시 쓰므로 제외)
+      if (f !== WS_B_INDEX && !wsIsSumColumn_(f) && formulas[i][f] !== "") return null;
     }
     slots.push(i);
     if (wsIsEmptySale_(all[i])) empties.push(i);
@@ -244,7 +277,11 @@ function wsPlanSortedSave_(all, formulas, newRows, tz) {
   });
   // 남은 빈 행은 판매 행들 아래로 (원래 순서)
   for (var e = used; e < empties.length; e++) {
-    items.push({ source: empties[e], cells: wsSheetCells_(all[empties[e]]) });
+    var emptyCells = wsSheetCells_(all[empties[e]]);
+    // 빈 행에 N·U 수식이 남아 있었다면(예전 삭제) 빈 행 모양 "-" 로
+    if (formulas[empties[e]][WS_N_INDEX] !== "") emptyCells[WS_N_INDEX] = "-";
+    if (formulas[empties[e]][WS_U_INDEX] !== "") emptyCells[WS_U_INDEX] = "-";
+    items.push({ source: empties[e], cells: emptyCells });
   }
 
   var first = -1;
@@ -253,7 +290,8 @@ function wsPlanSortedSave_(all, formulas, newRows, tz) {
   for (var j = 0; j < slots.length; j++) {
     var slot = slots[j];
     var item = items[j];
-    byIndex[slot] = item.cells;
+    // 판매 행은 그 행 번호의 N·U 수식으로 (정렬로 옮겨져도 같은 행 O:T·V:Y 를 더함)
+    byIndex[slot] = item.key ? wsWithSumFormulas_(item.cells, WS_FIRST_ROW + slot) : item.cells;
     if (item.result !== undefined) {
       results[item.result] = {
         ok: true,
