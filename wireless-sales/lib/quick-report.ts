@@ -414,6 +414,18 @@ const CATEGORY_MAP: Record<string, string> = {
 /** UMNP: 대소문자 구분 없이 인식하고 장표에는 "UMNP" 로 저장 */
 const UMNP = "UMNP";
 
+/**
+ * 개통구분 값 → 표준값 ("기기변경" / "번호이동" / "신규" / "UMNP"), 모르는 값은 null.
+ * 간편등록 normalizeQuick 의 개통구분 규칙과 같다 (집계 화면에서 장표 값을 읽을 때 사용).
+ */
+export function normalizeCategory(raw: string): string | null {
+  const key = raw.replace(/\s+/g, "");
+  if (key.toUpperCase() === UMNP) return UMNP;
+  return Object.prototype.hasOwnProperty.call(CATEGORY_MAP, key)
+    ? CATEGORY_MAP[key]
+    : null;
+}
+
 function ox(raw: string): "O" | "X" | null {
   const s = raw.trim().toUpperCase();
   return s === "O" || s === "X" ? s : null;

@@ -70,6 +70,15 @@ export const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
+  {
+    href: "/staff",
+    label: "직원 실적관리",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M4 20V10M10 20V4M16 20v-7M22 20H2" />
+      </svg>
+    ),
+  },
 ];
 
 /** 현재 주소에 해당하는 메뉴인지 판단 (가장 길게 일치하는 메뉴만 활성) */
