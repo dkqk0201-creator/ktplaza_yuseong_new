@@ -589,9 +589,11 @@ export function normalizeQuick(
     }
   }
 
-  // 중고폰 반납: 리본 / 폰삼 / X 만 (공란 허용). 반납 방식이라 장표 어느 열에도 저장하지 않는다.
-  // Z(중고판매 판매)는 이 양식에서 채우지 않으므로 기존 공란 규칙대로 "-".
+  // 중고폰 반납: 리본 / 폰삼 / X 만 (공란 허용). 리본·폰삼은 장표 어느 열에도 저장하지 않는다
+  // (Z 는 이 양식에서 채우지 않으므로 기존 공란 규칙대로 "-").
+  // X 이면 Z·AA·AB 를 모두 글자 "X" 로 저장한다 (사용금액보다 우선, AC 계산에서는 0).
   const returned = v("usedPhone");
+  const returnedX = returned.replace(/\s+/g, "").toUpperCase() === "X";
   if (returned) {
     const value = returned.replace(/\s+/g, "").toUpperCase();
     if (value === "리본" || value === "폰삼" || value === "X") {
@@ -604,7 +606,13 @@ export function normalizeQuick(
     }
   }
   // 사용금액 → AA(중고판매 사용). 기존 금액 규칙(parseAmount), 공란이면 "-" (V~AA 공란 규칙)
-  {
+  if (returnedX) {
+    row.usedPhoneSale = "X";
+    row.usedPhoneUsed = "X";
+    if (v("usedPhoneUse")) {
+      display.usedPhoneUse = "저장 안 함 (중고폰 반납이 X 이므로 사용금액은 저장하지 않음)";
+    }
+  } else {
     const parsed = parseAmount(fields.usedPhoneUse);
     if ("error" in parsed) {
       issues.push({ field: "usedPhoneUse", message: parsed.error });
@@ -702,8 +710,11 @@ export function normalizeQuick(
     }
   }
 
+  const finalRow = applyQuickColumnRules(row);
+  // 반납 X: AB 도 글자 X (AC 는 위에서 X 를 0 으로 계산한 N + U + 0 그대로)
+  if (returnedX) finalRow.usedPhoneRemaining = "X";
   return {
-    row: applyQuickColumnRules(row),
+    row: finalRow,
     issues,
     display,
     duplicateKey:
