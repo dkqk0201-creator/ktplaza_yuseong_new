@@ -33,7 +33,10 @@ export async function getSheetSales(sheet?: string): Promise<SheetSalesResult> {
   try {
     const result = await listRowsFromAppsScript(sheet);
     const sales = result.rows
-      .map(({ row, no, values }) => parseSheetRow(row, no, values))
+      .map(({ row, no, values, notes }) => {
+        const sale = parseSheetRow(row, no, values);
+        return notes ? { ...sale, notes } : sale;
+      })
       .sort((a, b) => b.row - a.row);
     return { ok: true, sheet: result.sheet, sales, sheets: result.sheets };
   } catch (error) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { postDeleteSale } from "@/lib/delete-sale-api";
 import { formatCtn, formatNumber } from "@/lib/format";
 import { amountText, dateText } from "@/lib/sale-display";
@@ -91,6 +91,57 @@ const SECTIONS: { title: string; keys: ColumnKey[]; strong?: ColumnKey[] }[] = [
   },
   { title: "합계", keys: ["finalTotal"], strong: ["finalTotal"] },
 ];
+
+/*
+ * 판매보고 참고내용 (장표 A~AL 에 없는 항목) 을 상세 화면의 원래 의미 위치에 함께 보여준다.
+ * 값은 Apps Script 보조 시트 "웹앱참고" 에서 이 판매에 연결된 것 (sale.notes).
+ * always: 비어 있어도 "-" 로 항상 보이는 항목 / 나머지는 직원이 적은 경우에만 보인다.
+ */
+type NoteRow = { id: string; label: string; always?: boolean };
+const NOTES_BEFORE: Partial<Record<ColumnKey, NoteRow[]>> = {
+  usedPhoneSale: [{ id: "usedPhone", label: "중고폰&현물 판매", always: true }],
+};
+const NOTES_AFTER: Partial<Record<ColumnKey, NoteRow[]>> = {
+  usedModelPlan: [
+    { id: "useInstallment", label: "고혜(기존할부금)" },
+    { id: "usePlan", label: "고혜(요금)" },
+  ],
+  usedDicho: [
+    { id: "dicho", label: "디초/삼초" },
+    { id: "dichoGift", label: "디초/삼초 사은품판매or수령" },
+  ],
+  usedSecond: [
+    { id: "second", label: "2ND" },
+    { id: "secondSelfPay", label: "2ND 자부담" },
+    { id: "secondGift", label: "2ND 사은품판매or수령" },
+  ],
+  usedPhoneUsed: [{ id: "usedPhoneWhere", label: "어디에", always: true }],
+};
+
+function NoteRows({ sale, rows }: { sale: SheetSale; rows?: NoteRow[] }) {
+  return (
+    <>
+      {(rows ?? [])
+        .filter((r) => r.always || sale.notes?.[r.id])
+        .map((r) => (
+          <div
+            key={r.id}
+            className="flex items-start justify-between gap-4 px-4 py-2.5 text-sm"
+          >
+            <dt className="shrink-0 text-ink-sub">
+              {r.label}
+              <span className="ml-1.5 text-[11px] text-ink-muted">
+                판매보고
+              </span>
+            </dt>
+            <dd className="text-right break-all whitespace-pre-wrap text-ink">
+              {sale.notes?.[r.id] || "-"}
+            </dd>
+          </div>
+        ))}
+    </>
+  );
+}
 
 function valueText(sale: SheetSale, key: ColumnKey): string {
   const value = (sale as Record<string, unknown>)[key];
@@ -192,7 +243,10 @@ export function SaleDetail({
     deletingRef.current = false;
     setSaving(false);
     if (result.ok) {
-      setUpdated(parseSheetRow(result.row, result.no, result.values));
+      // 참고내용은 장표 값이 아니므로 수정 응답에 없다 → 보던 참고내용을 그대로 유지
+      // (고객명·CTN 을 바꾸면 Apps Script 가 참고내용 연결 키도 함께 옮긴다)
+      const next = parseSheetRow(result.row, result.no, result.values);
+      setUpdated(sale.notes ? { ...next, notes: sale.notes } : next);
       setMode("view");
       setEdited({});
       setUpdateNotice(`${result.message} (${list.length}개 항목)`);
@@ -381,26 +435,27 @@ function SaleView({ sale }: { sale: SheetSale }) {
           </h3>
           <dl className="divide-y divide-line">
             {section.keys.map((key) => (
-              <div
-                key={key}
-                className="flex items-start justify-between gap-4 px-4 py-2.5 text-sm"
-              >
-                <dt className="shrink-0 text-ink-sub">
-                  {COLUMN_LABEL[key]}
-                  <span className="ml-1.5 text-[11px] text-ink-muted">
-                    {COLUMN_LETTER[key]}열
-                  </span>
-                </dt>
-                <dd
-                  className={`text-right break-all whitespace-pre-wrap tabular-nums ${
-                    section.strong?.includes(key)
-                      ? "font-bold text-ink"
-                      : "text-ink"
-                  }`}
-                >
-                  {valueText(sale, key) || "-"}
-                </dd>
-              </div>
+              <Fragment key={key}>
+                <NoteRows sale={sale} rows={NOTES_BEFORE[key]} />
+                <div className="flex items-start justify-between gap-4 px-4 py-2.5 text-sm">
+                  <dt className="shrink-0 text-ink-sub">
+                    {COLUMN_LABEL[key]}
+                    <span className="ml-1.5 text-[11px] text-ink-muted">
+                      {COLUMN_LETTER[key]}열
+                    </span>
+                  </dt>
+                  <dd
+                    className={`text-right break-all whitespace-pre-wrap tabular-nums ${
+                      section.strong?.includes(key)
+                        ? "font-bold text-ink"
+                        : "text-ink"
+                    }`}
+                  >
+                    {valueText(sale, key) || "-"}
+                  </dd>
+                </div>
+                <NoteRows sale={sale} rows={NOTES_AFTER[key]} />
+              </Fragment>
             ))}
           </dl>
         </section>

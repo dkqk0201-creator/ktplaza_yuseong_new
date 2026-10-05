@@ -155,7 +155,14 @@ function checkRow(row: SheetRowArray) {
 }
 
 export type AppsScriptBatchItem =
-  | { ok: true; sheet: string; row: number; no: string }
+  | {
+      ok: true;
+      sheet: string;
+      row: number;
+      no: string;
+      /** 참고내용을 보조 시트에 보관했는지 (Apps Script 가 예전 버전이면 false) */
+      notesSaved: boolean;
+    }
   | { ok: false; error: AppsScriptError };
 
 /**
@@ -166,6 +173,8 @@ export type AppsScriptBatchItem =
  */
 export async function saveRowsToAppsScript(
   rows: SheetRowArray[],
+  /** rows 와 같은 순서의 판매보고 참고내용 (장표 A~AL 이 아닌 보조 시트에 보관) */
+  notes?: (Record<string, string> | null)[],
 ): Promise<AppsScriptBatchItem[]> {
   if (rows.length === 0 || rows.length > SAVE_BATCH_MAX) {
     throw new AppsScriptError(
@@ -178,7 +187,7 @@ export async function saveRowsToAppsScript(
   let data: Record<string, unknown>;
   try {
     data = await postToAppsScript(
-      { action: "save", rows },
+      notes ? { action: "save", rows, notes } : { action: "save", rows },
       "Apps Script가 저장을 거부했습니다.",
       BATCH_TIMEOUT_MS,
     );
@@ -192,7 +201,11 @@ export async function saveRowsToAppsScript(
       const fallback: AppsScriptBatchItem[] = [];
       for (const row of rows) {
         try {
-          fallback.push({ ok: true, ...(await saveRowToAppsScript(row)) });
+          fallback.push({
+            ok: true,
+            notesSaved: false,
+            ...(await saveRowToAppsScript(row)),
+          });
         } catch (e) {
           if (!(e instanceof AppsScriptError)) throw e;
           fallback.push({ ok: false, error: e });
@@ -211,12 +224,13 @@ export async function saveRowsToAppsScript(
       "Apps Script 응답에 건별 저장 결과가 없습니다.",
     );
   }
+  const notesSaved = data.notesSaved === true;
   return results.map((item): AppsScriptBatchItem => {
     const r = (item ?? {}) as Record<string, unknown>;
     const rowNumber = Number(r.row);
     const no = r.no === undefined || r.no === null ? "" : String(r.no);
     if (r.ok === true && no && Number.isInteger(rowNumber)) {
-      return { ok: true, sheet, row: rowNumber, no };
+      return { ok: true, sheet, row: rowNumber, no, notesSaved };
     }
     if (r.ok === true) {
       return {
@@ -244,6 +258,8 @@ export interface AppsScriptListRow {
   no: string;
   /** A~AL 38칸 값 */
   values: unknown[];
+  /** 판매보고 참고내용 (보조 시트, 이 판매에 정확히 연결된 경우만) */
+  notes?: Record<string, string>;
 }
 
 export interface AppsScriptListResult {
@@ -251,6 +267,20 @@ export interface AppsScriptListResult {
   rows: AppsScriptListRow[];
   /** 스프레드시트에 있는 월 시트 이름 (예: ["9월", "10월"]) */
   sheets: string[];
+}
+
+/** 참고내용: 글자 값만 (항목 id 는 영문) */
+function parseNotes(value: unknown): Record<string, string> | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (/^[A-Za-z]{1,40}$/.test(k) && typeof v === "string" && v.trim()) {
+      out[k] = v.slice(0, 500);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 export function monthSheetNames(value: unknown): string[] {
@@ -286,6 +316,7 @@ export async function listRowsFromAppsScript(
       row: rowNumber,
       no: no === undefined || no === null ? "" : String(no),
       values: values.slice(0, COLUMN_COUNT),
+      notes: parseNotes((item as Record<string, unknown>).notes),
     });
   }
   return { sheet: sheetName, rows, sheets: monthSheetNames(data.sheets) };

@@ -4,6 +4,8 @@
  * 요청 (둘 중 하나):
  *   { secret, action: "save", row: [38칸] }          ← 1건
  *   { secret, action: "save", rows: [[38칸], ...] }  ← 여러 건을 한 번에 (간편등록, 최대 30건)
+ *     notes: [{ 항목id: 글자 } | null, ...]          ← (선택) rows 와 같은 순서의 판매보고 참고내용.
+ *       장표 A~AL 에는 쓰지 않고 notes.gs 의 숨김 보조 시트 "웹앱참고" 에 판매 건별로 보관한다.
  *   - row[i] 가 null 이면 그 칸은 건드리지 않는다 (간편등록에서 직원이 보내지 않은 칸 = 빈칸 유지).
  *   - B열(No.)은 어떤 값이 와도 절대 쓰지 않는다.
  *   - 수식이 들어 있는 칸은 건너뛴다.
@@ -17,7 +19,7 @@
  *     예전 방식(위에서부터 첫 빈 행)으로 저장한다 (응답 sorted: false).
  * LockService 로 한 번에 하나의 저장·삭제만 처리한다.
  * 여러 건 저장은 잠금·열 구조 확인·장표 읽기를 한 번만 해서 1건씩 여러 번 부르는 것보다 훨씬 빠르다.
- * 응답: 1건 → { ok, sheet, row, no } / 여러 건 → { ok: true, sheet, results: [{ ok, row, no } | { ok: false, message }] }
+ * 응답: 1건 → { ok, sheet, row, no } / 여러 건 → { ok: true, sheet, results: [{ ok, row, no } | { ok: false, message }], notesSaved }
  */
 var WS_SAVE_BATCH_MAX = 30;
 
@@ -84,7 +86,8 @@ function handleSaveRequest_(e) {
     if (plan) {
       wsWriteSortedBlock_(sheet, plan);
       SpreadsheetApp.flush();
-      return wsSaveReply_(batch, sheetName, plan.results, true);
+      var sortedNotes = wsSaveNotesSafely_(ss, sheet, tz, plan.results, body.notes);
+      return wsSaveReply_(batch, sheetName, plan.results, true, sortedNotes);
     }
 
     var results = [];
@@ -114,13 +117,26 @@ function handleSaveRequest_(e) {
       });
     }
     SpreadsheetApp.flush();
-    return wsSaveReply_(batch, sheetName, results, false);
+    var notesSaved = wsSaveNotesSafely_(ss, sheet, tz, results, body.notes);
+    return wsSaveReply_(batch, sheetName, results, false, notesSaved);
   } finally {
     lock.releaseLock();
   }
 }
 
-function wsSaveReply_(batch, sheetName, results, sorted) {
+/** 참고내용 보관 (실패해도 판매 저장은 그대로, notesSaved: false 로 알림) */
+function wsSaveNotesSafely_(ss, sheet, tz, results, notesList) {
+  if (!Array.isArray(notesList)) return false;
+  try {
+    wsSaveNotesForRows_(ss, sheet, tz, results, notesList);
+    SpreadsheetApp.flush();
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+function wsSaveReply_(batch, sheetName, results, sorted, notesSaved) {
   if (!batch) {
     if (!results[0].ok) return wsJson_(results[0]);
     return wsJson_({
@@ -137,6 +153,7 @@ function wsSaveReply_(batch, sheetName, results, sorted) {
     sheet: sheetName,
     results: results,
     sorted: sorted,
+    notesSaved: !!notesSaved,
     message: "saved",
   });
 }

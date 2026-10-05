@@ -25,7 +25,7 @@ import type { QuickBatchResponse, SaveSaleResponse } from "@/lib/save-sale-api";
 type Submit =
   | { state: "idle" }
   | { state: "saving" }
-  | { state: "done"; sheet: string; no: string }
+  | { state: "done"; sheet: string; no: string; warning?: string }
   | { state: "failed"; message: string; errors?: string[] };
 
 interface Item {
@@ -111,7 +111,7 @@ export function QuickRegister({
   const [copied, setCopied] = useState<string | null>(null);
   /** 모두 등록 완료되어 처음 상태로 돌아갔을 때 보여줄 저장 결과 */
   const [doneNotice, setDoneNotice] = useState<
-    { customer: string; sheet: string; no: string }[] | null
+    { customer: string; sheet: string; no: string; warning?: string }[] | null
   >(null);
   const [running, setRunning] = useState(false);
   const runningRef = useRef(false);
@@ -219,7 +219,10 @@ export function QuickRegister({
     setRunning(true);
     let saved = 0;
     // 이번에 등록에 성공한 건 (id → 저장 위치)
-    const succeeded = new Map<number, { sheet: string; no: string }>();
+    const succeeded = new Map<
+      number,
+      { sheet: string; no: string; warning?: string }
+    >();
     // 등록 완료·등록 중인 건은 절대 다시 보내지 않는다
     const queue = targets
       .map((id) => itemsRef.current.find((i) => i.id === id))
@@ -243,7 +246,11 @@ export function QuickRegister({
       for (const [id, result] of byId) {
         if (result.ok) {
           saved++;
-          succeeded.set(id, { sheet: result.sheet, no: result.no });
+          succeeded.set(id, {
+            sheet: result.sheet,
+            no: result.no,
+            warning: result.warning,
+          });
         }
       }
       setItems((prev) =>
@@ -253,7 +260,12 @@ export function QuickRegister({
           return result.ok
             ? {
                 ...i,
-                submit: { state: "done", sheet: result.sheet, no: result.no },
+                submit: {
+                  state: "done",
+                  sheet: result.sheet,
+                  no: result.no,
+                  warning: result.warning,
+                },
               }
             : {
                 ...i,
@@ -283,7 +295,11 @@ export function QuickRegister({
           const at =
             succeeded.get(i.id) ??
             (i.submit.state === "done"
-              ? { sheet: i.submit.sheet, no: i.submit.no }
+              ? {
+                  sheet: i.submit.sheet,
+                  no: i.submit.no,
+                  warning: i.submit.warning,
+                }
               : { sheet: "", no: "" });
           return { customer: i.fields.customer, ...at };
         }),
@@ -339,6 +355,11 @@ export function QuickRegister({
             {doneNotice.map((d, i) => (
               <li key={i}>
                 {d.customer || "(고객명 없음)"} → {d.sheet} / No.{d.no}
+                {d.warning && (
+                  <span className="ml-1 font-semibold text-rose-700">
+                    ⚠ {d.warning}
+                  </span>
+                )}
               </li>
             ))}
           </ul>
@@ -537,6 +558,11 @@ function QuickItemCard({
         {item.submit.state === "done" && (
           <span className="text-sm font-semibold text-emerald-700">
             {item.submit.sheet} / No.{item.submit.no}에 저장되었습니다.
+          </span>
+        )}
+        {item.submit.state === "done" && item.submit.warning && (
+          <span className="w-full text-xs font-semibold text-rose-700">
+            ⚠ {item.submit.warning}
           </span>
         )}
         <div className="ml-auto flex gap-2">

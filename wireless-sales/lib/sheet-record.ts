@@ -35,7 +35,13 @@ export type SheetSale = {
   /** B열 No. */
   no: string;
 } & Record<TextKey, string> &
-  Record<AmountKey, number | null>;
+  Record<AmountKey, number | null> & {
+    /**
+     * 판매보고 참고내용 (장표 A~AL 에 없는 항목, 예: 중고폰&현물 판매·어디에).
+     * Apps Script 보조 시트 "웹앱참고" 에서 이 판매에 정확히 연결된 경우만 있다.
+     */
+    notes?: Record<string, string>;
+  };
 
 /** 글자로 읽기. 시트가 계산식 방지용으로 붙인 ' 는 떼어 낸다. */
 export function cellText(value: unknown): string {

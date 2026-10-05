@@ -22,6 +22,7 @@
  * - 수식이 들어 있는 칸은 고치지 않는다 (요청에 있으면 거부).
  * - 열 구조(6·7행 제목)가 웹앱과 다르면 아무것도 하지 않는다.
  * - LockService 로 저장·삭제·수정이 한 번에 하나만 처리되게 한다.
+ * - 고객명(D)·CTN(E)을 바꾸면 판매보고 참고내용(notes.gs 보조 시트)의 연결 키도 새 값으로 옮긴다.
  * 시트 이름은 실제 월 시트 이름 "1월"~"12월" 형식 (예: "10월"). "2026년 10월" 같은 화면 표시용 글자는 받지 않는다.
  * 응답: { ok, handler, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
  */
@@ -166,6 +167,11 @@ function wsHandleSaleUpdate_(e) {
     SpreadsheetApp.flush();
 
     var after = sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT).getValues()[0];
+    try {
+      wsMoveNoteForRow_(ss, sheetName, current, after, tz);
+    } catch (err) {
+      // 참고내용 키 이동에 실패해도 판매 수정은 그대로
+    }
     return reply({
       ok: true,
       sheet: sheetName,

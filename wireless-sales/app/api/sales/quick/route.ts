@@ -94,8 +94,11 @@ async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
     staffNames: await getStaffNames(),
   };
   const results: SaveSaleResponse[] = new Array(list.length);
-  const pending: { index: number; row: ReturnType<typeof toSheetRowArray> }[] =
-    [];
+  const pending: {
+    index: number;
+    row: ReturnType<typeof toSheetRowArray>;
+    notes: Record<string, string>;
+  }[] = [];
   list.forEach((fields, index) => {
     const normalized = normalizeQuick(fields, context);
     if (normalized.issues.length > 0) {
@@ -105,17 +108,36 @@ async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
         errors: normalized.issues.map((i) => i.message),
       };
     } else {
-      pending.push({ index, row: toSheetRowArray(normalized.row) });
+      pending.push({
+        index,
+        row: toSheetRowArray(normalized.row),
+        notes: normalized.notes as Record<string, string>,
+      });
     }
   });
   if (pending.length === 0) return results;
 
   try {
-    const saved = await saveRowsToAppsScript(pending.map((p) => p.row));
+    const saved = await saveRowsToAppsScript(
+      pending.map((p) => p.row),
+      pending.map((p) => p.notes),
+    );
     saved.forEach((item, k) => {
       const index = pending[k].index;
+      const hasNotes = Object.keys(pending[k].notes).length > 0;
       results[index] = item.ok
-        ? { ok: true, sheet: item.sheet, no: item.no, row: item.row }
+        ? {
+            ok: true,
+            sheet: item.sheet,
+            no: item.no,
+            row: item.row,
+            ...(hasNotes && !item.notesSaved
+              ? {
+                  warning:
+                    "장표 저장은 완료됐지만 판매보고 참고내용(장표에 없는 항목)은 보관하지 못했습니다. Apps Script 최신 버전 배포가 필요합니다.",
+                }
+              : {}),
+          }
         : { ok: false, message: errorReply(item.error).message };
     });
   } catch (error) {

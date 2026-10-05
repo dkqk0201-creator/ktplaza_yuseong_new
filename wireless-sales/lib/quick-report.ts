@@ -70,7 +70,7 @@ export const QUICK_FIELDS = [
     label: "정책 → 2ND연계정책",
     column: "securedSecond",
   },
-  { id: "useExtraSupport", label: "정책사용 → 추가지원금", column: null },
+  { id: "useExtraSupport", label: "정책사용 → 추가지원금", column: "usedExtraSupport" },
   { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: null },
   { id: "usePlan", label: "정책사용 → 고혜(요금)", column: null },
   { id: "second", label: "2ND", column: null },
@@ -351,6 +351,26 @@ export interface QuickNormalized {
   display: Partial<Record<QuickFieldId, string>>;
   /** 중복 확인용 "개통일|CTN숫자" (개통일·CTN 이 정상일 때만) */
   duplicateKey: string | null;
+  /**
+   * 장표에 저장하지 않는 참고 항목(column: null) 중 직원이 실제로 적은 것.
+   * 장표 A~AL 이 아니라 Apps Script 의 숨김 보조 시트 "웹앱참고" 에 판매 건별로 보관한다.
+   */
+  notes: SaleNotes;
+}
+
+/** 참고 항목 id → 직원이 적은 원문 */
+export type SaleNotes = Partial<Record<QuickFieldId, string>>;
+
+/** 장표 저장 안 함(참고) 항목 */
+export const NOTE_FIELDS = QUICK_FIELDS.filter((f) => f.column === null);
+
+export function quickNotes(fields: QuickFields): SaleNotes {
+  const notes: SaleNotes = {};
+  for (const { id } of NOTE_FIELDS) {
+    const value = fields[id].trim();
+    if (value) notes[id] = value.slice(0, 500);
+  }
+  return notes;
 }
 
 export interface QuickContext {
@@ -598,6 +618,7 @@ export function normalizeQuick(
     "policySecond",
     "dichoBenefit",
     "secondBenefit",
+    "useExtraSupport", // W 추가지원금
   ] as const) {
     const parsed = parseAmount(fields[id]);
     const column = QUICK_FIELDS.find((f) => f.id === id)!.column as ColumnKey;
@@ -719,6 +740,7 @@ export function normalizeQuick(
     display,
     duplicateKey:
       activatedAt && ctnDigits ? `${activatedAt}|${ctnDigits}` : null,
+    notes: quickNotes(fields),
   };
 }
 

@@ -9,6 +9,7 @@
  *   - 행 번호만 믿지 않고 No.(B)·개통일(C)·고객(D)·CTN(E) 이 화면에서 본 값과 모두 같을 때만 지운다.
  *   - 열 구조(6·7행 제목)가 웹앱과 다르면 아무것도 하지 않는다.
  *   - LockService 로 한 번에 하나의 저장·삭제만 처리한다.
+ *   - 그 판매의 판매보고 참고내용(notes.gs 보조 시트)도 함께 지운다.
  */
 function handleDeleteRequest_(e) {
   var body = wsBody_(e);
@@ -109,7 +110,14 @@ function handleDeleteRequest_(e) {
       }
     }
 
-    // 4) A열·C~AL열만, 수식 칸은 건너뛰고, 이어진 칸끼리 묶어서 값만 바꾼다
+    // 4) 참고내용(보조 시트) 먼저 지운다 — 같은 키가 나중에 다른 판매에 붙지 않게
+    try {
+      wsDeleteNoteForRow_(ss, sheetName, current, tz);
+    } catch (err) {
+      // 참고내용 정리에 실패해도 판매 삭제는 진행 (조회 시 키가 맞는 판매가 없으면 붙지 않음)
+    }
+
+    // 5) A열·C~AL열만, 수식 칸은 건너뛰고, 이어진 칸끼리 묶어서 값만 바꾼다
     var c = 0;
     while (c < WS_COLUMN_COUNT) {
       if (c === WS_B_INDEX || formulas[c] !== "") {
