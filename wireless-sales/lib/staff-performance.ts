@@ -16,6 +16,7 @@ import { isO, type SheetSale } from "@/lib/sheet-record";
  *   고혜확보 = 예산관리 "고객혜택 확보금액" 과 같은 P+Q+R+S+T 합계
  *   고혜사용 = 예산관리 "고객혜택 사용금액" 과 같은 V+W+X+Y 합계
  *   현금잔여 = AB열 합계 (예산관리 "현금예산" 과 같은 열, 음수 그대로)
+ *   합계금액 = 고혜확보 + 고혜사용 + 현금잔여 (위에서 계산한 세 값을 부호 그대로 더함, 0 보정 없음)
  * 금액 칸의 "-"·X·빈칸은 0 (예산관리와 같음). 스팟예산(O열)은 쓰지 않는다.
  */
 
@@ -32,6 +33,7 @@ export interface StaffPerformance {
   benefitSecured: number;
   benefitUsed: number;
   cash: number;
+  totalAmount: number;
 }
 
 export const NO_STAFF = "(직원명 없음)";
@@ -52,6 +54,7 @@ function emptyRow(staff: string): StaffPerformance {
     benefitSecured: 0,
     benefitUsed: 0,
     cash: 0,
+    totalAmount: 0,
   };
 }
 
@@ -92,6 +95,9 @@ export function aggregateStaffPerformance(
     add(byStaff.get(name)!, sale);
   }
   const rows = [...byStaff.values()];
+  for (const row of rows) {
+    row.totalAmount = row.benefitSecured + row.benefitUsed + row.cash;
+  }
   const total = emptyRow("전체");
   for (const row of rows) {
     for (const key of Object.keys(total) as (keyof StaffPerformance)[]) {

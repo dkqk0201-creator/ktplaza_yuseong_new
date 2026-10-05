@@ -53,6 +53,12 @@ const COLUMNS: {
   { key: "benefitSecured", label: "고혜확보", money: true, hint: "P+Q+R+S+T" },
   { key: "benefitUsed", label: "고혜사용", money: true, hint: "V+W+X+Y" },
   { key: "cash", label: "현금잔여", money: true, hint: "AB열" },
+  {
+    key: "totalAmount",
+    label: "합계금액",
+    money: true,
+    hint: "고혜확보 + 고혜사용 + 현금잔여",
+  },
 ];
 
 function Cell({ value, money }: { value: number; money?: boolean }) {
@@ -129,7 +135,9 @@ function StaffPerformanceBody({
                     key={c.key}
                     scope="col"
                     title={c.hint}
-                    className="px-3 py-2.5 text-right font-semibold whitespace-nowrap"
+                    className={`px-3 py-2.5 text-right font-semibold whitespace-nowrap ${
+                      c.key === "totalAmount" ? "text-ink" : ""
+                    }`}
                   >
                     {c.label}
                   </th>
@@ -182,7 +190,7 @@ function StaffPerformanceBody({
         후불 = 신규·번이·기변·UMNP · 스초 = 요금제에 &lsquo;스초&rsquo; 포함 ·
         2ND = AD열 O · 제카 = AE열 O · 동판 = AK열 순동·신동·약동 · 고혜확보 =
         P+Q+R+S+T · 고혜사용 = V+W+X+Y (예산관리와 같은 기준) · 현금잔여 =
-        AB열 (음수 포함)
+        AB열 (음수 포함) · 합계금액 = 고혜확보 + 고혜사용 + 현금잔여
       </p>
     </div>
   );
