@@ -16,6 +16,7 @@ import {
   hasInsurance,
   hasPilL,
   hasScho,
+  isSchoBase,
   numberCustomers,
   summarizeCustomers,
   type CustomerFilter,
@@ -136,7 +137,10 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
       <p className="mb-3 text-sm text-ink-sub">
         조회 결과 <span className="font-bold text-ink">{rows.length}명</span>
         <span className="ml-2 text-xs text-ink-muted">
-          ({sheet} · 실력지표제외 X 고객 {byStaff.length}명 중)
+          ({sheet} · 실력지표제외 X 고객 {byStaff.length}명 중
+          {filter.scho !== "all" &&
+            ` · 스초는 S·F·AIP 모델 ${summary.schoBase}명 중`}
+          )
         </span>
       </p>
 
@@ -206,7 +210,7 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                       {sale.ctn ? maskedCtn(sale.ctn) : "-"}
                     </td>
                     <td className="px-3 py-3 text-ink">
-                      <Mark on={hasScho(sale)} />
+                      <Mark on={hasScho(sale)} outside={!isSchoBase(sale)} />
                       {sale.plan || "-"}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-ink">
@@ -249,7 +253,7 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                   </div>
                   <div className="mt-2 grid grid-cols-3 gap-2 text-xs text-ink-sub">
                     <span>
-                      <Mark on={hasScho(sale)} />
+                      <Mark on={hasScho(sale)} outside={!isSchoBase(sale)} />
                       {sale.plan || "-"}
                     </span>
                     <span>
@@ -269,7 +273,9 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
       )}
       <p className="mt-3 text-xs text-ink-muted">
         실력지표는 장표를 읽기만 합니다. 실력지표제외(F열)가 X 인 고객만
-        대상이며, No.는 이 화면에서만 쓰는 순번입니다 (직원을 선택하면 그
+        대상이며, 스초는 그중 모델명이 S·F·AIP 로 시작하는 고객(스초 모수{" "}
+        {summary.schoBase}명)만 O/X 로 셉니다 (SM- 정식 모델코드 제외, 빈
+        테두리 점 = 스초 모수 밖). 필L·보험은 기본 모수 전체 기준입니다. No.는 이 화면에서만 쓰는 순번입니다 (직원을 선택하면 그
         직원 기준 1번부터, 스초·필L·보험 필터를 걸어도 번호는 그대로).
       </p>
 
@@ -285,12 +291,18 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   );
 }
 
-/** 조건에 해당하면 초록 점 */
-function Mark({ on }: { on: boolean }) {
+/** 조건에 해당하면 초록 점 (outside: 스초 모수 밖 → 빈 테두리 점) */
+function Mark({ on, outside = false }: { on: boolean; outside?: boolean }) {
   return (
     <span
       aria-hidden
-      className={`mr-1.5 inline-block h-2 w-2 rounded-full align-middle ${on ? "bg-emerald-500" : "bg-zinc-300"}`}
+      className={`mr-1.5 inline-block h-2 w-2 rounded-full align-middle ${
+        outside
+          ? "border border-zinc-300 bg-transparent"
+          : on
+            ? "bg-emerald-500"
+            : "bg-zinc-300"
+      }`}
     />
   );
 }
