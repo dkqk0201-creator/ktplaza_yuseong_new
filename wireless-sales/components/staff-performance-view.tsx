@@ -57,7 +57,7 @@ const COLUMNS: {
     key: "totalAmount",
     label: "합계금액",
     money: true,
-    hint: "고혜확보 + 고혜사용 + 현금잔여",
+    hint: "고혜확보 − 고혜사용 + 현금잔여",
   },
 ];
 
@@ -190,7 +190,7 @@ function StaffPerformanceBody({
         후불 = 신규·번이·기변·UMNP · 스초 = 요금제에 &lsquo;스초&rsquo; 포함 ·
         2ND = AD열 O · 제카 = AE열 O · 동판 = AK열 순동·신동·약동 · 고혜확보 =
         P+Q+R+S+T · 고혜사용 = V+W+X+Y (예산관리와 같은 기준) · 현금잔여 =
-        AB열 (음수 포함) · 합계금액 = 고혜확보 + 고혜사용 + 현금잔여
+        AB열 (음수 포함) · 합계금액 = 고혜확보 − 고혜사용 + 현금잔여
       </p>
     </div>
   );
