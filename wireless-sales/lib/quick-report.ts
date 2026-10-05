@@ -38,8 +38,9 @@ export const STAFF_REPORT_TEMPLATE = [
   "ㄴ고객혜택 : ",
   "사은품판매or수령 : ",
   "",
-  "중고폰 리본or폰삼 : ",
-  "ㄴ사용 : ",
+  "중고폰 반납 : ",
+  "ㄴ사용금액 : ",
+  "ㄴ어디에 : ",
   "",
   "제카 : ",
   "보험 : ",
@@ -78,8 +79,11 @@ export const QUICK_FIELDS = [
   { id: "dicho", label: "디초/삼초", column: null },
   { id: "dichoBenefit", label: "디초/삼초 → 고객혜택", column: "usedDicho" },
   { id: "dichoGift", label: "디초/삼초 → 사은품판매or수령", column: null },
-  { id: "usedPhone", label: "중고폰 리본or폰삼", column: "usedPhoneSale" },
-  { id: "usedPhoneUse", label: "중고폰 → 사용", column: "usedPhoneUsed" },
+  // 반납 방식(리본/폰삼/X)은 금액이 아니므로 장표에 저장하지 않는다 (Z열에도 X)
+  { id: "usedPhone", label: "중고폰 반납", column: null },
+  { id: "usedPhoneUse", label: "중고폰 → 사용금액", column: "usedPhoneUsed" },
+  // 어디에 사용했는지 메모 (참고용, 장표 저장 안 함)
+  { id: "usedPhoneWhere", label: "중고폰 → 어디에", column: null },
   { id: "jeca", label: "제카", column: "jeca" },
   { id: "insurance", label: "보험", column: "insurance" },
   { id: "addon", label: "부가", column: "addon" },
@@ -149,9 +153,15 @@ const TOP_LEVEL: {
     children: { 고객혜택: "dichoBenefit", 사은품판매or수령: "dichoGift" },
   },
   {
+    key: "중고폰반납",
+    id: "usedPhone",
+    children: { 사용금액: "usedPhoneUse", 어디에: "usedPhoneWhere" },
+  },
+  {
+    // 예전 양식으로 보낸 보고도 같은 항목으로 읽는다 (반납 값은 아래 리본/폰삼/X 검사를 똑같이 받음)
     key: "중고폰리본or폰삼",
     id: "usedPhone",
-    children: { 사용: "usedPhoneUse" },
+    children: { 사용: "usedPhoneUse", 사용금액: "usedPhoneUse", 어디에: "usedPhoneWhere" },
   },
   { key: "제카", id: "jeca" },
   { key: "보험", id: "insurance" },
@@ -579,22 +589,31 @@ export function normalizeQuick(
     }
   }
 
-  // 중고폰: "중고폰 리본or폰삼" 금액 → Z(중고판매 판매), "ㄴ사용" 금액 → AA(중고판매 사용).
-  // 숫자 없이 글자만 적은 경우(예: 리본, 폰삼)는 금액이 아니므로 저장하지 않는다 (→ "-").
-  // 숫자가 섞였는데 금액으로 읽을 수 없으면 확인 필요.
-  for (const [id, column] of [
-    ["usedPhone", "usedPhoneSale"],
-    ["usedPhoneUse", "usedPhoneUsed"],
-  ] as const) {
-    if (!/\d/.test(fields[id])) continue;
-    const parsed = parseAmount(fields[id]);
-    if ("error" in parsed) {
-      issues.push({ field: id, message: parsed.error });
-    } else if (parsed.value !== null) {
-      row[column] = parsed.value;
-      display[id] = `${parsed.value.toLocaleString("ko-KR")}원`;
+  // 중고폰 반납: 리본 / 폰삼 / X 만 (공란 허용). 반납 방식이라 장표 어느 열에도 저장하지 않는다.
+  // Z(중고판매 판매)는 이 양식에서 채우지 않으므로 기존 공란 규칙대로 "-".
+  const returned = v("usedPhone");
+  if (returned) {
+    const value = returned.replace(/\s+/g, "").toUpperCase();
+    if (value === "리본" || value === "폰삼" || value === "X") {
+      display.usedPhone = value;
+    } else {
+      issues.push({
+        field: "usedPhone",
+        message: `중고폰 반납 "${returned}" 를 확인해 주세요. 리본 / 폰삼 / X 중 하나로 입력해 주세요.`,
+      });
     }
   }
+  // 사용금액 → AA(중고판매 사용). 기존 금액 규칙(parseAmount), 공란이면 "-" (V~AA 공란 규칙)
+  {
+    const parsed = parseAmount(fields.usedPhoneUse);
+    if ("error" in parsed) {
+      issues.push({ field: "usedPhoneUse", message: parsed.error });
+    } else if (parsed.value !== null) {
+      row.usedPhoneUsed = parsed.value;
+      display.usedPhoneUse = `${parsed.value.toLocaleString("ko-KR")}원`;
+    }
+  }
+  // 어디에: 참고용 메모 (장표 저장 안 함, 화면 표시만)
 
   // 제카: 비어 있거나 X → 제카·종류·카드실적 검수 모두 X / 카드 종류 → O·종류·검수 칸은 비워 둠
   const jeca = v("jeca");
