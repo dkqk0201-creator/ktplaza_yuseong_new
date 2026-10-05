@@ -12,10 +12,11 @@ import {
 } from "@/components/work-ui";
 import {
   customerBase,
-  filterCustomers,
+  filterNumbered,
   hasInsurance,
   hasPilL,
   hasScho,
+  numberCustomers,
   summarizeCustomers,
   type CustomerFilter,
   type Tri,
@@ -24,8 +25,9 @@ import { maskedCtn, monthDayText } from "@/lib/sale-display";
 import type { SheetSale } from "@/lib/sheet-record";
 
 /*
- * 고객조회 (읽기 전용): 선택한 월 시트에서 F열 실력지표제외 = X 인 고객만 대상으로
+ * 실력지표 (읽기 전용): 선택한 월 시트에서 F열 실력지표제외 = X 인 고객만 대상으로
  * 스초(K)·필L(AI)·보험(AJ) 조건을 조합해 찾는다. 장표 값은 절대 바꾸지 않는다.
+ * No. 는 장표 B열이 아니라 이 화면 전용 순번 (F=X → 직원 선택 → 번호 확정 → 스초·필L·보험 필터).
  */
 
 const TRI_OPTIONS = (label: string) =>
@@ -61,7 +63,9 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   );
   const byStaff = base.filter((s) => !staff || s.staff === staff);
   const summary = summarizeCustomers(byStaff);
-  const rows = filterCustomers(byStaff, filter).sort((a, b) => a.row - b.row);
+  // 실력지표 No.: 직원 선택까지 적용한 고객에게 먼저 번호를 확정하고, 그다음 스초·필L·보험 필터
+  const numbered = useMemo(() => numberCustomers(sales, staff), [sales, staff]);
+  const rows = filterNumbered(numbered, filter);
   const selected = base.find((s) => s.row === selectedRow) ?? null;
 
   const set = (key: keyof CustomerFilter, value: Tri) =>
@@ -83,7 +87,7 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   return (
     <>
       <section
-        aria-label="고객조회 요약"
+        aria-label="실력지표 요약"
         className="grid grid-cols-2 gap-3 sm:grid-cols-4 xl:grid-cols-7"
       >
         <SummaryTile
@@ -170,7 +174,7 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
-                {rows.map((sale) => (
+                {rows.map(({ seq, sale }) => (
                   <tr
                     key={sale.row}
                     onClick={() => setSelectedRow(sale.row)}
@@ -183,10 +187,10 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                           e.stopPropagation();
                           setSelectedRow(sale.row);
                         }}
-                        aria-label={`No.${sale.no} ${sale.customer} 고객 상세 보기`}
+                        aria-label={`No.${seq} ${sale.customer} 고객 상세 보기`}
                         className="font-medium text-ink-sub hover:underline"
                       >
-                        {sale.no}
+                        {seq}
                       </button>
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-ink-sub tabular-nums">
@@ -220,7 +224,7 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
           </div>
 
           <ul className="space-y-2.5 md:hidden">
-            {rows.map((sale) => (
+            {rows.map(({ seq, sale }) => (
               <li key={sale.row}>
                 <button
                   type="button"
@@ -229,7 +233,7 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs text-ink-muted tabular-nums">
-                      No.{sale.no} · {monthDayText(sale.activatedAt)}
+                      No.{seq} · {monthDayText(sale.activatedAt)}
                     </span>
                     <span className="text-sm text-ink-sub">
                       {sale.staff || "-"}
@@ -264,8 +268,9 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         </>
       )}
       <p className="mt-3 text-xs text-ink-muted">
-        고객조회는 장표를 읽기만 합니다. 실력지표제외(F열)가 X 인 고객만 조회
-        대상입니다.
+        실력지표는 장표를 읽기만 합니다. 실력지표제외(F열)가 X 인 고객만
+        대상이며, No.는 이 화면에서만 쓰는 순번입니다 (직원을 선택하면 그
+        직원 기준 1번부터, 스초·필L·보험 필터를 걸어도 번호는 그대로).
       </p>
 
       {selected && (

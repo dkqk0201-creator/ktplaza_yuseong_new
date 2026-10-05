@@ -26,7 +26,7 @@ import { parseSheetRow, type SheetSale } from "@/lib/sheet-record";
 
 /*
  * 판매 1건 상세 보기 (장표 A~AL 그대로) + 판매 수정 + 판매 삭제.
- * readOnly 이면 보기만 한다 (고객조회).
+ * readOnly 이면 보기만 한다 (실력지표).
  * 판매 수정: 같은 월 시트·같은 행의 바뀐 칸만 고친다. No.(B)·개통일(C)은 고칠 수 없다.
  */
 

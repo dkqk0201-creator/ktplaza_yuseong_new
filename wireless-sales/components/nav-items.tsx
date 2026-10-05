@@ -71,7 +71,7 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     href: "/customer",
-    label: "고객조회",
+    label: "실력지표",
     icon: (
       <svg {...iconProps}>
         <circle cx="10" cy="8" r="3.5" />
