@@ -35,13 +35,7 @@ export type SheetSale = {
   /** B열 No. */
   no: string;
 } & Record<TextKey, string> &
-  Record<AmountKey, number | null> & {
-    /**
-     * 금액 칸에 숫자가 아닌 글자가 있을 때 그 글자 (예: 중고폰 반납 X 의 Z·AA·AB = "X").
-     * 금액 값은 null(합계에서 0)이고, 화면 표시·판매 수정 대조용으로만 쓴다. 빈칸·"-" 는 넣지 않는다.
-     */
-    amountText?: Partial<Record<AmountKey, string>>;
-  };
+  Record<AmountKey, number | null>;
 
 /** 글자로 읽기. 시트가 계산식 방지용으로 붙인 ' 는 떼어 낸다. */
 export function cellText(value: unknown): string {
@@ -66,25 +60,16 @@ export function parseSheetRow(
   values: readonly unknown[],
 ): SheetSale {
   const sale: Record<string, unknown> = { row };
-  const amountText: Partial<Record<AmountKey, string>> = {};
   for (const [key, index] of Object.entries(COLUMN_INDEX) as [
     ColumnKey,
     number,
   ][]) {
     if (key === "no") continue;
-    if (AMOUNT_SET.has(key)) {
-      const amount = cellAmount(values[index]);
-      sale[key] = amount;
-      const text = cellText(values[index]);
-      if (amount === null && text !== "" && text !== "-") {
-        amountText[key as AmountKey] = text;
-      }
-    } else {
-      sale[key] = cellText(values[index]);
-    }
+    sale[key] = AMOUNT_SET.has(key)
+      ? cellAmount(values[index])
+      : cellText(values[index]);
   }
   sale.no = cellText(no) || cellText(values[COLUMN_INDEX.no]);
-  if (Object.keys(amountText).length > 0) sale.amountText = amountText;
   return sale as SheetSale;
 }
 

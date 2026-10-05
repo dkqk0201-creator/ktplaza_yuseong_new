@@ -94,9 +94,6 @@ const SECTIONS: { title: string; keys: ColumnKey[]; strong?: ColumnKey[] }[] = [
 
 function valueText(sale: SheetSale, key: ColumnKey): string {
   const value = (sale as Record<string, unknown>)[key];
-  if (value === null && sale.amountText?.[key as never]) {
-    return sale.amountText[key as never] as string; // 금액 칸의 글자 (예: X)
-  }
   if (typeof value === "number" || value === null) return amountText(value);
   const text = String(value ?? "");
   if (key === "activatedAt" || key === "wiredAvailableDate")

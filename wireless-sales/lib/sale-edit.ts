@@ -30,10 +30,7 @@ export function isAmountKey(key: ColumnKey): boolean {
 /** 입력창에 처음 보여줄 값 (= 장표 대조용 before) */
 export function editText(sale: SheetSale, key: ColumnKey): string {
   const value = (sale as Record<string, unknown>)[key];
-  if (value === null || value === undefined) {
-    // 금액 칸의 글자(예: X)는 그대로 (장표 대조·AB X 유지용)
-    return sale.amountText?.[key as keyof NonNullable<SheetSale["amountText"]>] ?? "";
-  }
+  if (value === null || value === undefined) return "";
   return String(value);
 }
 
@@ -109,7 +106,6 @@ export function diffSale(
     const before = editText(sale, key);
     const after = (edited[key] ?? "").trim();
     if (isAmountKey(key)) {
-      if (after === before.trim()) continue; // 글자(X 등) 그대로면 바뀐 것 아님
       const a = parseEditAmount(after);
       const b = parseEditAmount(before);
       if (a !== undefined && a === b) continue;
@@ -170,7 +166,7 @@ export interface UsedPhonePlan {
   writes: {
     key: "usedPhoneRemaining" | "finalTotal";
     before: string;
-    after: number | string;
+    after: number;
   }[];
   /** 쓰지 않고 대조만 하는 N·U·Z·AA */
   checks: SaleCheck[];
@@ -204,22 +200,10 @@ export function planUsedPhoneRecalc(
     usedPhoneUsed: final("usedPhoneUsed"),
   });
   const writes: UsedPhonePlan["writes"] = [];
-  // 중고폰 반납 X (Z·AA 모두 X) 인 판매: AB 는 계산하지 않고 글자 X 를 유지 (AC 는 X 를 0 으로 계산)
-  const isX = (t: string) => t.trim().toUpperCase() === "X";
-  const abX = isX(final("usedPhoneSale")) && isX(final("usedPhoneUsed"));
-  if (abX) {
-    if (!isX(base.usedPhoneRemaining)) {
-      writes.push({ key: "usedPhoneRemaining", before: base.usedPhoneRemaining, after: "X" });
+  for (const key of ["usedPhoneRemaining", "finalTotal"] as const) {
+    if (baseAmount(base[key]) !== result[key]) {
+      writes.push({ key, before: base[key], after: result[key] });
     }
-  } else if (baseAmount(base.usedPhoneRemaining) !== result.usedPhoneRemaining) {
-    writes.push({
-      key: "usedPhoneRemaining",
-      before: base.usedPhoneRemaining,
-      after: result.usedPhoneRemaining,
-    });
-  }
-  if (baseAmount(base.finalTotal) !== result.finalTotal) {
-    writes.push({ key: "finalTotal", before: base.finalTotal, after: result.finalTotal });
   }
   const inputs = [
     "securedTotal",

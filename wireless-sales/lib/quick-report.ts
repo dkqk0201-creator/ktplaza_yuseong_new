@@ -38,7 +38,8 @@ export const STAFF_REPORT_TEMPLATE = [
   "ㄴ고객혜택 : ",
   "사은품판매or수령 : ",
   "",
-  "중고폰 반납 : ",
+  "중고폰&현물 판매 : ",
+  "ㄴ판매금액 : ",
   "ㄴ사용금액 : ",
   "ㄴ어디에 : ",
   "",
@@ -79,11 +80,12 @@ export const QUICK_FIELDS = [
   { id: "dicho", label: "디초/삼초", column: null },
   { id: "dichoBenefit", label: "디초/삼초 → 고객혜택", column: "usedDicho" },
   { id: "dichoGift", label: "디초/삼초 → 사은품판매or수령", column: null },
-  // 반납 방식(리본/폰삼/X)은 금액이 아니므로 장표에 저장하지 않는다 (Z열에도 X)
-  { id: "usedPhone", label: "중고폰 반납", column: null },
-  { id: "usedPhoneUse", label: "중고폰 → 사용금액", column: "usedPhoneUsed" },
+  // 중고폰&현물 판매: 무엇을 팔았는지 자유입력 (참고용, 장표 저장 안 함)
+  { id: "usedPhone", label: "중고폰&현물 판매", column: null },
+  { id: "usedPhoneSaleAmount", label: "중고폰&현물 → 판매금액", column: "usedPhoneSale" },
+  { id: "usedPhoneUse", label: "중고폰&현물 → 사용금액", column: "usedPhoneUsed" },
   // 어디에 사용했는지 메모 (참고용, 장표 저장 안 함)
-  { id: "usedPhoneWhere", label: "중고폰 → 어디에", column: null },
+  { id: "usedPhoneWhere", label: "중고폰&현물 → 어디에", column: null },
   { id: "jeca", label: "제카", column: "jeca" },
   { id: "insurance", label: "보험", column: "insurance" },
   { id: "addon", label: "부가", column: "addon" },
@@ -153,15 +155,33 @@ const TOP_LEVEL: {
     children: { 고객혜택: "dichoBenefit", 사은품판매or수령: "dichoGift" },
   },
   {
-    key: "중고폰반납",
+    key: "중고폰&현물판매",
     id: "usedPhone",
-    children: { 사용금액: "usedPhoneUse", 어디에: "usedPhoneWhere" },
+    children: {
+      판매금액: "usedPhoneSaleAmount",
+      사용금액: "usedPhoneUse",
+      어디에: "usedPhoneWhere",
+    },
   },
   {
-    // 예전 양식으로 보낸 보고도 같은 항목으로 읽는다 (반납 값은 아래 리본/폰삼/X 검사를 똑같이 받음)
+    // 예전 양식("중고폰 반납", "중고폰 리본or폰삼")으로 보낸 보고도 같은 항목으로 읽는다
+    key: "중고폰반납",
+    id: "usedPhone",
+    children: {
+      판매금액: "usedPhoneSaleAmount",
+      사용금액: "usedPhoneUse",
+      어디에: "usedPhoneWhere",
+    },
+  },
+  {
     key: "중고폰리본or폰삼",
     id: "usedPhone",
-    children: { 사용: "usedPhoneUse", 사용금액: "usedPhoneUse", 어디에: "usedPhoneWhere" },
+    children: {
+      판매금액: "usedPhoneSaleAmount",
+      사용: "usedPhoneUse",
+      사용금액: "usedPhoneUse",
+      어디에: "usedPhoneWhere",
+    },
   },
   { key: "제카", id: "jeca" },
   { key: "보험", id: "insurance" },
@@ -589,36 +609,19 @@ export function normalizeQuick(
     }
   }
 
-  // 중고폰 반납: 리본 / 폰삼 / X 만 (공란 허용). 리본·폰삼은 장표 어느 열에도 저장하지 않는다
-  // (Z 는 이 양식에서 채우지 않으므로 기존 공란 규칙대로 "-").
-  // X 이면 Z·AA·AB 를 모두 글자 "X" 로 저장한다 (사용금액보다 우선, AC 계산에서는 0).
-  const returned = v("usedPhone");
-  const returnedX = returned.replace(/\s+/g, "").toUpperCase() === "X";
-  if (returned) {
-    const value = returned.replace(/\s+/g, "").toUpperCase();
-    if (value === "리본" || value === "폰삼" || value === "X") {
-      display.usedPhone = value;
-    } else {
-      issues.push({
-        field: "usedPhone",
-        message: `중고폰 반납 "${returned}" 를 확인해 주세요. 리본 / 폰삼 / X 중 하나로 입력해 주세요.`,
-      });
-    }
-  }
-  // 사용금액 → AA(중고판매 사용). 기존 금액 규칙(parseAmount), 공란이면 "-" (V~AA 공란 규칙)
-  if (returnedX) {
-    row.usedPhoneSale = "X";
-    row.usedPhoneUsed = "X";
-    if (v("usedPhoneUse")) {
-      display.usedPhoneUse = "저장 안 함 (중고폰 반납이 X 이므로 사용금액은 저장하지 않음)";
-    }
-  } else {
-    const parsed = parseAmount(fields.usedPhoneUse);
+  // 중고폰&현물: 판매금액 → Z(중고판매 판매), 사용금액 → AA(중고판매 사용).
+  // 기존 금액 규칙(parseAmount), 공란이면 "-" (V~AA 공란 규칙). AB = Z − AA 는 아래 applyQuickColumnRules.
+  // "중고폰&현물 판매"(무엇을 팔았는지)와 "어디에"는 자유입력 참고용 — 검사하지 않고 장표에 저장하지 않는다.
+  for (const [id, column] of [
+    ["usedPhoneSaleAmount", "usedPhoneSale"],
+    ["usedPhoneUse", "usedPhoneUsed"],
+  ] as const) {
+    const parsed = parseAmount(fields[id]);
     if ("error" in parsed) {
-      issues.push({ field: "usedPhoneUse", message: parsed.error });
+      issues.push({ field: id, message: parsed.error });
     } else if (parsed.value !== null) {
-      row.usedPhoneUsed = parsed.value;
-      display.usedPhoneUse = `${parsed.value.toLocaleString("ko-KR")}원`;
+      row[column] = parsed.value;
+      display[id] = `${parsed.value.toLocaleString("ko-KR")}원`;
     }
   }
   // 어디에: 참고용 메모 (장표 저장 안 함, 화면 표시만)
@@ -710,11 +713,8 @@ export function normalizeQuick(
     }
   }
 
-  const finalRow = applyQuickColumnRules(row);
-  // 반납 X: AB 도 글자 X (AC 는 위에서 X 를 0 으로 계산한 N + U + 0 그대로)
-  if (returnedX) finalRow.usedPhoneRemaining = "X";
   return {
-    row: finalRow,
+    row: applyQuickColumnRules(row),
     issues,
     display,
     duplicateKey:
