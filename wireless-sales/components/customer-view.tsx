@@ -18,6 +18,7 @@ import {
   hasScho,
   isSchoBase,
   numberCustomers,
+  selectFilter,
   summarizeCustomers,
   type CustomerFilter,
   type Tri,
@@ -69,8 +70,9 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   const rows = filterNumbered(numbered, filter);
   const selected = base.find((s) => s.row === selectedRow) ?? null;
 
+  // 스초·필L·보험 중 한 종류만 활성 (O/X 를 고르면 나머지는 전체로), 직원 선택은 그대로
   const set = (key: keyof CustomerFilter, value: Tri) =>
-    setFilter((prev) => ({ ...prev, [key]: value }));
+    setFilter((prev) => selectFilter(prev, key, value));
   const tile = (
     label: string,
     value: number,

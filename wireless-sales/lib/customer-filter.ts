@@ -78,6 +78,21 @@ export function filterCustomers(
   );
 }
 
+/**
+ * 필터 선택 (스초·필L·보험 중 한 종류만 활성):
+ *   - 한 항목에서 O 또는 X 를 고르면 나머지 두 항목은 "전체"로.
+ *   - 한 항목의 "전체"는 그 항목만 해제 (나머지는 이미 "전체").
+ * 직원 선택·모수·No. 와는 무관한 화면 상태만 바꾼다.
+ */
+export function selectFilter(
+  prev: CustomerFilter,
+  key: keyof CustomerFilter,
+  value: Tri,
+): CustomerFilter {
+  if (value === "all") return { ...prev, [key]: "all" };
+  return { scho: "all", pilL: "all", insurance: "all", [key]: value };
+}
+
 /** 실력지표 화면 한 줄: 판매 + 화면 전용 순번 */
 export interface NumberedCustomer {
   /** 실력지표 No. (1부터, 화면 표시 전용) */
