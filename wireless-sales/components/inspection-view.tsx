@@ -44,6 +44,16 @@ const STATUS_TEXT: Record<InspectionStatus, string> = {
   both: "검수/수납 모두 미완료",
 };
 
+/** 개통일(YYYY-MM-DD) 오름차순, 같은 날짜·날짜 없음은 장표 행 순서 */
+export function compareByActivatedAt(a: SheetSale, b: SheetSale): number {
+  if (a.activatedAt !== b.activatedAt) {
+    if (!a.activatedAt) return 1;
+    if (!b.activatedAt) return -1;
+    return a.activatedAt < b.activatedAt ? -1 : 1;
+  }
+  return a.row - b.row;
+}
+
 function matchFilter(status: InspectionStatus, filter: Filter): boolean {
   switch (filter) {
     case "all":
@@ -98,9 +108,10 @@ function InspectionList({
   const searchedStatuses = searched.map((s) => inspectionStatus(s));
   const chipCount = (f: Filter) =>
     searchedStatuses.filter((st) => matchFilter(st, f)).length;
+  // 장표와 같은 순서: C열 개통일 오름차순, 같은 날짜는 장표 행 순서
   const rows = searched
     .filter((s) => matchFilter(inspectionStatus(s), filter))
-    .sort((a, b) => a.row - b.row);
+    .sort((a, b) => compareByActivatedAt(a, b));
   const selected = sales.find((s) => s.row === selectedRow) ?? null;
 
   return (
