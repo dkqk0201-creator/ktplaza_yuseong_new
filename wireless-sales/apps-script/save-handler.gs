@@ -15,6 +15,8 @@
  *   - 판매 1건 = A~AL 한 행 전체(B열 제외)가 함께 움직인다. B열(No.)은 행에 그대로 → 9행=1, 10행=2 …
  *   - 중간에 삭제로 비어 있던 행은 판매 행들 아래로 내려간다.
  *   - 8행(합계)과 그 위는 건드리지 않는다. 값만 옮기며 서식·메모는 행 위치에 그대로 남는다.
+ * C열 개통일 표시: 저장할 때마다 9행부터 C열의 "표시 형식"만 mm.dd (예: 10.05) 로 맞춘다.
+ *   값은 실제 날짜 그대로라 날짜 정렬·조회·참고내용 연결(yyyy-MM-dd 로 읽음)은 바뀌지 않는다.
  *   - 판매·빈 행에 수식이 있거나 개통일이 날짜가 아닌 판매 행이 있으면 정렬하지 않고
  *     예전 방식(위에서부터 첫 빈 행)으로 저장한다 (응답 sorted: false).
  * LockService 로 한 번에 하나의 저장·삭제만 처리한다.
@@ -85,6 +87,7 @@ function handleSaveRequest_(e) {
     var plan = wsPlanSortedSave_(all, allFormulas, rows, tz);
     if (plan) {
       wsWriteSortedBlock_(sheet, plan);
+      wsFormatDateColumn_(sheet, lastRow);
       SpreadsheetApp.flush();
       var sortedNotes = wsSaveNotesSafely_(ss, sheet, tz, plan.results, body.notes);
       return wsSaveReply_(batch, sheetName, plan.results, true, sortedNotes);
@@ -116,11 +119,25 @@ function handleSaveRequest_(e) {
         no: wsText_(all[index][WS_B_INDEX], tz),
       });
     }
+    wsFormatDateColumn_(sheet, lastRow);
     SpreadsheetApp.flush();
     var notesSaved = wsSaveNotesSafely_(ss, sheet, tz, results, body.notes);
     return wsSaveReply_(batch, sheetName, results, false, notesSaved);
   } finally {
     lock.releaseLock();
+  }
+}
+
+/** C열 개통일 표시 형식만 mm.dd 로 (9행~마지막 행, 값은 그대로). 실패해도 저장은 그대로 */
+var WS_DATE_DISPLAY_FORMAT = "mm.dd";
+function wsFormatDateColumn_(sheet, lastRow) {
+  try {
+    if (lastRow < WS_FIRST_ROW) return;
+    sheet
+      .getRange(WS_FIRST_ROW, 3, lastRow - WS_FIRST_ROW + 1, 1)
+      .setNumberFormat(WS_DATE_DISPLAY_FORMAT);
+  } catch (err) {
+    // 표시 형식만의 문제이므로 저장 결과에는 영향 없음
   }
 }
 

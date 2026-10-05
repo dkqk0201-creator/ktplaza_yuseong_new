@@ -20,7 +20,7 @@ import {
   type CustomerFilter,
   type Tri,
 } from "@/lib/customer-filter";
-import { dateText, maskedCtn } from "@/lib/sale-display";
+import { maskedCtn, monthDayText } from "@/lib/sale-display";
 import type { SheetSale } from "@/lib/sheet-record";
 
 /*
@@ -190,7 +190,7 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                       </button>
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-ink-sub tabular-nums">
-                      {dateText(sale.activatedAt)}
+                      {monthDayText(sale.activatedAt)}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap text-ink">
                       {sale.staff || "-"}
@@ -229,7 +229,7 @@ function CustomerList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs text-ink-muted tabular-nums">
-                      No.{sale.no} · {dateText(sale.activatedAt)}
+                      No.{sale.no} · {monthDayText(sale.activatedAt)}
                     </span>
                     <span className="text-sm text-ink-sub">
                       {sale.staff || "-"}

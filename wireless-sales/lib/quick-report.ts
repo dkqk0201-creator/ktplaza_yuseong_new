@@ -429,9 +429,13 @@ function validDate(y: number, m: number, d: number): string | null {
 /** 개통일자 "10.03" (MM.DD) → 올해 날짜 */
 export function parseActivatedAt(raw: string, today: string): string | null {
   const s = raw.replace(/\s+/g, "");
+  // 월.일 (연도는 올해): 10.5 · 10.05 · 10/5 · 10-05
   const md = s.match(/^(\d{1,2})[./-](\d{1,2})\.?$/);
   if (md)
     return validDate(Number(today.slice(0, 4)), Number(md[1]), Number(md[2]));
+  // 연.월.일: 2026-10-05 · 2026.10.5 · 2026/10/05 · 2026. 10. 5
+  const ymd = s.match(/^(20\d{2})[./-](\d{1,2})[./-](\d{1,2})\.?$/);
+  if (ymd) return validDate(Number(ymd[1]), Number(ymd[2]), Number(ymd[3]));
   return null;
 }
 
@@ -508,7 +512,7 @@ export function normalizeQuick(
     if (!activatedAt) {
       issues.push({
         field: "activatedAt",
-        message: `개통일자 "${v("activatedAt")}" 를 확인해 주세요. (예: 10.03)`,
+        message: `개통일자 "${v("activatedAt")}" 를 확인해 주세요. (예: 10.03, 10/3, 2026-10-03)`,
       });
     } else {
       display.activatedAt = activatedAt;

@@ -3,7 +3,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { postDeleteSale } from "@/lib/delete-sale-api";
 import { formatCtn, formatNumber } from "@/lib/format";
-import { amountText, dateText } from "@/lib/sale-display";
+import { amountText, dateText, monthDayText } from "@/lib/sale-display";
 import {
   changeLabel,
   diffSale,
@@ -147,8 +147,8 @@ function valueText(sale: SheetSale, key: ColumnKey): string {
   const value = (sale as Record<string, unknown>)[key];
   if (typeof value === "number" || value === null) return amountText(value);
   const text = String(value ?? "");
-  if (key === "activatedAt" || key === "wiredAvailableDate")
-    return dateText(text);
+  if (key === "activatedAt") return monthDayText(text);
+  if (key === "wiredAvailableDate") return dateText(text);
   if (key === "ctn") return text ? formatCtn(text) : "";
   return text;
 }
@@ -494,7 +494,7 @@ function SaleEditForm({
           {(
             [
               ["No.", "B", sale.no],
-              ["개통일", "C", dateText(sale.activatedAt)],
+              ["개통일", "C", monthDayText(sale.activatedAt)],
             ] as const
           ).map(([label, letter, value]) => (
             <div

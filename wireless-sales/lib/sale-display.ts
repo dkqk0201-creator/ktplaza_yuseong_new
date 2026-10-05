@@ -12,6 +12,12 @@ export function dateText(value: string): string {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) ? formatDate(value) : value || "-";
 }
 
+/** 개통일 화면 표시: "2026-10-05" → "10.05" (값은 연도 포함 날짜 그대로, 표시만 월.일) */
+export function monthDayText(value: string): string {
+  const m = /^\d{4}-(\d{2})-(\d{2})$/.exec(value);
+  return m ? `${m[1]}.${m[2]}` : value || "-";
+}
+
 /** 목록에서는 가운데 4자리를 가린다: 010-****-5678 */
 export function maskedCtn(ctn: string): string {
   const formatted = formatCtn(ctn);

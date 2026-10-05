@@ -15,7 +15,7 @@ import {
   StatusBadge,
   SummaryTile,
 } from "@/components/work-ui";
-import { dateText, maskedCtn } from "@/lib/sale-display";
+import { maskedCtn, monthDayText } from "@/lib/sale-display";
 import { matchesSaleSearch } from "@/lib/sale-search";
 import { isO, type SheetSale } from "@/lib/sheet-record";
 
@@ -266,7 +266,7 @@ function InspectionList({
                         </button>
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap text-ink-sub tabular-nums">
-                        {dateText(sale.activatedAt)}
+                        {monthDayText(sale.activatedAt)}
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap text-ink">
                         {sale.staff || "-"}
@@ -311,7 +311,7 @@ function InspectionList({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs text-ink-muted tabular-nums">
-                        No.{sale.no} · {dateText(sale.activatedAt)}
+                        No.{sale.no} · {monthDayText(sale.activatedAt)}
                       </span>
                       <StatusBadge tone={status === "done" ? "good" : "warn"}>
                         {STATUS_TEXT[status]}
