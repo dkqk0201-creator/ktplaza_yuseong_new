@@ -27,7 +27,8 @@ function failure(error: unknown) {
         ? "스프레드시트 연결 설정이 아직 완료되지 않았습니다."
         : error.code === "rejected"
           ? error.message
-          : "목표를 불러오거나 저장하지 못했습니다. Apps Script 목표 기능(goal-handler.gs)이 배포되었는지 확인해 주세요.";
+          : // 실제 원인(Apps Script 응답·연결 오류)을 함께 보여 준다
+            `목표를 불러오거나 저장하지 못했습니다. Apps Script 목표 기능(goal-handler.gs)이 배포되었는지 확인해 주세요. [원인: ${error.message}]`;
     return reply(
       { ok: false, message },
       error.code === "not_configured" ? 503 : 502,

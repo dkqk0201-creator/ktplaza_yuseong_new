@@ -104,9 +104,17 @@ async function postToAppsScript(
   try {
     data = JSON.parse(body);
   } catch {
+    // JSON 이 아니면(예: Apps Script 오류 페이지) 원인 확인용으로 응답 앞부분 글자를 함께 남긴다
+    const snippet = body
+      .replace(/<style[\s\S]*?<\/style>|<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&nbsp;|&#39;|&quot;|&amp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 160);
     throw new AppsScriptError(
       "bad_response",
-      `Apps Script 응답을 읽을 수 없습니다. (HTTP ${response.status})`,
+      `Apps Script 응답을 읽을 수 없습니다. (HTTP ${response.status}${snippet ? `: ${snippet}` : ""})`,
     );
   }
 
