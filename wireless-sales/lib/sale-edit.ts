@@ -11,8 +11,9 @@ import { amountOf } from "@/lib/quick-report";
 /*
  * 검수관리 "판매 수정": 기존 판매 1건의 값 고치기 (화면·서버 공용 규칙).
  * - B열 No.·C열 개통일은 고칠 수 없다.
- * - N·U열은 장표의 같은 행 합계 수식(N = SUM(O:T), U = SUM(V:Y))이라 직접 고치지 않는다.
- *   O~T·V~Y 를 고치면 장표가 N·U 를 다시 계산하고, 화면에는 바뀔 값을 자동 항목으로 보여준다.
+ * - N·U·AB·AC열은 장표의 같은 행 수식이라 직접 고치지 않는다 (웹앱은 이 4칸을 쓰지 않음):
+ *     N = O+…+T, U = V+W+X+Y, AB = Z − AA, AC = N + U + AB  ("-"·빈칸은 0, 음수 그대로)
+ *   O~T·V~Y·Z·AA 를 고치면 장표가 다시 계산하고, 화면에는 바뀔 값을 자동 항목으로 보여준다.
  * - 바뀐 칸만 보낸다. before = 화면에서 본 값(장표와 대조용), after = 새 값.
  */
 
@@ -21,11 +22,22 @@ export const LOCKED_KEYS = [
   "activatedAt",
   "securedTotal", // N = SUM(O:T) 수식
   "usedTotal", // U = SUM(V:Y) 수식
+  "usedPhoneRemaining", // AB = Z − AA 수식
+  "finalTotal", // AC = N + U + AB 수식
 ] as const;
 
-/** N·U열: 장표 행별 합계 수식 칸 (직접 수정 불가, 화면 표시용 자동 항목) */
-export const SUM_FORMULA_KEYS = ["securedTotal", "usedTotal"] as const;
-export type SumFormulaKey = (typeof SUM_FORMULA_KEYS)[number];
+/** N·U·AB·AC열: 장표 행별 수식 칸 (직접 수정 불가, 화면 표시용 자동 항목) */
+export const ROW_FORMULA_KEYS = [
+  "securedTotal",
+  "usedTotal",
+  "usedPhoneRemaining",
+  "finalTotal",
+] as const;
+export type RowFormulaKey = (typeof ROW_FORMULA_KEYS)[number];
+const ROW_FORMULA_SET = new Set<string>(ROW_FORMULA_KEYS);
+export function isRowFormulaKey(key: string): key is RowFormulaKey {
+  return ROW_FORMULA_SET.has(key);
+}
 
 /** N = O+P+Q+R+S+T */
 export const SECURED_PART_KEYS = [
@@ -44,20 +56,29 @@ export const USED_PART_KEYS = [
   "usedSecond",
 ] as const satisfies readonly ColumnKey[];
 
-export function sumPartsOf(key: SumFormulaKey): readonly ColumnKey[] {
-  return key === "securedTotal" ? SECURED_PART_KEYS : USED_PART_KEYS;
-}
-
-/** 수정 화면 입력값 기준 N·U (장표 수식 SUM 과 같게 "-"·빈칸·글자는 0) */
-export function formulaTotal(
+/**
+ * 장표 행별 수식이 계산할 N·U·AB·AC (수정 화면 입력값 기준, 장표 SUM·N 함수와 같게 "-"·빈칸·글자는 0)
+ *   N = O+…+T, U = V+W+X+Y, AB = Z − AA, AC = N + U + AB
+ */
+export function rowFormulaValues(
   sale: SheetSale,
-  edited: Partial<Record<ColumnKey, string>>,
-  key: SumFormulaKey,
-): number {
-  return sumPartsOf(key).reduce(
-    (t, k) => t + amountOf(edited[k] ?? editText(sale, k)),
-    0,
-  );
+  edited: Partial<Record<ColumnKey, string>> = {},
+): Record<RowFormulaKey, number> {
+  const val = (k: ColumnKey) => amountOf(edited[k] ?? editText(sale, k));
+  const sum = (keys: readonly ColumnKey[]) =>
+    keys.reduce((t, k) => t + val(k), 0);
+  const { usedPhoneRemaining, finalTotal } = calcUsedPhone({
+    securedTotal: String(sum(SECURED_PART_KEYS)),
+    usedTotal: String(sum(USED_PART_KEYS)),
+    usedPhoneSale: edited.usedPhoneSale ?? editText(sale, "usedPhoneSale"),
+    usedPhoneUsed: edited.usedPhoneUsed ?? editText(sale, "usedPhoneUsed"),
+  });
+  return {
+    securedTotal: sum(SECURED_PART_KEYS),
+    usedTotal: sum(USED_PART_KEYS),
+    usedPhoneRemaining,
+    finalTotal,
+  };
 }
 const LOCKED = new Set<ColumnKey>(LOCKED_KEYS);
 const AMOUNTS = new Set<string>(AMOUNT_KEYS);
@@ -93,16 +114,6 @@ export interface SaleChange {
   auto?: boolean;
   /** 자동 변경 이유 (없으면 "카드 종류 변경으로 자동") */
   autoNote?: string;
-}
-
-/**
- * 쓰지는 않고 장표 현재 값이 before 와 같은지만 확인하는 칸.
- * AB·AC 계산에 쓴 N·U·Z·AA 중 이번에 바꾸지 않는 칸을
- * 그사이 다른 사람이 고쳤다면 Apps Script 가 수정을 거부한다.
- */
-export interface SaleCheck {
-  key: ColumnKey;
-  before: string;
 }
 
 /** 카드사명이 아닌 값 (X·빈칸·"-") */
@@ -158,34 +169,21 @@ export function diffSale(
     }
     changes.push({ key, before, after });
   }
-  return applyUsedPhoneRule(sale, applyCardRule(sale, changes));
+  return applyRowFormulaRule(sale, applyCardRule(sale, changes));
 }
 
-const SUM_NOTE: Record<SumFormulaKey, string> = {
+export const ROW_FORMULA_NOTE: Record<RowFormulaKey, string> = {
   securedTotal: "O~T 합계 수식 자동",
   usedTotal: "V~Y 합계 수식 자동",
+  usedPhoneRemaining: "Z−AA 수식 자동",
+  finalTotal: "N+U+AB 수식 자동",
 };
 
-/* ---------- 중고판매 AB·AC 재계산 (간편등록과 같은 규칙) ---------- */
-
-/**
- * 재계산에 쓰이는 칸 O~T·V~Y·Z·AA 와 결과 칸 AB·AC.
- * N·U 는 장표 수식(SUM(O:T)·SUM(V:Y))이므로 O~T·V~Y 로 직접 계산한다.
- */
-export const USED_PHONE_RECALC_KEYS = [
-  ...SECURED_PART_KEYS, // O~T
-  ...USED_PART_KEYS, // V~Y
-  "usedPhoneSale", // Z
-  "usedPhoneUsed", // AA
-  "usedPhoneRemaining", // AB
-  "finalTotal", // AC
-] as const satisfies readonly ColumnKey[];
-
-const USED_PHONE_NOTE = "AB=Z−AA, AC=N+U+AB 자동 계산";
+/* ---------- 행별 수식 칸 N·U·AB·AC (장표가 계산, 화면은 바뀔 값만 표시) ---------- */
 
 /**
  * AB = Z − AA,  AC = N + U + AB
- * "-"·빈칸·숫자가 아닌 값은 계산할 때만 0 (간편등록 applyQuickColumnRules 와 같은 amountOf).
+ * "-"·빈칸·숫자가 아닌 값은 계산할 때만 0 (간편등록 applyQuickColumnRules·장표 수식과 같은 결과).
  * AB 가 음수여도 0 으로 바꾸지 않는다.
  */
 export function calcUsedPhone(values: {
@@ -203,133 +201,39 @@ export function calcUsedPhone(values: {
   };
 }
 
-type RecalcKey = (typeof USED_PHONE_RECALC_KEYS)[number];
-/** AB·AC 계산 기준값: O~T·V~Y·Z·AA·AB·AC 의 장표 값 (화면에서 본 값 또는 서버가 방금 읽은 값) */
-export type RecalcBase = Record<RecalcKey, string>;
-
 /** 금액 비교용: "-"·빈칸·숫자가 아님 → null */
 function baseAmount(text: string): number | null {
   const t = text.replace(/[\s,]/g, "").replace(/원$/, "");
   return /^-?\d+(\.\d+)?$/.test(t) ? Number(t) : null;
 }
 
-export interface UsedPhonePlan {
-  /** 써야 하는 AB·AC (before = 기준값, after = 계산값) */
-  writes: {
-    key: "usedPhoneRemaining" | "finalTotal";
-    before: string;
-    after: number;
-  }[];
-  /** 쓰지 않고 대조만 하는 O~T·V~Y·Z·AA */
-  checks: SaleCheck[];
-  /** 최종 N·U (= 장표 수식이 계산할 값) */
-  totals: Record<SumFormulaKey, number>;
-}
-
 /**
- * 판매 수정 1건의 AB·AC 처리 계획 (화면 표시와 서버 저장이 같은 함수를 쓴다).
- *   - 최종값 = 이번에 바꾸는 칸은 새 값, 나머지는 base(장표 값)
- *   - N = O+…+T, U = V+W+X+Y (장표 행별 합계 수식과 같은 값)
- *   - AB = Z − AA, AC = N + U + AB ("-"·빈칸은 계산 시에만 0, 음수 그대로)
- *   - AB·AC 가 base 와 다르면 쓴다 → 이미 틀어져 있던 AB·AC 도 바로잡는다 (거부하지 않음)
- *   - AB·AC 를 쓸 때만, 계산에 쓴 O~T·V~Y·Z·AA 중 이번에 바꾸지 않는 칸을 checks 로 보내
- *     그사이 다른 사람이 고쳤는지 Apps Script 가 대조하게 한다.
- *   - AB·AC 가 이미 맞으면 아무것도 추가하지 않는다 (일반 수정은 기존과 동일).
- * changes 에 N·U·AB·AC 가 있어도 무시한다 (모두 계산값).
+ * 화면 표시용: 바꾼 칸 + N·U·AB·AC 자동 변경 (지금 장표 값과 다를 때만).
+ * 자동 항목은 서버가 버린다 — 장표 수식이 계산하고, 숫자로 남아 있던 칸은 Apps Script 가 수식으로 바꾼다.
+ * 사용자가 N·U·AB·AC 를 직접 입력해도 무시한다 (LOCKED).
  */
-export function planUsedPhoneRecalc(
-  changes: readonly { key: ColumnKey; after: string }[],
-  base: RecalcBase,
-): UsedPhonePlan {
-  const ignored = new Set<ColumnKey>([
-    "usedPhoneRemaining",
-    "finalTotal",
-    ...SUM_FORMULA_KEYS,
-  ]);
-  const changed = new Map<ColumnKey, string>();
-  for (const c of changes) {
-    if (!ignored.has(c.key)) changed.set(c.key, c.after);
-  }
-  const final = (key: RecalcKey) => changed.get(key) ?? base[key];
-  const sumOf = (keys: readonly RecalcKey[]) =>
-    keys.reduce((t, k) => t + amountOf(final(k)), 0);
-  const totals = {
-    securedTotal: sumOf(SECURED_PART_KEYS),
-    usedTotal: sumOf(USED_PART_KEYS),
-  };
-  const result = calcUsedPhone({
-    securedTotal: String(totals.securedTotal),
-    usedTotal: String(totals.usedTotal),
-    usedPhoneSale: final("usedPhoneSale"),
-    usedPhoneUsed: final("usedPhoneUsed"),
-  });
-  const writes: UsedPhonePlan["writes"] = [];
-  for (const key of ["usedPhoneRemaining", "finalTotal"] as const) {
-    if (baseAmount(base[key]) !== result[key]) {
-      writes.push({ key, before: base[key], after: result[key] });
-    }
-  }
-  const inputs: readonly RecalcKey[] = [
-    ...SECURED_PART_KEYS,
-    ...USED_PART_KEYS,
-    "usedPhoneSale",
-    "usedPhoneUsed",
-  ];
-  const checks: SaleCheck[] =
-    writes.length === 0
-      ? []
-      : inputs
-          .filter((key) => !changed.has(key))
-          .map((key) => ({ key, before: base[key] }));
-  return { writes, checks, totals };
-}
-
-/** 화면에서 본 O~T·V~Y·Z·AA·AB·AC (판매 수정 요청과 함께 보내 서버 계산 기준으로 쓴다) */
-export function saleRecalcBase(sale: SheetSale): RecalcBase {
-  return Object.fromEntries(
-    USED_PHONE_RECALC_KEYS.map((key) => [key, editText(sale, key)]),
-  ) as RecalcBase;
-}
-
-/**
- * 화면 표시용: 바꾼 칸 + N·U 수식 자동 변경 + AB·AC 자동 변경.
- * N·U 는 보내도 서버가 버린다 (장표 수식이 다시 계산). AB·AC 는 서버가 같은 planUsedPhoneRecalc 로 다시 계산해 저장.
- */
-function applyUsedPhoneRule(
+function applyRowFormulaRule(
   sale: SheetSale,
   changes: SaleChange[],
 ): SaleChange[] {
-  const rest = changes.filter(
-    (c) =>
-      c.key !== "usedPhoneRemaining" &&
-      c.key !== "finalTotal" &&
-      !(SUM_FORMULA_KEYS as readonly string[]).includes(c.key),
-  );
-  const plan = planUsedPhoneRecalc(rest, saleRecalcBase(sale));
-  const sums: SaleChange[] = [];
-  for (const key of SUM_FORMULA_KEYS) {
+  const rest = changes.filter((c) => !isRowFormulaKey(c.key));
+  if (rest.length === 0) return []; // 저장할 칸이 없으면 자동 항목도 없음 (수식 칸만으로는 저장하지 않음)
+  const edited = Object.fromEntries(rest.map((c) => [c.key, c.after]));
+  const values = rowFormulaValues(sale, edited);
+  const autos: SaleChange[] = [];
+  for (const key of ROW_FORMULA_KEYS) {
     const before = editText(sale, key);
-    if (baseAmount(before) !== plan.totals[key]) {
-      sums.push({
+    if (baseAmount(before) !== values[key]) {
+      autos.push({
         key,
         before,
-        after: String(plan.totals[key]),
+        after: String(values[key]),
         auto: true,
-        autoNote: SUM_NOTE[key],
+        autoNote: ROW_FORMULA_NOTE[key],
       });
     }
   }
-  return [
-    ...rest,
-    ...sums,
-    ...plan.writes.map((w) => ({
-      key: w.key,
-      before: w.before,
-      after: String(w.after),
-      auto: true,
-      autoNote: USED_PHONE_NOTE,
-    })),
-  ];
+  return [...rest, ...autos];
 }
 
 /** 금액 칸에 숫자가 아닌 값이 있으면 오류 문구 */

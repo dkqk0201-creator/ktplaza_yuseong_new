@@ -1,5 +1,5 @@
 import type { DeleteSaleRequest } from "@/lib/delete-sale-api";
-import type { RecalcBase, SaleChange } from "@/lib/sale-edit";
+import type { SaleChange } from "@/lib/sale-edit";
 
 /*
  * 화면 ↔ 우리 서버(/api/sales/update) 사이의 약속 (기존 판매 수정).
@@ -11,9 +11,8 @@ export type UpdateSaleTarget = DeleteSaleRequest;
 
 export interface UpdateSaleRequest {
   target: UpdateSaleTarget;
+  /** 바꾼 칸 (N·U·AB·AC 자동 항목이 섞여 있어도 서버가 버림 — 장표 수식이 계산) */
   changes: SaleChange[];
-  /** 화면에서 본 N·U·Z·AA·AB·AC — 서버가 AB·AC 를 계산하는 기준 (없으면 서버가 장표에서 읽음) */
-  base?: RecalcBase;
 }
 
 export type UpdateSaleResponse =

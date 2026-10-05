@@ -12,17 +12,16 @@
  *   changes: [{ col, before, value }, ...]                     ← 바꿀 칸만 (col: 0=A … 37=AL)
  *            + [{ col, before, check: true }, ...]               ← 쓰지 않고 현재 값만 확인하는 칸 (선택)
  * }
- * - check: true 칸은 장표에 쓰지 않는다. 지금 값이 before 와 같은지만 확인한다
- *   (AB·AC 재계산에 쓴 O~T·V~Y·Z·AA·AB·AC 를 그사이 다른 사람이 고쳤으면 거부).
+ * - check: true 칸은 장표에 쓰지 않는다. 지금 값이 before 와 같은지만 확인한다 (예전 화면 호환).
  * - 새 행을 찾지 않는다. target 의 "같은 월 시트 / 같은 행"만 고친다.
  * - B열(No.)·C열(개통일)은 절대 고치지 않는다 (요청에 있으면 거부).
  * - 행 번호만 믿지 않고 No.(B)·개통일(C)·고객(D)·CTN(E) 이 화면에서 본 값과 모두 같을 때만 고친다.
  * - 바꿀 칸마다 지금 장표 값이 화면에서 본 값(before)과 같은지 확인한다
  *   (그사이 다른 사람이 고쳤으면 덮어쓰지 않고 거부).
  * - 수식이 들어 있는 칸은 고치지 않는다 (요청에 있으면 거부).
- * - N·U열은 같은 행 합계 수식(N = SUM(O:T), U = SUM(V:Y))을 유지한다. 웹앱은 N·U 를 보내지 않으며,
- *   수정한 행의 N·U 가 아직 숫자(예전 저장분)라면 수정과 함께 그 행의 합계 수식으로 바꾼다
- *   (수식은 save-handler.gs 의 wsSumFormula_ 와 같다).
+ * - N·U·AB·AC열은 같은 행 수식(N = SUM(O:T), U = SUM(V:Y), AB = Z−AA, AC = N+U+AB)을 유지한다.
+ *   웹앱은 이 4칸을 보내지 않으며, 수정한 행의 4칸 중 아직 숫자(예전 저장분)인 칸은
+ *   수정과 함께 그 행의 수식으로 바꾼다 (수식은 save-handler.gs 의 wsRowFormula_ 와 같다).
  * - 열 구조(6·7행 제목)가 웹앱과 다르면 아무것도 하지 않는다.
  * - LockService 로 저장·삭제·수정이 한 번에 하나만 처리되게 한다.
  * - 고객명(D)·CTN(E)을 바꾸면 판매보고 참고내용(notes.gs 보조 시트)의 연결 키도 새 값으로 옮긴다.
@@ -167,13 +166,11 @@ function wsHandleSaleUpdate_(e) {
       if (changes[w].check === true) continue;
       sheet.getRange(rowNumber, Number(changes[w].col) + 1).setValue(changes[w].value);
     }
-    // N·U 가 숫자로 고정돼 있으면 같은 행 합계 수식으로 (이미 수식이면 그대로)
-    var sumColumns = [WS_N_INDEX, WS_U_INDEX];
-    for (var s = 0; s < sumColumns.length; s++) {
-      if (formulas[sumColumns[s]] === "") {
-        sheet
-          .getRange(rowNumber, sumColumns[s] + 1)
-          .setFormula(wsSumFormula_(sumColumns[s], rowNumber));
+    // N·U·AB·AC 가 숫자로 고정돼 있으면 같은 행 수식으로 (이미 수식이면 그대로)
+    for (var s = 0; s < WS_ROW_FORMULA_COLUMNS.length; s++) {
+      var fc = WS_ROW_FORMULA_COLUMNS[s];
+      if (formulas[fc] === "") {
+        sheet.getRange(rowNumber, fc + 1).setFormula(wsRowFormula_(fc, rowNumber));
       }
     }
     SpreadsheetApp.flush();
