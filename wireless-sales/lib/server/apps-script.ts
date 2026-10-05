@@ -268,6 +268,8 @@ export interface AppsScriptListRow {
   values: unknown[];
   /** 판매보고 참고내용 (보조 시트, 이 판매에 정확히 연결된 경우만) */
   notes?: Record<string, string>;
+  /** O열(SPOT정책) 셀 메모 원문 */
+  spotNote?: string;
 }
 
 export interface AppsScriptListResult {
@@ -289,6 +291,13 @@ function parseNotes(value: unknown): Record<string, string> | undefined {
     }
   }
   return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** O열 메모: 글자만, 앞뒤 공백 제거, 2000자까지 */
+function parseSpotNoteText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim().slice(0, 2000);
+  return text || undefined;
 }
 
 export function monthSheetNames(value: unknown): string[] {
@@ -325,6 +334,7 @@ export async function listRowsFromAppsScript(
       no: no === undefined || no === null ? "" : String(no),
       values: values.slice(0, COLUMN_COUNT),
       notes: parseNotes((item as Record<string, unknown>).notes),
+      spotNote: parseSpotNoteText((item as Record<string, unknown>).spotNote),
     });
   }
   return { sheet: sheetName, rows, sheets: monthSheetNames(data.sheets) };

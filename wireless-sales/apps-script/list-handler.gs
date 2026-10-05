@@ -5,9 +5,13 @@
  *   - sheet 를 주면 그 월 시트, 없으면 이번 달 시트를 읽는다.
  *   - 9행부터 개통일·고객·CTN 중 하나라도 값이 있는 행만 돌려준다 (빈 행·양식 행 제외).
  *   - 읽기만 하며 장표의 어떤 칸도 수정하지 않는다.
- * 응답: { ok, sheet, rows: [{ row, no, values[38], notes? }], sheets: ["9월", "10월", ...] }
+ * 응답: { ok, sheet, rows: [{ row, no, values[38], notes?, spotNote? }], sheets: ["9월", "10월", ...] }
  *   notes: notes.gs 보조 시트의 판매보고 참고내용 (키가 정확히 한 판매에 맞을 때만)
+ *   spotNote: O열(SPOT정책) 셀 메모 원문 (스팟관리용). O열 범위의 메모를 getNotes() 로 한 번에 읽는다.
+ *     메모를 못 읽어도 판매내역 조회는 그대로 (spotNote 없이 응답).
  */
+var WS_SPOT_COLUMN = 15; // O열 (SPOT정책)
+
 function handleListRequest_(e) {
   var body = wsBody_(e);
   if (!body || body.action !== "list") return null;
@@ -45,16 +49,28 @@ function handleListRequest_(e) {
     var values = sheet
       .getRange(WS_FIRST_ROW, 1, lastRow - WS_FIRST_ROW + 1, WS_COLUMN_COUNT)
       .getValues();
+    // O열 메모 전체를 한 번에 (행마다 getNote() 를 부르지 않는다)
+    var spotNotes = null;
+    try {
+      spotNotes = sheet
+        .getRange(WS_FIRST_ROW, WS_SPOT_COLUMN, values.length, 1)
+        .getNotes();
+    } catch (err) {
+      spotNotes = null;
+    }
     for (var i = 0; i < values.length; i++) {
       var r = values[i];
       if (wsIsEmptySale_(r)) continue; // 판매 데이터가 없는 행
-      rows.push({
+      var item = {
         row: WS_FIRST_ROW + i,
         no: wsText_(r[WS_B_INDEX], tz),
         values: r.map(function (v) {
           return v instanceof Date ? Utilities.formatDate(v, tz, "yyyy-MM-dd") : v;
         }),
-      });
+      };
+      var spotNote = spotNotes && spotNotes[i] ? String(spotNotes[i][0] || "").trim() : "";
+      if (spotNote) item.spotNote = spotNote;
+      rows.push(item);
     }
   }
   try {

@@ -59,6 +59,17 @@ export const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    href: "/spot",
+    label: "스팟관리",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />
+        <circle cx="12" cy="12" r="5" />
+        <circle cx="12" cy="12" r="1.5" />
+      </svg>
+    ),
+  },
+  {
     href: "/customer",
     label: "고객조회",
     icon: (

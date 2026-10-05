@@ -41,6 +41,8 @@ export type SheetSale = {
      * Apps Script 보조 시트 "웹앱참고" 에서 이 판매에 정확히 연결된 경우만 있다.
      */
     notes?: Record<string, string>;
+    /** O열(SPOT정책) 셀 메모 원문 (스팟관리 조회용, 읽기 전용) */
+    spotNote?: string;
   };
 
 /** 글자로 읽기. 시트가 계산식 방지용으로 붙인 ' 는 떼어 낸다. */
