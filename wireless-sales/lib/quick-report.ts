@@ -73,7 +73,8 @@ export const QUICK_FIELDS = [
   { id: "useExtraSupport", label: "정책사용 → 추가지원금", column: "usedExtraSupport" },
   { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: null },
   { id: "usePlan", label: "정책사용 → 고혜(요금)", column: null },
-  { id: "second", label: "2ND", column: null },
+  // 2ND 첫 줄: 내용이 있으면 AD = O, 공란·X 면 AD = X. 적은 글자(예: 워치)는 참고내용으로도 보관
+  { id: "second", label: "2ND", column: "secondPerformance" },
   { id: "secondBenefit", label: "2ND → 고객혜택", column: "usedSecond" },
   { id: "secondSelfPay", label: "2ND → 자부담", column: null },
   { id: "secondGift", label: "2ND → 사은품판매or수령", column: null },
@@ -361,8 +362,13 @@ export interface QuickNormalized {
 /** 참고 항목 id → 직원이 적은 원문 */
 export type SaleNotes = Partial<Record<QuickFieldId, string>>;
 
-/** 장표 저장 안 함(참고) 항목 */
-export const NOTE_FIELDS = QUICK_FIELDS.filter((f) => f.column === null);
+/**
+ * 참고내용으로 보관하는 항목: 장표 저장 안 함(참고) 항목 + 2ND 첫 줄 원문
+ * (2ND 는 장표 AD 에 O/X 만 저장되므로, 직원이 적은 글자는 참고내용으로 따로 남긴다)
+ */
+export const NOTE_FIELDS = QUICK_FIELDS.filter(
+  (f) => f.column === null || f.id === "second",
+);
 
 export function quickNotes(fields: QuickFields): SaleNotes {
   const notes: SaleNotes = {};
@@ -646,6 +652,15 @@ export function normalizeQuick(
     }
   }
   // 어디에: 참고용 메모 (장표 저장 안 함, 화면 표시만)
+
+  // 2ND(AD): 첫 번째 "2ND :" 값만 본다 (하위 항목 고객혜택·자부담·사은품은 보지 않음).
+  // 내용이 있으면 O, 공란이거나 X(대소문자·앞뒤 공백 무관)면 X
+  {
+    const second = v("second");
+    const value = second === "" || second.toUpperCase() === "X" ? "X" : "O";
+    row.secondPerformance = value;
+    display.second = second && value === "O" ? `O (${second})` : "X";
+  }
 
   // 제카: 비어 있거나 X → 제카·종류·카드실적 검수 모두 X / 카드 종류 → O·종류·검수 칸은 비워 둠
   const jeca = v("jeca");
