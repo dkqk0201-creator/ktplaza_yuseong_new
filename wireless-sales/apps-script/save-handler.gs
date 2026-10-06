@@ -14,9 +14,12 @@
  *   - 같은 개통일끼리는 기존 순서를 유지한다 (안정 정렬). 이미 날짜순이 아니던 행도 함께 날짜순이 된다.
  *   - 판매 1건 = A~AL 한 행 전체(B열 제외)가 함께 움직인다. B열(No.)은 행에 그대로 → 9행=1, 10행=2 …
  *   - 중간에 삭제로 비어 있던 행은 판매 행들 아래로 내려간다.
- *   - 8행(합계)과 그 위는 건드리지 않는다. 값만 옮기며 서식·메모는 행 위치에 그대로 남는다.
+ *   - 8행(합계)과 그 위는 건드리지 않는다. 값을 옮기고 서식은 행 위치에 그대로 남는다.
+ *   - 셀 메모(Note, 예: O열 SPOT 메모)는 값과 함께 그 판매를 따라 옮긴다 (A열·C~AL열, B열 메모는 행에 그대로).
+ *     새 판매가 들어가는 칸은 메모를 비운다 (이전 판매·삭제된 판매의 메모가 새 고객에게 붙지 않게).
  *   - 판매·빈 행에 수식이 있거나(N·U·AB·AC 행별 수식은 제외) 개통일이 날짜가 아닌 판매 행이 있으면
  *     정렬하지 않고 예전 방식(위에서부터 첫 빈 행)으로 저장한다 (응답 sorted: false).
+ *     이때도 새 판매를 쓰는 그 한 행의 A열·C~AL열 메모만 비운다 (다른 행 메모는 그대로).
  * N·U·AB·AC열: 판매 행에는 숫자 대신 같은 행 수식을 넣는다 → 시트에서 O~T·V~Y·Z·AA 를 고치면 바로 다시 계산.
  *   N = SUM(O행:T행), U = SUM(V행:Y행), AB = N(Z행)-N(AA행), AC = SUM(N행,U행,AB행)
  *   ("-"·빈칸·글자는 0, 음수 그대로). 정렬로 판매가 다른 행으로 옮겨지면 그 행 번호의 수식을 새로 쓴다.
@@ -115,9 +118,16 @@ function handleSaveRequest_(e) {
     );
     var all = range.getValues();
     var allFormulas = range.getFormulas();
+    // 셀 메모: 판매를 옮길 때 함께 옮긴다 (못 읽으면 null → 정렬하지 않고 예전 방식)
+    var allNotes = null;
+    try {
+      allNotes = range.getNotes();
+    } catch (err) {
+      allNotes = null;
+    }
 
     // 개통일 순서 위치에 저장 (정렬할 수 없으면 null → 아래 예전 방식)
-    var plan = wsPlanSortedSave_(all, allFormulas, rows, tz);
+    var plan = allNotes ? wsPlanSortedSave_(all, allFormulas, rows, tz, allNotes) : null;
     if (plan) {
       wsWriteSortedBlock_(sheet, plan);
       wsFormatDateColumn_(sheet, lastRow);
@@ -145,6 +155,8 @@ function handleSaveRequest_(e) {
         continue;
       }
       next = index + 1;
+      // 새 판매가 들어갈 이 한 행에 남아 있던 메모(이전·삭제된 판매)를 비운다 (값·서식은 그대로)
+      wsClearSaleRowNotes_(sheet, WS_FIRST_ROW + index);
       wsWriteSaleRow_(
         sheet,
         WS_FIRST_ROW + index,
@@ -164,6 +176,12 @@ function handleSaveRequest_(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/** 판매 한 행의 A열·C~AL열 메모만 비운다 (B열 No. 메모·값·서식은 그대로) */
+function wsClearSaleRowNotes_(sheet, rowNumber) {
+  sheet.getRange(rowNumber, 1).clearNote();
+  sheet.getRange(rowNumber, 3, 1, WS_COLUMN_COUNT - 2).clearNote();
 }
 
 /** C열 개통일 표시 형식만 mm.dd 로 (9행~마지막 행, 값은 그대로). 실패해도 저장은 그대로 */
@@ -231,10 +249,13 @@ function wsSheetCells_(row) {
 
 /**
  * 개통일 순서 저장 계획. 정렬할 수 없으면 null.
- * all/formulas: 9행부터 읽은 값·수식, newRows: 웹앱이 보낸 38칸 (null = 그 칸은 빈 행 값 유지)
- * 반환: { first, last, cells: { 행index: 38칸 }, results: [{ ok, row, no } | { ok:false, message }] }
+ * all/formulas/notes: 9행부터 읽은 값·수식·메모, newRows: 웹앱이 보낸 38칸 (null = 그 칸은 빈 행 값 유지)
+ * 반환: { first, last, cells: { 행index: 38칸 }, notes: { 행index: 38칸 메모 }, results: [...] }
+ *   메모는 값과 같이 판매를 따라 옮기고, 새 판매 자리는 빈 메모.
  */
-function wsPlanSortedSave_(all, formulas, newRows, tz) {
+function wsPlanSortedSave_(all, formulas, newRows, tz, notes) {
+  var blankNotes = [];
+  for (var bn = 0; bn < WS_COLUMN_COUNT; bn++) blankNotes.push("");
   var slots = []; // No. 가 있는 행 (판매 행 자리)
   var filled = [];
   var empties = [];
@@ -253,7 +274,7 @@ function wsPlanSortedSave_(all, formulas, newRows, tz) {
   for (var a = 0; a < filled.length; a++) {
     var key = wsSaleDateKey_(all[filled[a]][2], tz);
     if (!key) return null;
-    items.push({ key: key, order: a, source: filled[a], cells: wsSheetCells_(all[filled[a]]) });
+    items.push({ key: key, order: a, source: filled[a], cells: wsSheetCells_(all[filled[a]]), notes: notes[filled[a]] });
   }
   var results = [];
   var used = 0;
@@ -272,7 +293,8 @@ function wsPlanSortedSave_(all, formulas, newRows, tz) {
     for (var c = 0; c < WS_COLUMN_COUNT; c++) {
       if (c !== WS_B_INDEX && newRows[k][c] !== null) cells[c] = newRows[k][c];
     }
-    items.push({ key: newKey, order: filled.length + k, source: -1, cells: cells, result: results.length });
+    // 새 판매는 메모 없음 (그 자리에 남아 있던 이전 메모는 지워진다)
+    items.push({ key: newKey, order: filled.length + k, source: -1, cells: cells, notes: blankNotes, result: results.length });
     results.push(null);
     used++;
   }
@@ -291,17 +313,19 @@ function wsPlanSortedSave_(all, formulas, newRows, tz) {
         emptyCells[fc] = fc === WS_N_INDEX || fc === WS_U_INDEX ? "-" : "";
       }
     }
-    items.push({ source: empties[e], cells: emptyCells });
+    items.push({ source: empties[e], cells: emptyCells, notes: notes[empties[e]] });
   }
 
   var first = -1;
   var last = -1;
   var byIndex = {};
+  var notesByIndex = {};
   for (var j = 0; j < slots.length; j++) {
     var slot = slots[j];
     var item = items[j];
     // 판매 행은 그 행 번호의 N·U·AB·AC 수식으로 (정렬로 옮겨져도 같은 행 값을 계산)
     byIndex[slot] = item.key ? wsWithRowFormulas_(item.cells, WS_FIRST_ROW + slot) : item.cells;
+    notesByIndex[slot] = item.notes;
     if (item.result !== undefined) {
       results[item.result] = {
         ok: true,
@@ -318,23 +342,31 @@ function wsPlanSortedSave_(all, formulas, newRows, tz) {
   for (var r = first; first >= 0 && r <= last; r++) {
     if (!byIndex[r]) return null;
   }
-  return { first: first, last: last, cells: byIndex, results: results };
+  return { first: first, last: last, cells: byIndex, notes: notesByIndex, results: results };
 }
 
-/** 계획대로 first~last 행의 A열과 C~AL열을 한 번에 쓴다 (B열·8행 이하 위는 건드리지 않음) */
+/** 계획대로 first~last 행의 A열과 C~AL열 값·메모를 한 번에 쓴다 (B열·8행 이하 위는 건드리지 않음) */
 function wsWriteSortedBlock_(sheet, plan) {
   if (plan.first < 0) return; // 바뀌는 행 없음
   var colA = [];
   var colCtoAL = [];
+  var notesA = [];
+  var notesCtoAL = [];
   for (var r = plan.first; r <= plan.last; r++) {
     var cells = plan.cells[r];
+    var notes = plan.notes[r];
     colA.push([cells[0]]);
     colCtoAL.push(cells.slice(2, WS_COLUMN_COUNT));
+    notesA.push([notes[0]]);
+    notesCtoAL.push(notes.slice(2, WS_COLUMN_COUNT));
   }
   var top = WS_FIRST_ROW + plan.first;
   var count = plan.last - plan.first + 1;
   sheet.getRange(top, 1, count, 1).setValues(colA);
   sheet.getRange(top, 3, count, WS_COLUMN_COUNT - 2).setValues(colCtoAL);
+  // 메모도 판매를 따라 같은 자리로 (예: O열 SPOT 메모가 밀려난 판매와 함께 이동)
+  sheet.getRange(top, 1, count, 1).setNotes(notesA);
+  sheet.getRange(top, 3, count, WS_COLUMN_COUNT - 2).setNotes(notesCtoAL);
 }
 
 /** 값이 있는 칸만, 이어진 칸끼리 묶어서 쓴다 (B열·수식 칸·null 은 건너뜀) */
