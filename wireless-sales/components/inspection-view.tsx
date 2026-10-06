@@ -18,24 +18,20 @@ import {
 import { maskedCtn, monthDayText } from "@/lib/sale-display";
 import { matchesSaleSearch } from "@/lib/sale-search";
 import { isO, type SheetSale } from "@/lib/sheet-record";
+import {
+  inspectionStatus,
+  matchFilter,
+  type InspectionFilter as Filter,
+  type InspectionStatus,
+} from "@/lib/inspection-status";
+
+export { inspectionStatus, type InspectionStatus }; // 예전 import 경로 유지
 
 /*
  * 검수관리: 선택한 월의 판매 전체를 보여주고(기본 "전체"), 검수(G)·수납(H) 상태로 거른다.
  * 고객명·CTN·직원명 검색은 목록에만 적용하고, 상단 요약 숫자는 월(·직원) 전체 기준으로 유지한다.
  * 검수·수납 O 는 점장이 장표에서 직접 입력한다 (판매 상세의 판매 수정으로도 고칠 수 있음).
  */
-
-type Filter = "pending" | "all" | "inspect" | "paid" | "both" | "done";
-
-export type InspectionStatus = "done" | "inspect" | "paid" | "both";
-
-export function inspectionStatus(sale: SheetSale): InspectionStatus {
-  const inspected = isO(sale.inspected);
-  const paid = isO(sale.paid);
-  if (inspected && paid) return "done";
-  if (!inspected && !paid) return "both";
-  return inspected ? "paid" : "inspect";
-}
 
 const STATUS_TEXT: Record<InspectionStatus, string> = {
   done: "완료",
@@ -54,35 +50,26 @@ export function compareByActivatedAt(a: SheetSale, b: SheetSale): number {
   return a.row - b.row;
 }
 
-function matchFilter(status: InspectionStatus, filter: Filter): boolean {
-  switch (filter) {
-    case "all":
-      return true;
-    case "pending":
-      return status !== "done";
-    case "inspect": // 검수가 O 가 아닌 모든 건 (둘 다 미완료 포함)
-      return status === "inspect" || status === "both";
-    case "paid": // 수납이 O 가 아닌 모든 건 (둘 다 미완료 포함)
-      return status === "paid" || status === "both";
-    case "both":
-      return status === "both";
-    case "done":
-      return status === "done";
-  }
-}
-
 export function InspectionView() {
   useFreshSalesData();
   return (
     <SalesDataGate>
-      {(data) => <InspectionList sheet={data.sheet} sales={data.sales} />}
+      {(data) => (
+        // 월이 바뀌면 검수·수납 완료 표시 상태도 새로 시작
+        <InspectionList key={data.sheet} sheet={data.sheet} sales={data.sales} />
+      )}
     </SalesDataGate>
   );
 }
 
+/** 완료 처리한 판매 표시용 키: 행 + CTN 숫자 + 고객 (행만으로 다른 판매에 잘못 붙지 않게) */
+function markKey(s: SheetSale): string {
+  return `${s.row}|${s.ctn.replace(/\D/g, "")}|${s.customer}`;
+}
+
 function InspectionList({
   sheet,
-  sales,
+  sales: listedSales,
 }: {
   sheet: string;
   sales: SheetSale[];
@@ -93,7 +80,19 @@ function InspectionList({
   const [staff, setStaff] = useState("");
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // 검수완료·수납완료로 장표 저장이 확인된 판매 (다시 읽기 전에도 목록·상단 숫자에 바로 반영)
+  const [marked, setMarked] = useState<ReadonlyMap<string, SheetSale>>(new Map());
 
+  const sales = useMemo(
+    () =>
+      listedSales.map((s) => {
+        const m = marked.get(markKey(s));
+        if (!m) return s;
+        // 장표 저장 후 값의 검수·수납만 덮어씀 (다시 읽은 값이 이미 O 면 그대로)
+        return { ...s, inspected: isO(s.inspected) ? s.inspected : m.inspected, paid: isO(s.paid) ? s.paid : m.paid };
+      }),
+    [listedSales, marked],
+  );
   const staffNames = useMemo(
     () => [...new Set(sales.map((s) => s.staff).filter(Boolean))].sort(),
     [sales],
@@ -356,6 +355,12 @@ function InspectionList({
           }}
           onUpdated={(message) => {
             // 상세창은 열어 둔 채 목록·상단 건수를 장표에서 다시 읽는다
+            setNotice(message);
+            void invalidate();
+          }}
+          onMarked={(next, _field, message) => {
+            // 상세창은 열어 둔 채 목록·상단 건수를 바로 바꾸고, 장표에서도 다시 읽는다
+            setMarked((prev) => new Map(prev).set(markKey(next), next));
             setNotice(message);
             void invalidate();
           }}

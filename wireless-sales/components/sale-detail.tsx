@@ -17,12 +17,13 @@ import {
   type SaleChange,
 } from "@/lib/sale-edit";
 import { postUpdateSale } from "@/lib/update-sale-api";
+import { MARK_DONE_LABEL, postMarkDone } from "@/lib/mark-done-api";
 import {
   COLUMN_LABEL,
   COLUMN_LETTER,
   type ColumnKey,
 } from "@/lib/sheet-columns";
-import { parseSheetRow, type SheetSale } from "@/lib/sheet-record";
+import { isO, parseSheetRow, type SheetSale } from "@/lib/sheet-record";
 
 /*
  * 판매 1건 상세 보기 (장표 A~AL 그대로) + 판매 수정 + 판매 삭제.
@@ -164,6 +165,7 @@ export function SaleDetail({
   onClose,
   onDeleted,
   onUpdated,
+  onMarked,
 }: {
   sheet: string;
   sale: SheetSale;
@@ -172,6 +174,8 @@ export function SaleDetail({
   onClose: () => void;
   onDeleted?: (message: string) => void;
   onUpdated?: (message: string) => void;
+  /** 있으면 "검수완료"(G)·"수납완료"(H) 버튼 표시. 장표 저장 성공 후 저장된 판매로 호출 */
+  onMarked?: (next: SheetSale, field: "inspected" | "paid", message: string) => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const [deleting, setDeleting] = useState(false);
@@ -196,6 +200,46 @@ export function SaleDetail({
   const close = () => {
     if (!deletingRef.current) onCloseRef.current();
   };
+
+  // 검수완료(G)·수납완료(H): 그 칸만 O 로 저장, 저장 확인 후에만 완료 표시 (창은 열어 둔다)
+  const [marking, setMarking] = useState<"inspected" | "paid" | null>(null);
+  const [markError, setMarkError] = useState<string | null>(null);
+  const [markNotice, setMarkNotice] = useState<string | null>(null);
+  async function handleMark(field: "inspected" | "paid") {
+    if (deletingRef.current || isO(sale[field])) return; // 처리 중·이미 완료면 무시 (중복 클릭 방지)
+    deletingRef.current = true;
+    setMarking(field);
+    setMarkError(null);
+    setMarkNotice(null);
+    const result = await postMarkDone({
+      target: {
+        sheet,
+        row: sale.row,
+        no: sale.no,
+        activatedAt: sale.activatedAt,
+        customer: sale.customer,
+        ctn: sale.ctn,
+      },
+      field,
+      before: sale[field],
+    });
+    deletingRef.current = false;
+    setMarking(null);
+    if (!result.ok) {
+      setMarkError(result.message);
+      return;
+    }
+    // 장표가 돌려준 저장 후 값으로 바로 표시 (참고내용은 장표 값이 아니므로 보던 것 유지)
+    const next = parseSheetRow(result.row, result.no, result.values);
+    const shown = {
+      ...next,
+      ...(sale.notes ? { notes: sale.notes } : {}),
+      ...(sale.spotNote ? { spotNote: sale.spotNote } : {}),
+    };
+    setUpdated(shown);
+    setMarkNotice(result.message);
+    onMarked?.(shown, field, result.message);
+  }
 
   async function handleDelete() {
     if (deletingRef.current) return;
@@ -304,7 +348,7 @@ export function SaleDetail({
             ref={closeRef}
             type="button"
             onClick={close}
-            disabled={deleting || saving}
+            disabled={deleting || saving || marking !== null}
             className="h-9 shrink-0 rounded-lg border border-line px-3 text-sm font-semibold text-ink-sub hover:bg-zinc-50"
           >
             닫기
@@ -344,13 +388,23 @@ export function SaleDetail({
                 ⚠ {deleteError || updateError}
               </p>
             )}
+            {mode === "view" && onMarked && (
+              <MarkDoneButtons
+                sale={sale}
+                marking={marking}
+                busy={deleting}
+                error={markError}
+                notice={markNotice}
+                onMark={(field) => void handleMark(field)}
+              />
+            )}
             {mode === "view" && (
               <>
                 <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={startEdit}
-                    disabled={deleting}
+                    disabled={deleting || marking !== null}
                     className="h-11 rounded-lg bg-ink text-[15px] font-semibold text-white disabled:opacity-60"
                   >
                     판매 수정
@@ -358,7 +412,7 @@ export function SaleDetail({
                   <button
                     type="button"
                     onClick={handleDelete}
-                    disabled={deleting}
+                    disabled={deleting || marking !== null}
                     aria-busy={deleting}
                     className="flex h-11 items-center justify-center gap-2 rounded-lg border border-rose-300 bg-white text-[15px] font-semibold text-rose-600 hover:bg-rose-50 disabled:cursor-wait disabled:opacity-70"
                   >
@@ -421,6 +475,77 @@ export function SaleDetail({
             )}
           </footer>
         )}
+      </div>
+    </div>
+  );
+}
+
+/** 검수완료(G열)·수납완료(H열) 버튼: 이미 O 면 "✓ …" 로 비활성, 둘 다 O 면 완료 표시 */
+function MarkDoneButtons({
+  sale,
+  marking,
+  busy,
+  error,
+  notice,
+  onMark,
+}: {
+  sale: SheetSale;
+  marking: "inspected" | "paid" | null;
+  busy: boolean;
+  error: string | null;
+  notice: string | null;
+  onMark: (field: "inspected" | "paid") => void;
+}) {
+  const inspected = isO(sale.inspected);
+  const paid = isO(sale.paid);
+  return (
+    <div className="mb-3">
+      {error && (
+        <p
+          role="alert"
+          className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"
+        >
+          ⚠ {error}
+        </p>
+      )}
+      {inspected && paid ? (
+        <p
+          role="status"
+          className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-center text-sm font-bold text-emerald-800"
+        >
+          ✓ 검수·수납 모두 완료된 판매입니다
+        </p>
+      ) : (
+        notice && (
+          <p
+            role="status"
+            className="mb-2 text-center text-sm font-semibold text-emerald-700"
+          >
+            ✓ {notice}
+          </p>
+        )
+      )}
+      <div className="grid grid-cols-2 gap-2">
+        {(["inspected", "paid"] as const).map((field) => {
+          const done = isO(sale[field]);
+          const label = MARK_DONE_LABEL[field];
+          return (
+            <button
+              key={field}
+              type="button"
+              onClick={() => onMark(field)}
+              disabled={done || busy || marking !== null}
+              aria-busy={marking === field}
+              className={`h-11 rounded-lg text-[15px] font-semibold ${
+                done
+                  ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+              }`}
+            >
+              {done ? `✓ ${label}` : marking === field ? "처리 중..." : label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
