@@ -3,7 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { copyText } from "@/components/copy-text";
 import { OXMark } from "@/components/inspection-view";
-import { useFreshSalesData } from "@/components/sales-data-provider";
+import {
+  useFreshSalesData,
+  useSalesData,
+} from "@/components/sales-data-provider";
 import { SalesDataGate } from "@/components/sales-data-status";
 import {
   EmptyBox,
@@ -13,6 +16,7 @@ import {
   StatusBadge,
   SummaryTile,
 } from "@/components/work-ui";
+import { postCardCheck } from "@/lib/card-check-api";
 import {
   cardName,
   cardPendingListMessage,
@@ -28,7 +32,15 @@ import { isO, type SheetSale } from "@/lib/sheet-record";
  * 제카가 O 가 아닌 판매는 목록에 나오지 않는다. 카드 종류는 AF열 값을 보여준다.
  * 점장이 장표 AG 칸에 O 를 입력하고 새로고침하면 완료로 바뀐다.
  * 행을 누르면 상세보기, 미검수 건은 직원에게 보낼 카톡용 글을 복사할 수 있다 (CTN 은 전체 번호).
+ * 미검수 상세의 "등록완료": 장표 AG열만 O 로 저장 → Apps Script 저장 확인 후에만 화면을 완료로 바꾼다.
  */
+
+type CheckResult = { ok: true; message: string } | { ok: false; message: string };
+
+/** 등록완료한 판매 표시용 키: 행 + CTN 숫자 + 고객 (행만으로 다른 판매에 잘못 붙지 않게) */
+function saleKey(s: SheetSale): string {
+  return `${s.row}|${s.ctn.replace(/\D/g, "")}|${s.customer}`;
+}
 
 type Filter = "pending" | "all" | "done";
 
@@ -39,12 +51,20 @@ export function cardSales(sales: SheetSale[]): SheetSale[] {
 export function CardView() {
   useFreshSalesData();
   return (
-    <SalesDataGate>{(data) => <CardList sales={data.sales} />}</SalesDataGate>
+    <SalesDataGate>
+      {(data) => (
+        // 월이 바뀌면 등록완료 표시 상태도 새로 시작
+        <CardList key={data.sheet} sheet={data.sheet} sales={data.sales} />
+      )}
+    </SalesDataGate>
   );
 }
 
-function CardList({ sales }: { sales: SheetSale[] }) {
+function CardList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
+  const { invalidate } = useSalesData();
   const [filter, setFilter] = useState<Filter>("pending");
+  // 이 화면에서 등록완료(장표 저장 확인됨)한 판매 — 다시 읽기 전에도 바로 완료로 보이게
+  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const [staff, setStaff] = useState("");
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [copyState, setCopyState] = useState<
@@ -64,7 +84,34 @@ function CardList({ sales }: { sales: SheetSale[] }) {
     }
   }
 
-  const cards = useMemo(() => cardSales(sales), [sales]);
+  const cards = useMemo(
+    () =>
+      cardSales(sales).map((s) =>
+        !isO(s.cardChecked) && checked.has(saleKey(s))
+          ? { ...s, cardChecked: "O" }
+          : s,
+      ),
+    [sales, checked],
+  );
+
+  /** 등록완료: 장표 AG = O 저장이 확인된 뒤에만 화면을 완료로 */
+  async function complete(sale: SheetSale): Promise<CheckResult> {
+    const result = await postCardCheck({
+      target: {
+        sheet,
+        row: sale.row,
+        no: sale.no,
+        activatedAt: sale.activatedAt,
+        customer: sale.customer,
+        ctn: sale.ctn,
+      },
+      before: sale.cardChecked,
+    });
+    if (!result.ok) return result;
+    setChecked((prev) => new Set(prev).add(saleKey(sale)));
+    void invalidate(); // 다른 화면(검수관리 등)도 최신 장표를 다시 읽도록
+    return { ok: true, message: result.message };
+  }
   const staffNames = useMemo(
     () => [...new Set(cards.map((s) => s.staff).filter(Boolean))].sort(),
     [cards],
@@ -261,8 +308,9 @@ function CardList({ sales }: { sales: SheetSale[] }) {
         </>
       )}
       <p className="mt-3 text-xs text-ink-muted">
-        장표의 카드실적 검수(AG열)에 O 를 입력한 뒤 새로고침하면 완료로
-        바뀝니다.
+        미검수 상세의 [등록완료]를 누르면 장표 카드실적 검수(AG열)에 O 가
+        저장되고 바로 완료로 바뀝니다. 장표 AG열에 직접 O 를 입력한 경우는
+        새로고침하면 완료로 바뀝니다.
       </p>
 
       {selected && (
@@ -275,6 +323,7 @@ function CardList({ sales }: { sales: SheetSale[] }) {
               "카톡용 내용이 복사되었습니다.",
             )
           }
+          onComplete={() => complete(selected)}
           onClose={() => setSelectedRow(null)}
         />
       )}
@@ -312,6 +361,7 @@ function CardDetail({
   sale,
   copyNotice,
   onCopy,
+  onComplete,
   onClose,
 }: {
   sale: SheetSale;
@@ -320,10 +370,29 @@ function CardDetail({
     | { ok: false; text: string }
     | null;
   onCopy: () => void;
+  onComplete: () => Promise<CheckResult>;
   onClose: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const pending = !isO(sale.cardChecked);
+  const [saving, setSaving] = useState(false);
+  const [checkResult, setCheckResult] = useState<CheckResult | null>(null);
+  // 저장 중에는 창을 닫지 않는다 (Esc·배경·닫기 모두)
+  const savingRef = useRef(false);
+  const close = () => {
+    if (!savingRef.current) onCloseRef.current();
+  };
+
+  async function handleComplete() {
+    if (savingRef.current) return; // 중복 클릭 방지
+    savingRef.current = true;
+    setSaving(true);
+    setCheckResult(null);
+    const result = await onComplete();
+    savingRef.current = false;
+    setSaving(false);
+    setCheckResult(result);
+  }
 
   const onCloseRef = useRef(onClose);
   useEffect(() => {
@@ -332,7 +401,7 @@ function CardDetail({
   useEffect(() => {
     closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) =>
-      e.key === "Escape" && onCloseRef.current();
+      e.key === "Escape" && !savingRef.current && onCloseRef.current();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
@@ -353,7 +422,7 @@ function CardDetail({
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4"
-      onClick={onClose}
+      onClick={close}
     >
       <div
         role="dialog"
@@ -388,12 +457,25 @@ function CardDetail({
             ✓ {copyNotice.message}
           </p>
         )}
-        <div className="mt-5 grid grid-cols-2 gap-2">
+        {checkResult && (
+          <p
+            role={checkResult.ok ? "status" : "alert"}
+            className={`mt-3 text-sm font-semibold ${
+              checkResult.ok ? "text-emerald-700" : "text-rose-600"
+            }`}
+          >
+            {checkResult.ok ? `✓ ${checkResult.message}` : checkResult.message}
+          </p>
+        )}
+        <div
+          className={`mt-5 grid gap-2 ${pending ? "grid-cols-3" : "grid-cols-2"}`}
+        >
           <button
             ref={closeRef}
             type="button"
-            onClick={onClose}
-            className="h-11 rounded-lg border border-line text-[15px] font-semibold text-ink-sub hover:bg-zinc-50"
+            onClick={close}
+            disabled={saving}
+            className="h-11 rounded-lg border border-line text-[15px] font-semibold text-ink-sub hover:bg-zinc-50 disabled:opacity-40"
           >
             닫기
           </button>
@@ -406,6 +488,16 @@ function CardDetail({
           >
             카톡용 복사
           </button>
+          {pending && (
+            <button
+              type="button"
+              onClick={() => void handleComplete()}
+              disabled={saving}
+              className="h-11 rounded-lg bg-emerald-600 text-[15px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {saving ? "처리 중..." : "등록완료"}
+            </button>
+          )}
         </div>
         {!pending && (
           <p className="mt-2 text-center text-xs text-ink-muted">

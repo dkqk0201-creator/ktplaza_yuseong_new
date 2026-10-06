@@ -443,6 +443,8 @@ export async function updateRowInAppsScript(
   target: DeleteTarget,
   changes: UpdateCell[],
   checks: UpdateCheckCell[] = [],
+  /** onlyChanges: 바꿀 칸만 쓴다 (Apps Script 가 N·U·AB·AC 수식 변환도 하지 않음) */
+  options: { onlyChanges?: boolean } = {},
 ): Promise<{ sheet: string; row: number; no: string; values: unknown[] }> {
   if (
     changes.length === 0 ||
@@ -469,7 +471,12 @@ export async function updateRowInAppsScript(
   let data: Record<string, unknown>;
   try {
     data = await postToAppsScript(
-      { action: "sale-update", target, changes: [...changes, ...checks] },
+      {
+        action: "sale-update",
+        target,
+        changes: [...changes, ...checks],
+        ...(options.onlyChanges ? { keepRowFormulas: true } : {}),
+      },
       "Apps Script가 수정을 거부했습니다.",
     );
   } catch (error) {

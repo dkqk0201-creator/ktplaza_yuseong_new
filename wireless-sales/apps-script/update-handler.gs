@@ -22,6 +22,8 @@
  * - N·U·AB·AC열은 같은 행 수식(N = SUM(O:T), U = SUM(V:Y), AB = Z−AA, AC = N+U+AB)을 유지한다.
  *   웹앱은 이 4칸을 보내지 않으며, 수정한 행의 4칸 중 아직 숫자(예전 저장분)인 칸은
  *   수정과 함께 그 행의 수식으로 바꾼다 (수식은 save-handler.gs 의 wsRowFormula_ 와 같다).
+ *   단 요청에 keepRowFormulas: true 가 있으면 이 변환도 하지 않고 바꿀 칸만 쓴다
+ *   (카드실적 "등록완료": AG열 하나만 O 로).
  * - 열 구조(6·7행 제목)가 웹앱과 다르면 아무것도 하지 않는다.
  * - LockService 로 저장·삭제·수정이 한 번에 하나만 처리되게 한다.
  * - 고객명(D)·CTN(E)을 바꾸면 판매보고 참고내용(notes.gs 보조 시트)의 연결 키도 새 값으로 옮긴다.
@@ -167,7 +169,8 @@ function wsHandleSaleUpdate_(e) {
       sheet.getRange(rowNumber, Number(changes[w].col) + 1).setValue(changes[w].value);
     }
     // N·U·AB·AC 가 숫자로 고정돼 있으면 같은 행 수식으로 (이미 수식이면 그대로)
-    for (var s = 0; s < WS_ROW_FORMULA_COLUMNS.length; s++) {
+    // keepRowFormulas: true 면 바꿀 칸 외에는 아무것도 쓰지 않는다
+    for (var s = 0; body.keepRowFormulas !== true && s < WS_ROW_FORMULA_COLUMNS.length; s++) {
       var fc = WS_ROW_FORMULA_COLUMNS[s];
       if (formulas[fc] === "") {
         sheet.getRange(rowNumber, fc + 1).setFormula(wsRowFormula_(fc, rowNumber));
