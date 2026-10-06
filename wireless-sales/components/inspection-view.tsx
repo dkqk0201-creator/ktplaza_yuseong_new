@@ -259,10 +259,10 @@ function InspectionList({
                             e.stopPropagation();
                             setSelectedRow(sale.row);
                           }}
-                          aria-label={`No.${sale.no} ${sale.customer} 상세 보기`}
+                          aria-label={`No.${sale.no || "없음"} ${sale.customer} 상세 보기`}
                           className="font-medium text-ink-sub hover:underline"
                         >
-                          {sale.no}
+                          {sale.no || "-"}
                         </button>
                       </td>
                       <td className="px-3 py-3 whitespace-nowrap text-ink-sub tabular-nums">
@@ -311,7 +311,7 @@ function InspectionList({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-xs text-ink-muted tabular-nums">
-                        No.{sale.no} · {monthDayText(sale.activatedAt)}
+                        No.{sale.no || "-"} · {monthDayText(sale.activatedAt)}
                       </span>
                       <StatusBadge tone={status === "done" ? "good" : "warn"}>
                         {STATUS_TEXT[status]}

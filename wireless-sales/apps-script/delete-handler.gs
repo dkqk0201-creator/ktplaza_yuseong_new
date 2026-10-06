@@ -11,6 +11,8 @@
  *   - 열 구조(6·7행 제목)가 웹앱과 다르면 아무것도 하지 않는다.
  *   - LockService 로 한 번에 하나의 저장·삭제만 처리한다.
  *   - 그 판매의 판매보고 참고내용(notes.gs 보조 시트)도 함께 지운다.
+ *   - 지운 뒤 B열 판매 No. 를 다시 매긴다 (UMNP 를 지우면 그 자리는 빈 행으로 다시 번호를 받음, save-handler.gs 의
+ *     wsRenumberSaleRows_). UMNP 행은 No. 가 빈칸이라 화면에서 본 No. 도 빈칸이어야 한다.
  */
 function handleDeleteRequest_(e) {
   var body = wsBody_(e);
@@ -137,6 +139,13 @@ function handleDeleteRequest_(e) {
       sheet.getRange(rowNumber, start + 1, 1, segment.length).setValues([segment]);
     }
     SpreadsheetApp.flush();
+    // B열 판매 No. 다시 매기기 (지운 행은 빈 판매 자리로). 실패해도 삭제는 그대로 (다음 저장 때 다시 매김)
+    try {
+      wsRenumberSaleRows_(sheet, tz, wsLastSlotIndex_(all, tz));
+      SpreadsheetApp.flush();
+    } catch (err) {
+      // 번호만의 문제
+    }
 
     return wsJson_({
       ok: true,

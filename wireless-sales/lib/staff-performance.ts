@@ -5,7 +5,8 @@ import { isO, type SheetSale } from "@/lib/sheet-record";
 /*
  * 직원 실적관리 (조회·집계 전용 — 장표를 바꾸지 않는다).
  * 날짜 기준: C열 개통일 (웹앱 등록일 아님). 직원 기준: M열 직원명 (다른 화면의 직원 필터와 같은 값).
- *   후불     = 개통구분이 신규·번이(번호이동)·기변(기기변경)·UMNP 인 건수 (간편등록과 같은 정규화, UMNP 대소문자 무관)
+ *   후불     = 개통구분이 신규·번이(번호이동)·기변(기기변경) 인 건수 (간편등록과 같은 정규화)
+ *              UMNP 는 실제 후불 개통이 아니므로 후불에서 제외 (UMNP 칸에 따로 셈, 예산 금액은 포함)
  *   번이     = 개통구분 번호이동 건수
  *   UMNP     = 개통구분 UMNP 건수
  *   스초     = K열 요금제에 "스초" 가 들어 있는 건수
@@ -37,7 +38,7 @@ export interface StaffPerformance {
 }
 
 export const NO_STAFF = "(직원명 없음)";
-const POSTPAID = new Set(["기기변경", "번호이동", "신규", "UMNP"]);
+const POSTPAID = new Set(["기기변경", "번호이동", "신규"]); // UMNP 제외
 const DONGPAN = new Set(["순동", "신동", "약동"]);
 
 function emptyRow(staff: string): StaffPerformance {

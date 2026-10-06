@@ -3,6 +3,7 @@ import type { UpdateSaleTarget } from "@/lib/update-sale-api";
 /*
  * 판매 1건 식별값 검사 (판매 수정·카드실적 등록완료 공용 규칙).
  * Apps Script 는 행 번호만 믿지 않고 No.(B)·개통일(C)·고객(D)·CTN(E) 이 이 값과 모두 같을 때만 고친다.
+ * UMNP 판매는 No. 가 빈칸이다 (그때도 개통일·고객·CTN 은 반드시 맞아야 함).
  */
 export function parseSaleTarget(input: unknown): UpdateSaleTarget | null {
   if (typeof input !== "object" || input === null) return null;
@@ -22,7 +23,7 @@ export function parseSaleTarget(input: unknown): UpdateSaleTarget | null {
     !Number.isInteger(row) ||
     row < 9 ||
     row > 5000 ||
-    !no ||
+    no === null ||
     activatedAt === null ||
     customer === null ||
     ctn === null ||

@@ -140,7 +140,8 @@ export async function saveRowToAppsScript(
   const sheet = shortText(data.sheet, 50);
   const no = data.no === undefined || data.no === null ? "" : String(data.no);
   const rowNumber = Number(data.row);
-  if (!sheet || !no || !Number.isInteger(rowNumber)) {
+  // UMNP 판매는 No. 가 빈칸 (B열 판매 No. 없음)
+  if (!sheet || !Number.isInteger(rowNumber)) {
     throw new AppsScriptError(
       "bad_response",
       "Apps Script 응답에 저장 위치(sheet, row, no)가 없습니다.",
@@ -237,7 +238,8 @@ export async function saveRowsToAppsScript(
     const r = (item ?? {}) as Record<string, unknown>;
     const rowNumber = Number(r.row);
     const no = r.no === undefined || r.no === null ? "" : String(r.no);
-    if (r.ok === true && no && Number.isInteger(rowNumber)) {
+    // UMNP 판매는 No. 가 빈칸
+    if (r.ok === true && Number.isInteger(rowNumber)) {
       return { ok: true, sheet, row: rowNumber, no, notesSaved };
     }
     if (r.ok === true) {

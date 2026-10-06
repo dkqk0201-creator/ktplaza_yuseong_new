@@ -7,12 +7,13 @@
  *     notes: [{ 항목id: 글자 } | null, ...]          ← (선택) rows 와 같은 순서의 판매보고 참고내용.
  *       장표 A~AL 에는 쓰지 않고 notes.gs 의 숨김 보조 시트 "웹앱참고" 에 판매 건별로 보관한다.
  *   - row[i] 가 null 이면 그 칸은 건드리지 않는다 (간편등록에서 직원이 보내지 않은 칸 = 빈칸 유지).
- *   - B열(No.)은 어떤 값이 와도 절대 쓰지 않는다.
+ *   - B열(No.)은 웹앱이 보낸 값으로는 절대 쓰지 않는다. 저장 후 Apps Script 가 자동 번호만 다시 매긴다 (아래).
  *   - 수식이 들어 있는 칸은 건너뛴다.
  * 위치: C열 개통일 오름차순 (이번 달 시트 "10월" 등, 9행부터).
  *   - 새 판매는 같은 개통일 판매들의 맨 뒤에 들어가고, 그보다 뒤 날짜 판매들은 한 행씩 아래로 내려간다.
  *   - 같은 개통일끼리는 기존 순서를 유지한다 (안정 정렬). 이미 날짜순이 아니던 행도 함께 날짜순이 된다.
- *   - 판매 1건 = A~AL 한 행 전체(B열 제외)가 함께 움직인다. B열(No.)은 행에 그대로 → 9행=1, 10행=2 …
+ *   - 판매 1건 = A~AL 한 행 전체(B열 제외)가 함께 움직인다. B열(No.)은 자동 번호 (아래).
+ *   - 판매 자리 = 9행부터 "B열 No. 가 있거나 판매가 있는 마지막 행"까지 이어진 구간.
  *   - 중간에 삭제로 비어 있던 행은 판매 행들 아래로 내려간다.
  *   - 8행(합계)과 그 위는 건드리지 않는다. 값을 옮기고 서식은 행 위치에 그대로 남는다.
  *   - 셀 메모(Note, 예: O열 SPOT 메모)는 값과 함께 그 판매를 따라 옮긴다 (A열·C~AL열, B열 메모는 행에 그대로).
@@ -24,6 +25,9 @@
  *   N = SUM(O행:T행), U = SUM(V행:Y행), AB = N(Z행)-N(AA행), AC = SUM(N행,U행,AB행)
  *   ("-"·빈칸·글자는 0, 음수 그대로). 정렬로 판매가 다른 행으로 옮겨지면 그 행 번호의 수식을 새로 쓴다.
  *   빈 행(판매 없음)은 기존 빈 행 모양 그대로. 8행 합계 수식은 건드리지 않는다.
+ * B열 판매 No. 자동 번호 (저장·수정·삭제 후): 판매 자리를 위에서부터 1, 2, 3… 으로 매기되
+ *   개통구분(I열)이 UMNP 인 판매 행은 No. 없음(빈칸)이고 번호를 건너뛰지 않는다 (UMNP 다음 일반 판매 = 직전 번호 + 1).
+ *   빈 행도 이어서 번호를 받는다. B열에 수식이 있으면 번호를 매기지 않는다. 바뀐 경우에만 B열을 한 번에 쓴다.
  * C열 개통일 표시: 저장할 때마다 9행부터 C열의 "표시 형식"만 mm.dd (예: 10.05) 로 맞춘다.
  *   값은 실제 날짜 그대로라 날짜 정렬·조회·참고내용 연결(yyyy-MM-dd 로 읽음)은 바뀌지 않는다.
  * LockService 로 한 번에 하나의 저장·삭제만 처리한다.
@@ -59,6 +63,75 @@ function wsWithRowFormulas_(cells, rowNumber) {
     out[WS_ROW_FORMULA_COLUMNS[i]] = wsRowFormula_(WS_ROW_FORMULA_COLUMNS[i], rowNumber);
   }
   return out;
+}
+
+/* B열 판매 No. 자동 번호 (update-handler.gs·delete-handler.gs 도 함께 사용) */
+
+/** 개통구분 UMNP 인지 (대소문자·공백 무시) */
+function wsIsUmnp_(v) {
+  return String(v === null || v === undefined ? "" : v).replace(/\s/g, "").toUpperCase() === "UMNP";
+}
+
+/** 판매가 있는 UMNP 행인지 (I열 = 개통구분) */
+function wsIsUmnpRow_(r) {
+  return !wsIsEmptySale_(r) && wsIsUmnp_(r[8]);
+}
+
+/** 판매 자리의 마지막 index (9행 = 0): B열 No. 가 있거나 판매가 있는 마지막 행. 없으면 -1 */
+function wsLastSlotIndex_(rows, tz) {
+  for (var i = rows.length - 1; i >= 0; i--) {
+    if (wsText_(rows[i][WS_B_INDEX], tz) !== "" || !wsIsEmptySale_(rows[i])) return i;
+  }
+  return -1;
+}
+
+/** 판매 자리(0..last)의 No.: 일반 판매·빈 행 1, 2, 3… / UMNP 행 "" */
+function wsSaleNumbers_(rows, last) {
+  var out = [];
+  var n = 0;
+  for (var i = 0; i <= last; i++) out.push(wsIsUmnpRow_(rows[i]) ? "" : ++n);
+  return out;
+}
+
+/**
+ * 장표 B열 No. 를 다시 매긴다 (바뀐 칸이 있을 때만 B열 구간을 한 번에 씀, 다른 열은 건드리지 않음).
+ * minLast: 이 index 까지는 판매 자리로 본다 (삭제로 비워진 UMNP 행 등). 반환: index 별 No. ("" = UMNP)
+ */
+function wsRenumberSaleRows_(sheet, tz, minLast) {
+  // 판매 자리(minLast)까지는 반드시 읽는다 (맨 아래 UMNP 를 지워 그 행이 통째로 빈 경우에도 자리 유지)
+  var lastRow = Math.max(sheet.getLastRow(), typeof minLast === "number" ? WS_FIRST_ROW + minLast : 0);
+  if (lastRow < WS_FIRST_ROW) return [];
+  var range = sheet.getRange(WS_FIRST_ROW, 1, lastRow - WS_FIRST_ROW + 1, WS_COLUMN_COUNT);
+  var rows = range.getValues();
+  var last = wsLastSlotIndex_(rows, tz);
+  if (typeof minLast === "number" && minLast > last) last = minLast;
+  if (last < 0) return [];
+  var nums = wsSaleNumbers_(rows, last);
+  var bRange = sheet.getRange(WS_FIRST_ROW, WS_B_INDEX + 1, last + 1, 1);
+  var bFormulas = bRange.getFormulas();
+  var changed = false;
+  for (var i = 0; i <= last; i++) {
+    if (bFormulas[i][0] !== "") return nums; // B열이 수식이면 번호를 쓰지 않는다
+    if (wsText_(rows[i][WS_B_INDEX], tz) !== String(nums[i])) changed = true;
+  }
+  if (changed) {
+    bRange.setValues(
+      nums.map(function (v) {
+        return [v];
+      }),
+    );
+  }
+  return nums;
+}
+
+/** 저장 결과의 No. 를 다시 매긴 번호로 */
+function wsApplyNumbers_(results, nums) {
+  for (var i = 0; i < results.length; i++) {
+    if (results[i] && results[i].ok) {
+      var v = nums[results[i].row - WS_FIRST_ROW];
+      results[i].no = v === undefined ? results[i].no : String(v);
+    }
+  }
 }
 
 function handleSaveRequest_(e) {
@@ -127,10 +200,13 @@ function handleSaveRequest_(e) {
     }
 
     // 개통일 순서 위치에 저장 (정렬할 수 없으면 null → 아래 예전 방식)
+    var lastSlot = wsLastSlotIndex_(all, tz);
     var plan = allNotes ? wsPlanSortedSave_(all, allFormulas, rows, tz, allNotes) : null;
     if (plan) {
       wsWriteSortedBlock_(sheet, plan);
       wsFormatDateColumn_(sheet, lastRow);
+      SpreadsheetApp.flush();
+      wsApplyNumbers_(plan.results, wsRenumberSaleRows_(sheet, tz, lastSlot));
       SpreadsheetApp.flush();
       var sortedNotes = wsSaveNotesSafely_(ss, sheet, tz, plan.results, body.notes);
       return wsSaveReply_(batch, sheetName, plan.results, true, sortedNotes);
@@ -139,10 +215,10 @@ function handleSaveRequest_(e) {
     var results = [];
     var next = 0;
     for (var k = 0; k < rows.length; k++) {
-      // 9행부터: No. 가 있고 판매 데이터가 비어 있는 다음 행
+      // 9행부터: 판매 자리 중 판매 데이터가 비어 있는 다음 행
       var index = -1;
-      for (var i = next; i < all.length; i++) {
-        if (wsText_(all[i][WS_B_INDEX], tz) !== "" && wsIsEmptySale_(all[i])) {
+      for (var i = next; i <= lastSlot; i++) {
+        if (wsIsEmptySale_(all[i])) {
           index = i;
           break;
         }
@@ -170,6 +246,8 @@ function handleSaveRequest_(e) {
       });
     }
     wsFormatDateColumn_(sheet, lastRow);
+    SpreadsheetApp.flush();
+    wsApplyNumbers_(results, wsRenumberSaleRows_(sheet, tz, lastSlot));
     SpreadsheetApp.flush();
     var notesSaved = wsSaveNotesSafely_(ss, sheet, tz, results, body.notes);
     return wsSaveReply_(batch, sheetName, results, false, notesSaved);
@@ -256,11 +334,11 @@ function wsSheetCells_(row) {
 function wsPlanSortedSave_(all, formulas, newRows, tz, notes) {
   var blankNotes = [];
   for (var bn = 0; bn < WS_COLUMN_COUNT; bn++) blankNotes.push("");
-  var slots = []; // No. 가 있는 행 (판매 행 자리)
+  var slots = []; // 판매 자리 (9행부터 이어진 구간, UMNP 행처럼 No. 가 빈 판매 행 포함)
   var filled = [];
   var empties = [];
-  for (var i = 0; i < all.length; i++) {
-    if (wsText_(all[i][WS_B_INDEX], tz) === "") continue;
+  var lastSlot = wsLastSlotIndex_(all, tz);
+  for (var i = 0; i <= lastSlot; i++) {
     for (var f = 0; f < WS_COLUMN_COUNT; f++) {
       // 수식 칸이 있으면 옮기지 않는다 (N·U·AB·AC 행별 수식은 행마다 다시 쓰므로 제외)
       if (f !== WS_B_INDEX && !wsIsRowFormulaColumn_(f) && formulas[i][f] !== "") return null;
@@ -338,7 +416,7 @@ function wsPlanSortedSave_(all, formulas, newRows, tz, notes) {
       last = slot;
     }
   }
-  // 다시 쓰는 구간은 모두 No. 가 있는 행이어야 한다 (중간에 No. 없는 행이 있으면 정렬하지 않음)
+  // 다시 쓰는 구간은 모두 판매 자리여야 한다
   for (var r = first; first >= 0 && r <= last; r++) {
     if (!byIndex[r]) return null;
   }

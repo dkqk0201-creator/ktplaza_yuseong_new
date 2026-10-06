@@ -288,7 +288,7 @@ export function SaleDetail({
         <header className="flex items-start justify-between gap-3 border-b border-line px-5 py-4">
           <div>
             <p className="text-xs text-ink-muted">
-              {sheet} 시트 · {sale.row}행 · No.{sale.no}
+              {sheet} 시트 · {sale.row}행 · No.{sale.no || "없음 (UMNP)"}
             </p>
             <h2
               id="sale-detail-title"
@@ -493,7 +493,7 @@ function SaleEditForm({
         <dl className="divide-y divide-line">
           {(
             [
-              ["No.", "B", sale.no],
+              ["No.", "B", sale.no || "없음 (UMNP)"],
               ["개통일", "C", monthDayText(sale.activatedAt)],
             ] as const
           ).map(([label, letter, value]) => (

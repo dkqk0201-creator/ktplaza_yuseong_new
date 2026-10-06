@@ -354,7 +354,8 @@ export function QuickRegister({
           <ul className="mt-1 space-y-0.5 text-xs">
             {doneNotice.map((d, i) => (
               <li key={i}>
-                {d.customer || "(고객명 없음)"} → {d.sheet} / No.{d.no}
+                {d.customer || "(고객명 없음)"} → {d.sheet} /{" "}
+                {d.no ? `No.${d.no}` : "No. 없음 (UMNP)"}
                 {d.warning && (
                   <span className="ml-1 font-semibold text-rose-700">
                     ⚠ {d.warning}
@@ -557,7 +558,9 @@ function QuickItemCard({
         </StatusBadge>
         {item.submit.state === "done" && (
           <span className="text-sm font-semibold text-emerald-700">
-            {item.submit.sheet} / No.{item.submit.no}에 저장되었습니다.
+            {item.submit.sheet} /{" "}
+            {item.submit.no ? `No.${item.submit.no}` : "No. 없음 (UMNP)"}에
+            저장되었습니다.
           </span>
         )}
         {item.submit.state === "done" && item.submit.warning && (

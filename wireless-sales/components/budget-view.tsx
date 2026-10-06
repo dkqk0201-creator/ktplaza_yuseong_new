@@ -10,6 +10,7 @@ import {
 import { BUDGET_COLUMNS, calculateBudget } from "@/lib/budget";
 import { formatNumber } from "@/lib/format";
 import type { SheetSale } from "@/lib/sheet-record";
+import { postpaidCount } from "@/lib/umnp";
 
 /* 예산관리 + 무선 목표 (선택한 월 시트의 실제 장표 데이터 기준) */
 
@@ -92,7 +93,8 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         ))}
       </section>
 
-      <GoalSection sheet={sheet} achieved={sales.length} />
+      {/* 현재 실적 = 후불 실적 건수 (UMNP 제외). 위 예산 금액은 UMNP 포함 */}
+      <GoalSection sheet={sheet} achieved={postpaidCount(sales)} />
     </div>
   );
 }
@@ -273,7 +275,8 @@ function GoalEditor({
       </div>
       <p className="mt-2 text-xs text-ink-muted">
         현재 실적 = 선택한 월 시트에서 개통일·고객·CTN 중 하나라도 입력된 실제
-        판매 행 수
+        판매 행 수 (개통구분 UMNP 는 후불 실적이 아니므로 제외 — 예산 금액에는
+        포함)
       </p>
     </section>
   );

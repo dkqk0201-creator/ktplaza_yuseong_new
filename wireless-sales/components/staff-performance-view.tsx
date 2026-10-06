@@ -42,7 +42,7 @@ const COLUMNS: {
   money?: boolean;
   hint: string;
 }[] = [
-  { key: "postpaid", label: "후불", hint: "개통구분 신규·번이·기변·UMNP" },
+  { key: "postpaid", label: "후불", hint: "개통구분 신규·번이·기변 (UMNP 제외)" },
   { key: "portIn", label: "번이", hint: "개통구분 번이" },
   { key: "umnp", label: "UMNP", hint: "개통구분 UMNP" },
   { key: "scho", label: "스초", hint: "요금제에 '스초' 포함" },
@@ -187,7 +187,7 @@ function StaffPerformanceBody({
       )}
 
       <p className="text-xs leading-relaxed text-ink-muted">
-        후불 = 신규·번이·기변·UMNP · 스초 = 요금제에 &lsquo;스초&rsquo; 포함 ·
+        후불 = 신규·번이·기변 (UMNP 는 후불 실적이 아니라 제외, UMNP 칸에 따로) · 스초 = 요금제에 &lsquo;스초&rsquo; 포함 ·
         2ND = AD열 O · 제카 = AE열 O · 동판 = AK열 순동·신동·약동 · 고혜확보 =
         P+Q+R+S+T · 고혜사용 = V+W+X+Y (예산관리와 같은 기준) · 현금잔여 =
         AB열 (음수 포함) · 합계금액 = 고혜확보 − 고혜사용 + 현금잔여

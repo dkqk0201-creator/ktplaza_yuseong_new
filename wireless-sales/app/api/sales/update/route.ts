@@ -80,7 +80,7 @@ function parseTarget(input: unknown): UpdateSaleTarget | null {
     !Number.isInteger(row) ||
     row < 9 ||
     row > 5000 ||
-    !no ||
+    no === null ||
     activatedAt === null ||
     customer === null ||
     ctn === null ||

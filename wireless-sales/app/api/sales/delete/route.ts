@@ -70,8 +70,7 @@ function parseTarget(input: unknown): DeleteSaleRequest | null {
     !Number.isInteger(row) ||
     row < 9 ||
     row > 5000 ||
-    no === null ||
-    no === "" ||
+    no === null || // UMNP 판매는 No. 빈칸 (개통일·고객·CTN 으로 확인)
     activatedAt === null ||
     customer === null ||
     ctn === null ||
