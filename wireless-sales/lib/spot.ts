@@ -7,6 +7,10 @@ import type { SheetSale } from "@/lib/sheet-record";
  *   - O열 메모(Note) = SPOT 번호별 개별 금액, 줄마다 하나 (예: "스팟1 3만\n스팟3 5만")
  * SPOT별 합계는 O열 값이 아니라 메모에 적힌 SPOT별 금액을 더한다.
  * O열 값과 메모 합계가 다르면 어느 SPOT에도 차액을 나누지 않고 경고 목록으로만 보여준다.
+ * 스팟 번호는 끝까지 한 숫자로 읽는다 ("스팟 11" = 스팟11, 번호 숫자를 금액으로 쓰지 않음).
+ * 금액 없이 번호만 적힌 줄("스팟11"):
+ *   - 그런 줄이 한 판매에 하나뿐이면 O열 금액 − 다른 줄 금액 합계(0보다 클 때)를 그 SPOT 금액으로 본다.
+ *   - 둘 이상이면 금액을 나눌 수 없으므로 SPOT 분류(건수·고객)만 하고 금액은 더하지 않으며 경고로 보여준다.
  * 웹앱은 O열 값·메모를 읽기만 한다.
  */
 
@@ -18,6 +22,8 @@ export interface SpotEntry {
 
 export interface ParsedSpotNote {
   entries: SpotEntry[];
+  /** 금액 없이 번호만 적힌 줄의 SPOT 번호 ("스팟11") */
+  bare: number[];
   /** 해석하지 못한 줄 (빈 줄 제외) */
   unparsed: string[];
 }
@@ -33,15 +39,26 @@ export function parseSpotAmount(text: string): number | null {
   return null;
 }
 
-/** 한 줄: "스팟1 3만", "스팟 1 30,000원", "스팟1:3만" (대소문자 무관 SPOT 도 인식) */
-const LINE = /^(?:스\s*팟|spot)\s*(\d{1,3})\s*[:：=]?\s*(.+)$/i;
+/**
+ * 한 줄: "스팟1 3만", "스팟 1 30,000원", "스팟1:3만" (대소문자 무관 SPOT 도 인식).
+ * (?!\d): 번호 숫자를 중간에서 끊지 않는다 — "스팟 11" 을 스팟1 + 금액 1 로 읽지 않음.
+ */
+const LINE = /^(?:스\s*팟|spot)\s*(\d{1,3})(?!\d)\s*[:：=]?\s*(.+)$/i;
+/** 금액 없이 번호만: "스팟11", "스팟 10" */
+const BARE = /^(?:스\s*팟|spot)\s*(\d{1,3})\s*$/i;
 
 export function parseSpotNote(note: string | undefined): ParsedSpotNote {
   const entries: SpotEntry[] = [];
+  const bare: number[] = [];
   const unparsed: string[] = [];
   for (const raw of (note ?? "").split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
+    const b = BARE.exec(line);
+    if (b) {
+      bare.push(Number(b[1]));
+      continue;
+    }
     const m = LINE.exec(line);
     const amount = m ? parseSpotAmount(m[2]) : null;
     if (!m || amount === null) {
@@ -50,7 +67,7 @@ export function parseSpotNote(note: string | undefined): ParsedSpotNote {
     }
     entries.push({ spot: Number(m[1]), amount });
   }
-  return { entries, unparsed };
+  return { entries, bare, unparsed };
 }
 
 export type SpotCheckStatus = "ok" | "mismatch" | "missingNote";
@@ -68,6 +85,8 @@ export interface SpotCheck {
   note: string;
   /** 해석하지 못한 줄 */
   unparsed: string[];
+  /** 금액 없이 번호만 적혀 금액을 정할 수 없는 SPOT (번호만 적힌 줄이 둘 이상이거나 남는 금액이 없을 때) */
+  unsplit: number[];
 }
 
 export interface SpotCustomer {
@@ -119,12 +138,23 @@ export function buildSpotReport(sales: readonly SheetSale[]): SpotReport {
     if (!note && oAmount === 0) continue;
 
     const parsed = parseSpotNote(note);
-    const total = parsed.entries.reduce((t, e) => t + e.amount, 0);
+    const entries = [...parsed.entries];
+    let unsplit: number[] = [];
+    if (parsed.bare.length === 1) {
+      // 번호만 적힌 줄이 하나 → O열 금액 중 다른 줄에 적힌 금액을 뺀 나머지가 이 SPOT 금액
+      const rest = oAmount - entries.reduce((t, e) => t + e.amount, 0);
+      if (rest > 0) entries.push({ spot: parsed.bare[0], amount: rest });
+      else unsplit = parsed.bare;
+    } else {
+      unsplit = parsed.bare;
+    }
+    const total = entries.reduce((t, e) => t + e.amount, 0);
     noteTotal += total;
     oTotal += oAmount;
 
     const seen = new Set<number>();
-    for (const { spot, amount } of parsed.entries) {
+    // 금액을 정할 수 없는 SPOT 도 분류(건수·고객)는 한다 — 금액은 0 으로 더함
+    for (const { spot, amount } of [...entries, ...unsplit.map((spot) => ({ spot, amount: 0 }))]) {
       let s = map.get(spot);
       if (!s) {
         s = { spot, label: spotLabel(spot), count: 0, amount: 0, customers: [] };
@@ -146,7 +176,7 @@ export function buildSpotReport(sales: readonly SheetSale[]): SpotReport {
     const diff = oAmount - total;
     const status: SpotCheckStatus = !note
       ? "missingNote"
-      : diff !== 0 || parsed.unparsed.length > 0
+      : diff !== 0 || parsed.unparsed.length > 0 || unsplit.length > 0
         ? "mismatch"
         : "ok";
     checks.push({
@@ -157,6 +187,7 @@ export function buildSpotReport(sales: readonly SheetSale[]): SpotReport {
       status,
       note,
       unparsed: parsed.unparsed,
+      unsplit,
     });
   }
 

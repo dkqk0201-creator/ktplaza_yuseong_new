@@ -9,6 +9,7 @@ import { monthDayText } from "@/lib/sale-display";
 import type { SheetSale } from "@/lib/sheet-record";
 import {
   buildSpotReport,
+  spotLabel,
   type SpotCheck,
   type SpotSummary,
 } from "@/lib/spot";
@@ -152,6 +153,7 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
       <p className="text-xs leading-relaxed text-ink-muted">
         SPOT별 합계 = O열 메모에 적힌 SPOT별 금액의 합 (O열 값을 나누지 않음) ·
         건수 = 그 SPOT을 받은 판매 수 · 메모 형식: 줄마다 &ldquo;스팟1 3만&rdquo;
+        · 금액 없이 &ldquo;스팟11&rdquo;처럼 번호만 한 줄이면 O열 금액(다른 줄 금액 제외)을 그 SPOT 금액으로 봅니다
         · O열 값과 메모 합계가 다르면 위 경고에만 표시하며 장표는 수정하지
         않습니다.
       </p>
@@ -192,6 +194,7 @@ function SpotCustomers({ spot }: { spot: SpotSummary }) {
 
 function problemLabel(p: SpotCheck): string {
   if (p.status === "missingNote") return "메모 미입력";
+  if (p.unsplit.length > 0) return "SPOT 금액 미기재";
   if (p.diff !== 0) return `${formatNumber(Math.abs(p.diff))}원 불일치`;
   return "해석 못한 줄";
 }
@@ -242,6 +245,12 @@ function ProblemTable({ problems }: { problems: SpotCheck[] }) {
                   <pre className="font-sans text-xs whitespace-pre-wrap text-ink-sub">{p.note}</pre>
                 ) : (
                   <span className="text-xs text-ink-muted">(메모 없음)</span>
+                )}
+                {p.unsplit.length > 0 && (
+                  <span className="mt-1 block text-xs text-rose-600">
+                    금액 없이 번호만 적힌 SPOT: {p.unsplit.map(spotLabel).join(" · ")} — O열 금액을 어느 SPOT에 얼마씩
+                    나눌지 알 수 없어 SPOT별 합계에 넣지 않았습니다. 메모에 SPOT별 금액을 적어 주세요 (예: 스팟10 3만)
+                  </span>
                 )}
                 {p.unparsed.length > 0 && (
                   <span className="mt-1 block text-xs text-rose-600">
