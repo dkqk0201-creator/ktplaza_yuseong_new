@@ -1,16 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useFreshSalesData } from "@/components/sales-data-provider";
+import { useEffect, useRef, useState } from "react";
+import { SaleDetail } from "@/components/sale-detail";
+import { useFreshSalesData, useSalesData } from "@/components/sales-data-provider";
 import {
   SalesDataGate,
   sheetLabel,
   sheetToYearMonth,
 } from "@/components/sales-data-status";
-import { BUDGET_COLUMNS, calculateBudget } from "@/lib/budget";
+import {
+  BUDGET_COLUMNS,
+  budgetUsageRows,
+  calculateBudget,
+  type UsageKind,
+  type UsageRow,
+} from "@/lib/budget";
+import { Notice } from "@/components/work-ui";
 import { formatNumber } from "@/lib/format";
 import type { SheetSale } from "@/lib/sheet-record";
-import { postpaidCount } from "@/lib/umnp";
+import { isUmnpSale, postpaidCount } from "@/lib/umnp";
 import { oldWRuleSuspects, vMismatches, wonText } from "@/lib/v-split";
 import { formatCtn } from "@/lib/format";
 import { monthDayText } from "@/lib/sale-display";
@@ -43,10 +51,52 @@ function Money({ value, big = false }: { value: number; big?: boolean }) {
   );
 }
 
+interface BudgetCard {
+  label: string;
+  value: number;
+  hint: string;
+  /** 있으면 눌러서 고객별 사용내역을 펼치는 카드 */
+  kind?: UsageKind;
+}
+
 function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
+  const { invalidate } = useSalesData();
   const b = calculateBudget(sales);
+  // 펼친 카드 (한 번에 하나: 같은 카드를 다시 누르면 닫힘, 다른 카드를 누르면 그 목록으로 바뀜)
+  const [usage, setUsage] = useState<UsageKind | null>(null);
+  const [detailRow, setDetailRow] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const usageRows = usage ? budgetUsageRows(sales, usage) : [];
+  const detail = detailRow === null ? null : sales.find((s) => s.row === detailRow) ?? null;
+  const cards: BudgetCard[] = [
+    {
+      label: "고객혜택 확보금액",
+      value: b.benefitSecured,
+      hint: `${BUDGET_COLUMNS.benefitSecured}열 합계`,
+    },
+    {
+      label: "고객혜택 사용금액",
+      value: b.customerBenefitUsed,
+      hint: `${BUDGET_COLUMNS.customerBenefitUsed}열 합계 · 누르면 고객별 내역`,
+      kind: "customerBenefit",
+    },
+    {
+      label: "추가지원금 사용금액",
+      value: b.extraSupportUsed,
+      hint: `${BUDGET_COLUMNS.extraSupportUsed}열 합계 · 누르면 고객별 내역`,
+      kind: "extraSupport",
+    },
+    {
+      label: "고객혜택 잔여금액",
+      value: b.benefitRemaining,
+      hint: "확보금액 − 고객혜택 사용금액 − 추가지원금 사용금액",
+    },
+    { label: "스팟예산", value: b.spot, hint: `${BUDGET_COLUMNS.spot}열(SPOT정책) 합계` },
+    { label: "현금예산", value: b.cash, hint: `${BUDGET_COLUMNS.cash}열(중고판매 잔여) 합계` },
+  ];
   return (
     <div className="space-y-6">
+      {notice && <Notice message={notice} onClose={() => setNotice(null)} />}
       <section
         aria-label="총 매장 예산"
         className="rounded-2xl border border-brand/30 bg-white p-6 ring-1 ring-brand/10"
@@ -66,35 +116,78 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         aria-label="예산 내역"
         className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
       >
-        {[
-          [
-            "고객혜택 확보금액",
-            b.benefitSecured,
-            `${BUDGET_COLUMNS.benefitSecured}열 합계`,
-          ],
-          [
-            "고객혜택 사용금액",
-            b.benefitUsed,
-            `${BUDGET_COLUMNS.benefitUsed}열 합계`,
-          ],
-          ["고객혜택 잔여금액", b.benefitRemaining, "확보금액 − 사용금액"],
-          ["스팟예산", b.spot, `${BUDGET_COLUMNS.spot}열(SPOT정책) 합계`],
-          ["현금예산", b.cash, `${BUDGET_COLUMNS.cash}열(중고판매 잔여) 합계`],
-        ].map(([label, value, hint]) => (
-          <div
-            key={label as string}
-            className="rounded-xl border border-line bg-white p-5"
-          >
-            <p className="text-sm font-medium text-ink-sub">
-              {label as string}
-            </p>
-            <p className="mt-1.5">
-              <Money value={value as number} />
-            </p>
-            <p className="mt-1.5 text-xs text-ink-muted">{hint as string}</p>
-          </div>
-        ))}
+        {cards.map((card) => {
+          const body = (
+            <>
+              <p className="flex items-center justify-between gap-2 text-sm font-medium text-ink-sub">
+                {card.label}
+                {card.kind && (
+                  <span
+                    aria-hidden
+                    className={`text-xs font-semibold ${usage === card.kind ? "text-brand" : "text-ink-muted"}`}
+                  >
+                    {usage === card.kind ? "고객 목록 닫기 ▲" : "고객 목록 ▼"}
+                  </span>
+                )}
+              </p>
+              <p className="mt-1.5">
+                <Money value={card.value} />
+              </p>
+              <p className="mt-1.5 text-xs text-ink-muted">{card.hint}</p>
+            </>
+          );
+          if (!card.kind) {
+            return (
+              <div key={card.label} className="rounded-xl border border-line bg-white p-5">
+                {body}
+              </div>
+            );
+          }
+          const kind = card.kind;
+          const active = usage === kind;
+          return (
+            <button
+              key={card.label}
+              type="button"
+              onClick={() => setUsage((cur) => (cur === kind ? null : kind))}
+              aria-expanded={active}
+              aria-controls="budget-usage-list"
+              className={`rounded-xl border bg-white p-5 text-left transition hover:border-brand/50 hover:bg-brand-soft/20 focus-visible:outline-2 focus-visible:outline-brand ${
+                active ? "border-brand ring-1 ring-brand/30 bg-brand-soft/30" : "border-line"
+              }`}
+            >
+              {body}
+            </button>
+          );
+        })}
       </section>
+
+      {usage && (
+        <UsageList
+          kind={usage}
+          rows={usageRows}
+          cardTotal={usage === "customerBenefit" ? b.customerBenefitUsed : b.extraSupportUsed}
+          onClose={() => setUsage(null)}
+          onOpen={setDetailRow}
+        />
+      )}
+
+      {detail && (
+        <SaleDetail
+          sheet={sheet}
+          sale={detail}
+          onClose={() => setDetailRow(null)}
+          onDeleted={(message) => {
+            setDetailRow(null);
+            setNotice(message);
+            void invalidate();
+          }}
+          onUpdated={(message) => {
+            setNotice(message);
+            void invalidate();
+          }}
+        />
+      )}
 
       <UsedCheckSection sales={sales} />
 
@@ -344,6 +437,201 @@ function GoalEditor({
         판매 행 수 (개통구분 UMNP 는 후불 실적이 아니므로 제외 — 예산 금액에는
         포함)
       </p>
+    </section>
+  );
+}
+
+const USAGE_TITLE: Record<UsageKind, string> = {
+  customerBenefit: "고객혜택 사용금액",
+  extraSupport: "추가지원금 사용금액",
+};
+
+function UsageWon({ value, strong = false }: { value: number; strong?: boolean }) {
+  return (
+    <span className={`${strong ? "font-semibold" : ""} ${value < 0 ? "text-rose-600" : ""}`}>
+      {formatNumber(value)}
+      <span className="ml-0.5 text-xs font-normal text-ink-muted">원</span>
+    </span>
+  );
+}
+
+/** 예산관리 카드 → 고객별 사용내역 (금액 0원 제외, 합계 = 카드 금액) */
+function UsageList({
+  kind,
+  rows,
+  cardTotal,
+  onClose,
+  onOpen,
+}: {
+  kind: UsageKind;
+  rows: UsageRow[];
+  cardTotal: number;
+  onClose: () => void;
+  onOpen: (row: number) => void;
+}) {
+  const total = rows.reduce((t, r) => t + r.amount, 0);
+  const ref = useRef<HTMLElement>(null);
+  // 카드를 누르면 목록이 화면에 보이도록 (모바일에서는 카드 아래 멀리 열리므로). 이미 보이면 움직이지 않음
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [kind]);
+  const showParts = kind === "customerBenefit";
+  const partCols = showParts ? (rows[0]?.parts ?? []) : [];
+  const totals = partCols.map((_, i) => rows.reduce((t, r) => t + r.parts[i].amount, 0));
+  const title = USAGE_TITLE[kind];
+  const formula = kind === "customerBenefit" ? "V+X+Y" : "W";
+  return (
+    <section
+      id="budget-usage-list"
+      ref={ref}
+      tabIndex={-1}
+      aria-label={`${title} 고객별 내역`}
+      className="overflow-hidden rounded-xl border border-brand/30 bg-white"
+    >
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-brand-soft/30 px-4 py-3">
+        <h3 className="text-sm font-bold text-ink">
+          {title} 고객별 내역 · {formatNumber(rows.length)}건
+        </h3>
+        <span className="text-xs text-ink-muted">{formula}열 · 0원 제외 · 고객을 누르면 판매 상세</span>
+        <button
+          type="button"
+          onClick={onClose}
+          className="ml-auto text-xs font-medium text-ink-sub underline underline-offset-2"
+        >
+          닫기
+        </button>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="px-4 py-6 text-center text-sm text-ink-sub">사용금액이 있는 판매가 없습니다.</p>
+      ) : (
+        <>
+          {/* PC·태블릿: 표 */}
+          <div className="hidden overflow-x-auto sm:block">
+            <table className="w-full min-w-[560px] text-sm">
+              <thead className="bg-zinc-50 text-xs text-ink-sub">
+                <tr>
+                  <th scope="col" className="px-3 py-2.5 text-left font-semibold">개통일</th>
+                  <th scope="col" className="px-3 py-2.5 text-left font-semibold">고객명</th>
+                  <th scope="col" className="px-3 py-2.5 text-left font-semibold">CTN</th>
+                  {partCols.map((p) => (
+                    <th key={p.column} scope="col" className="px-3 py-2.5 text-right font-semibold">
+                      {p.column} {p.label}
+                    </th>
+                  ))}
+                  <th scope="col" className="px-3 py-2.5 text-right font-semibold">
+                    {title} ({formula})
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line tabular-nums text-ink">
+                {rows.map((r) => (
+                  <tr
+                    key={r.sale.row}
+                    onClick={() => onOpen(r.sale.row)}
+                    className="cursor-pointer hover:bg-zinc-50"
+                  >
+                    <td className="px-3 py-2.5 whitespace-nowrap">{monthDayText(r.sale.activatedAt) || "-"}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpen(r.sale.row);
+                        }}
+                        className="font-semibold text-ink underline-offset-2 hover:underline"
+                      >
+                        {r.sale.customer || "(고객명 없음)"}
+                      </button>
+                      {isUmnpSale(r.sale) && (
+                        <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">
+                          UMNP
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">{formatCtn(r.sale.ctn) || "-"}</td>
+                    {r.parts.slice(0, partCols.length).map((p) => (
+                      <td key={p.column} className="px-3 py-2.5 text-right whitespace-nowrap text-ink-sub">
+                        {p.amount === 0 ? "-" : <UsageWon value={p.amount} />}
+                      </td>
+                    ))}
+                    <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                      <UsageWon value={r.amount} strong />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="border-t-2 border-line bg-brand-soft/40 tabular-nums">
+                <tr>
+                  <th scope="row" colSpan={3} className="px-3 py-2.5 text-left font-bold text-ink">
+                    전체 합계 ({formatNumber(rows.length)}건)
+                  </th>
+                  {totals.map((t, i) => (
+                    <td key={partCols[i].column} className="px-3 py-2.5 text-right whitespace-nowrap font-semibold">
+                      <UsageWon value={t} />
+                    </td>
+                  ))}
+                  <td className="px-3 py-2.5 text-right whitespace-nowrap font-bold">
+                    <UsageWon value={total} strong />
+                  </td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          {/* 모바일: 고객별 카드 목록 */}
+          <ul className="divide-y divide-line sm:hidden">
+            {rows.map((r) => (
+              <li key={r.sale.row}>
+                <button
+                  type="button"
+                  onClick={() => onOpen(r.sale.row)}
+                  className="block w-full px-4 py-3 text-left tabular-nums hover:bg-zinc-50"
+                >
+                  <span className="flex items-baseline justify-between gap-3">
+                    <span className="min-w-0">
+                      <span className="font-semibold text-ink">{r.sale.customer || "(고객명 없음)"}</span>
+                      {isUmnpSale(r.sale) && (
+                        <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800">
+                          UMNP
+                        </span>
+                      )}
+                    </span>
+                    <span className="shrink-0 text-ink">
+                      <UsageWon value={r.amount} strong />
+                    </span>
+                  </span>
+                  <span className="mt-0.5 block text-xs text-ink-sub">
+                    {monthDayText(r.sale.activatedAt) || "-"} · {formatCtn(r.sale.ctn) || "-"}
+                  </span>
+                  {showParts && (
+                    <span className="mt-1 block text-xs text-ink-muted">
+                      {r.parts.map((p) => `${p.column} ${formatNumber(p.amount)}`).join(" · ")}
+                    </span>
+                  )}
+                </button>
+              </li>
+            ))}
+            <li className="flex items-baseline justify-between bg-brand-soft/40 px-4 py-3 tabular-nums">
+              <span className="text-sm font-bold text-ink">전체 합계 ({formatNumber(rows.length)}건)</span>
+              <span className="font-bold text-ink">
+                <UsageWon value={total} strong />
+              </span>
+            </li>
+            {showParts && (
+              <li className="bg-brand-soft/20 px-4 pb-3 text-xs text-ink-muted tabular-nums">
+                {partCols.map((p, i) => `${p.column} ${formatNumber(totals[i])}`).join(" · ")}
+              </li>
+            )}
+          </ul>
+        </>
+      )}
+
+      {total !== cardTotal && (
+        <p role="alert" className="border-t border-rose-200 bg-rose-50 px-4 py-2 text-xs font-semibold text-rose-700">
+          목록 합계 {formatNumber(total)}원이 카드 금액 {formatNumber(cardTotal)}원과 다릅니다. 새로고침해 주세요.
+        </p>
+      )}
     </section>
   );
 }
