@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { SaleDetail } from "@/components/sale-detail";
 import {
   useFreshSalesData,
@@ -25,7 +25,26 @@ import {
   type InspectionStatus,
 } from "@/lib/inspection-status";
 
+import { isReviewPending, type SaleReview } from "@/lib/inspection-review";
+
 export { inspectionStatus, type InspectionStatus }; // 예전 import 경로 유지
+
+/** 목록 필터: 검수·수납 상태 + "보완 요청" (보완 요청 중이어도 검수 미완료 집계에 그대로 포함) */
+type ListFilter = Filter | "review";
+
+function matchListFilter(sale: SheetSale, filter: ListFilter): boolean {
+  return filter === "review"
+    ? isReviewPending(sale)
+    : matchFilter(inspectionStatus(sale), filter);
+}
+
+function ReviewBadge() {
+  return (
+    <span className="inline-flex items-center rounded-md bg-amber-50 px-2 py-0.5 text-xs font-semibold whitespace-nowrap text-amber-800 ring-1 ring-amber-600/20 ring-inset">
+      보완 요청
+    </span>
+  );
+}
 
 /*
  * 검수관리: 선택한 월의 판매 전체를 보여주고(기본 "전체"), 검수(G)·수납(H) 상태로 거른다.
@@ -75,23 +94,35 @@ function InspectionList({
   sales: SheetSale[];
 }) {
   const { invalidate } = useSalesData();
-  const [filter, setFilter] = useState<Filter>("all");
+  const [filter, setFilter] = useState<ListFilter>("all");
   const [search, setSearch] = useState("");
   const [staff, setStaff] = useState("");
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   // 검수완료·수납완료로 장표 저장이 확인된 판매 (다시 읽기 전에도 목록·상단 숫자에 바로 반영)
   const [marked, setMarked] = useState<ReadonlyMap<string, SheetSale>>(new Map());
+  // 보완 요청 저장·취소 직후 값 (장표·보조 시트를 다시 읽으면 그 값으로 대체)
+  const [reviewed, setReviewed] = useState<ReadonlyMap<string, SaleReview | null>>(new Map());
+  useEffect(() => {
+    setReviewed(new Map());
+  }, [listedSales]);
 
   const sales = useMemo(
     () =>
-      listedSales.map((s) => {
-        const m = marked.get(markKey(s));
+      listedSales.map((input) => {
+        const key = markKey(input);
+        let s = input;
+        if (reviewed.has(key)) {
+          const { review: _old, ...rest } = input;
+          const review = reviewed.get(key);
+          s = review ? { ...rest, review } : rest;
+        }
+        const m = marked.get(key);
         if (!m) return s;
         // 장표 저장 후 값의 검수·수납만 덮어씀 (다시 읽은 값이 이미 O 면 그대로)
         return { ...s, inspected: isO(s.inspected) ? s.inspected : m.inspected, paid: isO(s.paid) ? s.paid : m.paid };
       }),
-    [listedSales, marked],
+    [listedSales, marked, reviewed],
   );
   const staffNames = useMemo(
     () => [...new Set(sales.map((s) => s.staff).filter(Boolean))].sort(),
@@ -102,14 +133,17 @@ function InspectionList({
   const statuses = byStaff.map((s) => inspectionStatus(s));
   const count = (f: Filter) =>
     statuses.filter((st) => matchFilter(st, f)).length;
+  const reviewCount = byStaff.filter((s) => isReviewPending(s)).length;
   // 목록·필터 칩 숫자: 검색어까지 적용
   const searched = byStaff.filter((s) => matchesSaleSearch(s, search));
   const searchedStatuses = searched.map((s) => inspectionStatus(s));
-  const chipCount = (f: Filter) =>
-    searchedStatuses.filter((st) => matchFilter(st, f)).length;
+  const chipCount = (f: ListFilter) =>
+    f === "review"
+      ? searched.filter((s) => isReviewPending(s)).length
+      : searchedStatuses.filter((st) => matchFilter(st, f)).length;
   // 장표와 같은 순서: C열 개통일 오름차순, 같은 날짜는 장표 행 순서
   const rows = searched
-    .filter((s) => matchFilter(inspectionStatus(s), filter))
+    .filter((s) => matchListFilter(s, filter))
     .sort((a, b) => compareByActivatedAt(a, b));
   const selected = sales.find((s) => s.row === selectedRow) ?? null;
 
@@ -119,7 +153,7 @@ function InspectionList({
 
       <section
         aria-label="검수 요약"
-        className="grid grid-cols-2 gap-3 lg:grid-cols-4"
+        className="grid grid-cols-2 gap-3 lg:grid-cols-5"
       >
         <SummaryTile
           label="전체 판매건"
@@ -140,6 +174,13 @@ function InspectionList({
           tone={count("paid") ? "warn" : "default"}
           active={filter === "paid"}
           onClick={() => setFilter("paid")}
+        />
+        <SummaryTile
+          label="보완 요청"
+          value={`${reviewCount}건`}
+          tone={reviewCount ? "warn" : "default"}
+          active={filter === "review"}
+          onClick={() => setFilter("review")}
         />
         <SummaryTile
           label="모두 완료"
@@ -197,6 +238,7 @@ function InspectionList({
             },
             { value: "paid", label: "수납 미완료", count: chipCount("paid") },
             { value: "both", label: "둘 다 미완료", count: chipCount("both") },
+            { value: "review", label: "보완 요청", count: chipCount("review") },
             { value: "done", label: "완료", count: chipCount("done") },
           ]}
         />
@@ -286,9 +328,12 @@ function InspectionList({
                         <OXMark value={sale.paid} />
                       </td>
                       <td className="px-3 py-3">
-                        <StatusBadge tone={status === "done" ? "good" : "warn"}>
-                          {STATUS_TEXT[status]}
-                        </StatusBadge>
+                        <span className="flex flex-wrap gap-1">
+                          <StatusBadge tone={status === "done" ? "good" : "warn"}>
+                            {STATUS_TEXT[status]}
+                          </StatusBadge>
+                          {isReviewPending(sale) && <ReviewBadge />}
+                        </span>
                       </td>
                     </tr>
                   );
@@ -312,9 +357,12 @@ function InspectionList({
                       <span className="text-xs text-ink-muted tabular-nums">
                         No.{sale.no || "-"} · {monthDayText(sale.activatedAt)}
                       </span>
-                      <StatusBadge tone={status === "done" ? "good" : "warn"}>
-                        {STATUS_TEXT[status]}
-                      </StatusBadge>
+                      <span className="flex flex-wrap justify-end gap-1">
+                        {isReviewPending(sale) && <ReviewBadge />}
+                        <StatusBadge tone={status === "done" ? "good" : "warn"}>
+                          {STATUS_TEXT[status]}
+                        </StatusBadge>
+                      </span>
                     </div>
                     <div className="mt-2 flex items-baseline justify-between gap-2">
                       <span className="text-base font-semibold text-ink">
@@ -355,6 +403,12 @@ function InspectionList({
           }}
           onUpdated={(message) => {
             // 상세창은 열어 둔 채 목록·상단 건수를 장표에서 다시 읽는다
+            setNotice(message);
+            void invalidate();
+          }}
+          onReviewChanged={(next, message) => {
+            // 상세창은 열어 둔 채 목록·보완 요청 건수를 바로 바꾸고, 다시 읽는다
+            setReviewed((prev) => new Map(prev).set(markKey(next), next.review ?? null));
             setNotice(message);
             void invalidate();
           }}

@@ -37,6 +37,9 @@
  *   정책명만 바꾸면 장표 칸은 하나도 쓰지 않는다 (수식 변환·번호 다시 매기기도 안 함).
  *   개통일·CTN 이 없거나, 같은 개통일·고객·CTN 판매가 2건 이상이면(다른 판매에 붙을 수 있음) 아무것도 쓰지 않고 거부한다.
  *   지금 보관된 정책명이 화면에서 본 값(noteBefore)과 다르면 거부한다.
+ * - 검수(G열)가 O 로 바뀌면 그 판매의 진행 중 검수 보완 요청(inspection-review.gs 보조 시트)을 "검수완료"로 닫는다
+ *   (기록은 이력으로 남김, 응답 reviewClosed: true). 고객명·CTN 을 바꾸면 보완 기록 키도 옮긴다.
+ * - action = "inspection-review" 요청은 inspection-review.gs 의 wsHandleInspectionReview_ 로 넘긴다.
  * 시트 이름은 실제 월 시트 이름 "1월"~"12월" 형식 (예: "10월"). "2026년 10월" 같은 화면 표시용 글자는 받지 않는다.
  * 응답: { ok, handler, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
  */
@@ -44,6 +47,10 @@ var WS_SALE_UPDATE_HANDLER = "ws-sale-update";
 
 function wsHandleSaleUpdate_(e) {
   var body = wsBody_(e);
+  // 검수 보완 요청(inspection-review.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
+  if (body && body.action === "inspection-review" && typeof wsHandleInspectionReview_ === "function") {
+    return wsHandleInspectionReview_(body);
+  }
   if (!body || body.action !== "sale-update") return null;
   // 이 handler 의 응답에는 항상 handler 표시를 붙인다 (웹앱이 올바른 코드가 배포됐는지 확인)
   var reply = function (obj) {
@@ -271,6 +278,21 @@ function wsHandleSaleUpdate_(e) {
     } catch (err) {
       // 참고내용 키 이동에 실패해도 판매 수정은 그대로
     }
+    // 검수 보완 요청: 고객명·CTN 변경 시 키 이동, G열이 O 가 되면 진행 중 요청을 검수완료로 닫기 (실패해도 수정은 그대로)
+    var reviewClosed = false;
+    if (typeof wsMoveReviewsForRow_ === "function") {
+      try {
+        wsMoveReviewsForRow_(ss, sheetName, current, after, tz);
+        if (
+          text(after[6]).toUpperCase() === "O" &&
+          text(current[6]).toUpperCase() !== "O"
+        ) {
+          reviewClosed = wsCloseReviewForRow_(ss, sheetName, after, tz);
+        }
+      } catch (err) {
+        // 보완 기록 정리에 실패해도 판매 수정은 그대로
+      }
+    }
     // 정책명: 수정 후 값(고객명·CTN 이 바뀌었으면 새 키)에 그 항목만 저장 (다른 참고 항목은 그대로)
     var savedNotes = null;
     var notePatched = false;
@@ -292,6 +314,7 @@ function wsHandleSaleUpdate_(e) {
       }),
       message: writes > 0 ? "판매내역이 수정되었습니다." : "정책명이 수정되었습니다.",
     };
+    if (reviewClosed) result.reviewClosed = true;
     if (notePatch) {
       result.notePatched = notePatched;
       if (savedNotes) result.notes = savedNotes;

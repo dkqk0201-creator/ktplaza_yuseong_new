@@ -1,5 +1,6 @@
 import "server-only";
 import { COLUMN_COUNT, type SheetRowArray } from "@/lib/sheet-columns";
+import { parseReview, type SaleReview } from "@/lib/inspection-review";
 
 /*
  * Google Apps Script 웹앱과 통신한다.
@@ -272,6 +273,8 @@ export interface AppsScriptListRow {
   notes?: Record<string, string>;
   /** O열(SPOT정책) 셀 메모 원문 */
   spotNote?: string;
+  /** 검수 보완 요청 (보조 시트 "검수보완", 이 판매에 정확히 연결된 경우만) */
+  review?: SaleReview;
 }
 
 export interface AppsScriptListResult {
@@ -337,6 +340,7 @@ export async function listRowsFromAppsScript(
       values: values.slice(0, COLUMN_COUNT),
       notes: parseNotes((item as Record<string, unknown>).notes),
       spotNote: parseSpotNoteText((item as Record<string, unknown>).spotNote),
+      review: parseReview((item as Record<string, unknown>).review),
     });
   }
   return { sheet: sheetName, rows, sheets: monthSheetNames(data.sheets) };
@@ -468,6 +472,8 @@ export async function updateRowInAppsScript(
   notes?: Record<string, string>;
   /** notePatch 를 보냈을 때만: 참고내용 저장 성공 여부 */
   notePatched?: boolean;
+  /** G열이 O 가 되어 진행 중 검수 보완 요청을 닫았으면 true */
+  reviewClosed?: boolean;
 }> {
   const notePatch = options.notePatch;
   if (
@@ -577,6 +583,7 @@ export async function updateRowInAppsScript(
     row: rowNumber,
     no: data.no === undefined || data.no === null ? "" : String(data.no),
     values: data.values.slice(0, COLUMN_COUNT),
+    ...(data.reviewClosed === true ? { reviewClosed: true } : {}),
     ...(notePatch
       ? {
           notePatched: data.notePatched === true,
@@ -584,4 +591,45 @@ export async function updateRowInAppsScript(
         }
       : {}),
   };
+}
+
+/** inspection-review.gs 가 모든 응답에 붙이는 표시 */
+export const INSPECTION_REVIEW_HANDLER = "ws-inspection-review";
+
+/**
+ * 검수 보완 요청 저장(save)·취소(cancel): { action: "inspection-review", op, target, before, content }
+ * 월 시트에는 쓰지 않는다. Apps Script 가 판매 식별(행 + No.·개통일·고객·CTN)과
+ * 저장된 미비내용(before)을 확인한 뒤 보조 시트 "검수보완" 에만 저장한다.
+ */
+export async function saveReviewInAppsScript(
+  target: DeleteTarget,
+  op: "save" | "cancel",
+  before: string,
+  content: string,
+): Promise<{ review: SaleReview | undefined; message: string }> {
+  if (!/^(1[0-2]|[1-9])월$/.test(target.sheet)) {
+    throw new AppsScriptError("bad_response", `월 시트 이름이 올바르지 않습니다: ${target.sheet}`);
+  }
+  const notDeployed = new AppsScriptError(
+    "rejected",
+    "Apps Script에 검수 보완 요청 코드(inspection-review.gs)와 최신 update-handler.gs 가 배포되어 있지 않아 저장하지 않았습니다.",
+  );
+  let data: Record<string, unknown>;
+  try {
+    data = await postToAppsScript(
+      { action: "inspection-review", op, target, before, content },
+      "Apps Script가 보완 요청 저장을 거부했습니다.",
+    );
+  } catch (error) {
+    if (
+      error instanceof AppsScriptError &&
+      error.code === "rejected" &&
+      error.details.handler !== INSPECTION_REVIEW_HANDLER
+    ) {
+      throw notDeployed;
+    }
+    throw error;
+  }
+  if (data.handler !== INSPECTION_REVIEW_HANDLER) throw notDeployed;
+  return { review: parseReview(data.review), message: shortText(data.message) };
 }

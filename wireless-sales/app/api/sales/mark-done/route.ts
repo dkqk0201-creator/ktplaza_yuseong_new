@@ -33,7 +33,17 @@ export async function POST(request: Request) {
   const result = await markCellDone(target, field, before, label);
   if (!result.ok) return reply({ ok: false, message: result.message }, result.status);
   return reply(
-    { ok: true, message: `${label}되었습니다. (${COLUMN_LETTER[field]}열 = O)`, row: result.row, no: result.no, values: result.values },
+    {
+      ok: true,
+      message:
+        result.reviewClosed
+          ? `최종 검수완료되었습니다. (${COLUMN_LETTER[field]}열 = O, 보완 요청 완료 이력 보관)`
+          : `${label}되었습니다. (${COLUMN_LETTER[field]}열 = O)`,
+      row: result.row,
+      no: result.no,
+      values: result.values,
+      ...(result.reviewClosed ? { reviewClosed: true } : {}),
+    },
     200,
   );
 }

@@ -15,7 +15,15 @@ import type { MarkDoneField } from "@/lib/mark-done-api";
  */
 
 export type MarkDoneResult =
-  | { ok: true; status: 200; row: number; no: string; values: unknown[] }
+  | {
+      ok: true;
+      status: 200;
+      row: number;
+      no: string;
+      values: unknown[];
+      /** 진행 중 검수 보완 요청을 Apps Script 가 검수완료로 닫았으면 true */
+      reviewClosed?: boolean;
+    }
   | { ok: false; status: number; message: string };
 
 const FAILURE: Record<AppsScriptError["code"], { status: number; message: string }> = {
@@ -54,7 +62,14 @@ export async function markCellDone(
         message: "장표에 O 가 저장된 것을 확인하지 못했습니다. 새로고침해 확인해 주세요.",
       };
     }
-    return { ok: true, status: 200, row: result.row, no: result.no, values: result.values };
+    return {
+      ok: true,
+      status: 200,
+      row: result.row,
+      no: result.no,
+      values: result.values,
+      ...(result.reviewClosed ? { reviewClosed: true } : {}),
+    };
   } catch (error) {
     if (error instanceof AppsScriptError) {
       console.error(`[${logLabel}] 실패 (${error.code}): ${error.message}`);

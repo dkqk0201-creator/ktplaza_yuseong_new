@@ -23,7 +23,15 @@ export interface MarkDoneRequest {
 }
 
 export type MarkDoneResponse =
-  | { ok: true; message: string; row: number; no: string; values: unknown[] }
+  | {
+      ok: true;
+      message: string;
+      row: number;
+      no: string;
+      values: unknown[];
+      /** 진행 중 검수 보완 요청이 함께 닫혔으면 true (이력으로 보관) */
+      reviewClosed?: boolean;
+    }
   | { ok: false; message: string };
 
 export const MARK_DONE_ENDPOINT = "/api/sales/mark-done";

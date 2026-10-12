@@ -11,6 +11,8 @@
  *   - 열 구조(6·7행 제목)가 웹앱과 다르면 아무것도 하지 않는다.
  *   - LockService 로 한 번에 하나의 저장·삭제만 처리한다.
  *   - 그 판매의 판매보고 참고내용(notes.gs 보조 시트)도 함께 지운다.
+ *   - 그 판매의 검수 보완 기록(inspection-review.gs 보조 시트)은 지우지 않고 보관 상태로 바꾼다
+ *     (진행 중 요청은 "판매삭제"로 닫고, 키를 바꿔 같은 고객·날짜·CTN 으로 다시 등록한 판매에 붙지 않게).
  *   - 지운 뒤 B열 판매 No. 를 다시 매긴다 (UMNP 를 지우면 그 자리는 빈 행으로 다시 번호를 받음, save-handler.gs 의
  *     wsRenumberSaleRows_). UMNP 행은 No. 가 빈칸이라 화면에서 본 No. 도 빈칸이어야 한다.
  */
@@ -118,6 +120,14 @@ function handleDeleteRequest_(e) {
       wsDeleteNoteForRow_(ss, sheetName, current, tz);
     } catch (err) {
       // 참고내용 정리에 실패해도 판매 삭제는 진행 (조회 시 키가 맞는 판매가 없으면 붙지 않음)
+    }
+    // 검수 보완 기록은 지우지 않고 보관 상태로 (키를 바꿔 같은 키로 다시 등록한 판매에 붙지 않게)
+    try {
+      if (typeof wsArchiveReviewsForRow_ === "function") {
+        wsArchiveReviewsForRow_(ss, sheetName, current, tz);
+      }
+    } catch (err) {
+      // 보완 기록 정리에 실패해도 판매 삭제는 진행
     }
 
     // 5) A열·C~AL열만, 수식 칸은 건너뛰고(N·U·AB·AC 행별 수식은 비움), 이어진 칸끼리 묶어서 값만 바꾼다

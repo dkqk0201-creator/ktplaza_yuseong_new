@@ -18,6 +18,8 @@ import {
 } from "@/lib/sale-edit";
 import { postUpdateSale } from "@/lib/update-sale-api";
 import { MARK_DONE_LABEL, postMarkDone } from "@/lib/mark-done-api";
+import { ReviewPanel } from "@/components/review-panel";
+import { isReviewPending, type SaleReview } from "@/lib/inspection-review";
 import {
   COLUMN_LABEL,
   COLUMN_LETTER,
@@ -176,6 +178,7 @@ export function SaleDetail({
   onDeleted,
   onUpdated,
   onMarked,
+  onReviewChanged,
 }: {
   sheet: string;
   sale: SheetSale;
@@ -186,6 +189,8 @@ export function SaleDetail({
   onUpdated?: (message: string) => void;
   /** 있으면 "검수완료"(G)·"수납완료"(H) 버튼 표시. 장표 저장 성공 후 저장된 판매로 호출 */
   onMarked?: (next: SheetSale, field: "inspected" | "paid", message: string) => void;
+  /** 있으면 "검수 보완 요청" 영역 표시 (검수관리). 보완 요청 저장·취소 후 바뀐 판매로 호출 */
+  onReviewChanged?: (next: SheetSale, message: string) => void;
 }) {
   const closeRef = useRef<HTMLButtonElement>(null);
   const [deleting, setDeleting] = useState(false);
@@ -218,8 +223,17 @@ export function SaleDetail({
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+  // 저장하지 않은 보완 요청 미비내용이 있으면 닫기 전에 확인
+  const reviewDirtyRef = useRef(false);
   const close = () => {
-    if (!deletingRef.current) onCloseRef.current();
+    if (deletingRef.current) return;
+    if (
+      reviewDirtyRef.current &&
+      !window.confirm("저장하지 않은 미비내용이 있습니다. 저장하지 않고 닫을까요?")
+    ) {
+      return;
+    }
+    onCloseRef.current();
   };
 
   // 검수완료(G)·수납완료(H): 그 칸만 O 로 저장, 저장 확인 후에만 완료 표시 (창은 열어 둔다)
@@ -228,6 +242,16 @@ export function SaleDetail({
   const [markNotice, setMarkNotice] = useState<string | null>(null);
   async function handleMark(field: "inspected" | "paid") {
     if (deletingRef.current || isO(sale[field])) return; // 처리 중·이미 완료면 무시 (중복 클릭 방지)
+    // 보완 요청 중인 판매의 검수완료 = 최종 검수완료 (점장이 보완 여부를 재확인)
+    if (
+      field === "inspected" &&
+      isReviewPending(sale) &&
+      !window.confirm(
+        "보완이 끝났는지 확인하셨나요?\n최종 검수완료하면 G열 검수가 O 로 저장되고 보완 요청은 완료 이력으로 남습니다.",
+      )
+    ) {
+      return;
+    }
     deletingRef.current = true;
     setMarking(field);
     setMarkError(null);
@@ -252,10 +276,28 @@ export function SaleDetail({
     }
     // 장표가 돌려준 저장 후 값으로 바로 표시 (참고내용은 장표 값이 아니므로 보던 것 유지)
     const next = parseSheetRow(result.row, result.no, result.values);
+    // 보완 요청이 함께 닫혔으면 진행 중 → 이력으로 옮겨 바로 표시 (장표에서 다시 읽으면 서버 값으로 바뀜)
+    const review: SaleReview | undefined =
+      result.reviewClosed && sale.review?.active
+        ? {
+            active: null,
+            history: [
+              {
+                status: "검수완료",
+                content: sale.review.active.content,
+                staff: sale.review.active.staff,
+                requestedAt: sale.review.active.requestedAt,
+                closedAt: "방금",
+              },
+              ...sale.review.history,
+            ],
+          }
+        : sale.review;
     const shown = {
       ...next,
       ...(sale.notes ? { notes: sale.notes } : {}),
       ...(sale.spotNote ? { spotNote: sale.spotNote } : {}),
+      ...(review ? { review } : {}),
     };
     setUpdated(shown);
     setMarkNotice(result.message);
@@ -322,6 +364,7 @@ export function SaleDetail({
       const shown: SheetSale = {
         ...next,
         ...(notes && Object.keys(notes).length > 0 ? { notes } : {}),
+        ...(sale.review ? { review: sale.review } : {}),
       };
       setUpdated(shown);
       setMode("view");
@@ -341,7 +384,14 @@ export function SaleDetail({
   useEffect(() => {
     closeRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !deletingRef.current) onCloseRef.current();
+      if (e.key !== "Escape" || deletingRef.current) return;
+      if (
+        reviewDirtyRef.current &&
+        !window.confirm("저장하지 않은 미비내용이 있습니다. 저장하지 않고 닫을까요?")
+      ) {
+        return;
+      }
+      onCloseRef.current();
     };
     window.addEventListener("keydown", onKey);
     // 상세창이 열린 동안 뒤 화면이 스크롤되지 않게 한다
@@ -399,6 +449,22 @@ export function SaleDetail({
             >
               ✓ {updateNotice}
             </p>
+          )}
+          {mode === "view" && onReviewChanged && !readOnly && (
+            <ReviewPanel
+              sheet={sheet}
+              sale={sale}
+              busy={deleting || marking !== null}
+              onDirtyChange={(dirty) => {
+                reviewDirtyRef.current = dirty;
+              }}
+              onSaved={(review, message) => {
+                const { review: _old, ...rest } = sale;
+                const next: SheetSale = review ? { ...rest, review } : rest;
+                setUpdated(next);
+                onReviewChanged(next, message);
+              }}
+            />
           )}
           {mode === "view" && <SaleView sale={sale} />}
           {mode === "edit" && (
@@ -572,7 +638,10 @@ function MarkDoneButtons({
       <div className="grid grid-cols-2 gap-2">
         {(["inspected", "paid"] as const).map((field) => {
           const done = isO(sale[field]);
-          const label = MARK_DONE_LABEL[field];
+          const label =
+            field === "inspected" && isReviewPending(sale)
+              ? "최종 검수완료"
+              : MARK_DONE_LABEL[field];
           return (
             <button
               key={field}
