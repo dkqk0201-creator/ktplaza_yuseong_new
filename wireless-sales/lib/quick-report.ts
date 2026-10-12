@@ -1,6 +1,7 @@
 import type { ColumnKey, SheetRowValues } from "@/lib/sheet-columns";
 import { formatCtn } from "@/lib/format";
 import { cleanPolicyName, policyNameError } from "@/lib/model-policy";
+import { quickWSplit, type WPartKey } from "@/lib/w-split";
 
 /*
  * 간편등록: 직원 카톡 판매보고 → 분석 → 검수 → 장표 한 행.
@@ -74,8 +75,10 @@ export const QUICK_FIELDS = [
     column: "securedSecond",
   },
   { id: "useExtraSupport", label: "정책사용 → 추가지원금", column: "usedExtraSupport" },
-  { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: null },
-  { id: "usePlan", label: "정책사용 → 고혜(요금)", column: null },
+  // 고혜(기존할부금): W열에 추가지원금과 합산 저장 (세부 금액은 참고내용 wInstallment, lib/w-split.ts)
+  { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: "usedExtraSupport" },
+  // 고혜(요금): V열(모델/요금)에 금액 저장
+  { id: "usePlan", label: "정책사용 → 고혜(요금)", column: "usedModelPlan" },
   // 2ND 첫 줄: 내용이 있으면 AD = O, 공란·X 면 AD = X. 적은 글자(예: 워치)는 참고내용으로도 보관
   { id: "second", label: "2ND", column: "secondPerformance" },
   { id: "secondBenefit", label: "2ND → 고객혜택", column: "usedSecond" },
@@ -363,8 +366,8 @@ export interface QuickNormalized {
   notes: SaleNotes;
 }
 
-/** 참고 항목 id → 직원이 적은 원문 */
-export type SaleNotes = Partial<Record<QuickFieldId, string>>;
+/** 참고 항목 id → 직원이 적은 원문 (+ W열 세부 금액 wExtraSupport·wInstallment) */
+export type SaleNotes = Partial<Record<QuickFieldId | WPartKey, string>>;
 
 /**
  * 참고내용으로 보관하는 항목: 장표 저장 안 함(참고) 항목 + 2ND 첫 줄 원문
@@ -503,6 +506,7 @@ export function normalizeQuick(
   const issues: QuickIssue[] = [];
   const display: Partial<Record<QuickFieldId, string>> = {};
   const row: SheetRowValues = {};
+  let wNotes: Partial<Record<WPartKey, string>> = {};
   const v = (id: QuickFieldId) => fields[id].trim();
   const need = (id: QuickFieldId, label: string) => {
     if (!v(id))
@@ -633,7 +637,7 @@ export function normalizeQuick(
     "policySecond",
     "dichoBenefit",
     "secondBenefit",
-    "useExtraSupport", // W 추가지원금
+    "usePlan", // V 모델/요금 ← 고혜(요금)
   ] as const) {
     const parsed = parseAmount(fields[id]);
     const column = QUICK_FIELDS.find((f) => f.id === id)!.column as ColumnKey;
@@ -642,6 +646,24 @@ export function normalizeQuick(
     } else if (parsed.value !== null) {
       row[column] = parsed.value;
       display[id] = `${parsed.value.toLocaleString("ko-KR")}원`;
+    }
+  }
+
+  // W열 = 추가지원금 + 고혜(기존할부금) 합계 (한 번만 더함). 세부 금액은 참고내용으로 따로 보관
+  {
+    const extra = parseAmount(fields.useExtraSupport);
+    const installment = parseAmount(fields.useInstallment);
+    if ("error" in extra) issues.push({ field: "useExtraSupport", message: extra.error });
+    if ("error" in installment) issues.push({ field: "useInstallment", message: installment.error });
+    if (!("error" in extra) && !("error" in installment)) {
+      const split = quickWSplit(extra.value, installment.value);
+      if (split.w !== null) row.usedExtraSupport = split.w;
+      wNotes = split.notes;
+      if (extra.value !== null) display.useExtraSupport = `${extra.value.toLocaleString("ko-KR")}원`;
+      if (installment.value !== null) display.useInstallment = `${installment.value.toLocaleString("ko-KR")}원`;
+      if (split.w !== null && extra.value !== null && installment.value !== null) {
+        display.useInstallment += ` (W열 합계 ${split.w.toLocaleString("ko-KR")}원)`;
+      }
     }
   }
 
@@ -773,7 +795,7 @@ export function normalizeQuick(
     display,
     duplicateKey:
       activatedAt && ctnDigits ? `${activatedAt}|${ctnDigits}` : null,
-    notes: quickNotes(fields),
+    notes: { ...quickNotes(fields), ...wNotes },
   };
 }
 

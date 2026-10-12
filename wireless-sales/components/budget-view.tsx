@@ -11,6 +11,9 @@ import { BUDGET_COLUMNS, calculateBudget } from "@/lib/budget";
 import { formatNumber } from "@/lib/format";
 import type { SheetSale } from "@/lib/sheet-record";
 import { postpaidCount } from "@/lib/umnp";
+import { wMismatches, wonText } from "@/lib/w-split";
+import { formatCtn } from "@/lib/format";
+import { monthDayText } from "@/lib/sale-display";
 
 /* 예산관리 + 무선 목표 (선택한 월 시트의 실제 장표 데이터 기준) */
 
@@ -93,9 +96,58 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         ))}
       </section>
 
+      <WMismatchSection sales={sales} />
+
       {/* 현재 실적 = 후불 실적 건수 (UMNP 제외). 위 예산 금액은 UMNP 포함 */}
       <GoalSection sheet={sheet} achieved={postpaidCount(sales)} />
     </div>
+  );
+}
+
+/**
+ * W열(추가지원금 + 고혜(기존할부금) 합계)과 웹앱 세부 합계가 다른 판매 (구글시트에서 W열을 직접 고친 경우 등).
+ * 예산 사용금액은 장표 W열(U열 수식) 기준 그대로이며, 여기서는 확인만 한다 (자동으로 고치지 않음).
+ */
+function WMismatchSection({ sales }: { sales: SheetSale[] }) {
+  const list = wMismatches(sales);
+  if (list.length === 0) return null;
+  return (
+    <section
+      aria-label="W열 세부 불일치"
+      className="overflow-x-auto rounded-xl border border-amber-300 bg-white"
+    >
+      <p className="border-b border-amber-200 bg-amber-50/60 px-4 py-3 text-sm font-bold text-amber-900">
+        ⚠ W열(추가지원금+고혜(기존할부금)) 세부 불일치 {list.length}건
+        <span className="mt-0.5 block text-xs font-normal text-amber-800">
+          예산 금액은 장표 W열 값 기준입니다. 검수관리 → 판매 수정에서 두 금액을 확인해 주세요. (자동으로 고치지 않음)
+        </span>
+      </p>
+      <table className="w-full min-w-[520px] text-sm">
+        <thead className="bg-zinc-50 text-xs text-ink-sub">
+          <tr>
+            {["개통일", "고객명", "CTN", "W열", "웹앱 세부 합계"].map((h) => (
+              <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line tabular-nums text-ink">
+          {list.map(({ sale, split }) => (
+            <tr key={sale.row}>
+              <td className="px-3 py-2 whitespace-nowrap">{monthDayText(sale.activatedAt)}</td>
+              <td className="px-3 py-2 whitespace-nowrap">{sale.customer || "-"}</td>
+              <td className="px-3 py-2 whitespace-nowrap">{formatCtn(sale.ctn) || "-"}</td>
+              <td className="px-3 py-2 whitespace-nowrap">{wonText(split.w)}</td>
+              <td className="px-3 py-2 whitespace-nowrap">
+                {wonText(split.detailSum ?? 0)}
+                <span className="ml-1 text-xs text-ink-muted">
+                  (추가 {wonText(split.extra ?? 0)} + 할부 {wonText(split.installment ?? 0)})
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }
 

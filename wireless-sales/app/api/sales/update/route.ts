@@ -12,7 +12,7 @@ import {
 } from "@/lib/server/apps-script";
 import { POLICY_NAME_FIELD } from "@/lib/model-policy";
 import {
-  NOTE_FIELD_IDS,
+  EDITABLE_NOTE_KEYS,
   cleanNote,
   isNoteField,
   noteError,
@@ -111,7 +111,7 @@ interface ParsedChanges {
 function parseNoteChanges(notesInput: unknown, policyInput: unknown): NoteChange[] | string {
   const raw: { field: unknown; before: unknown; after: unknown }[] = [];
   if (notesInput !== undefined && notesInput !== null) {
-    if (!Array.isArray(notesInput) || notesInput.length > NOTE_FIELD_IDS.length) {
+    if (!Array.isArray(notesInput) || notesInput.length > EDITABLE_NOTE_KEYS.length) {
       return "참고 항목 형식이 올바르지 않습니다.";
     }
     for (const item of notesInput) {

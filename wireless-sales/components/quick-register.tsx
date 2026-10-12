@@ -16,7 +16,7 @@ import {
 } from "@/lib/quick-report";
 import { POLICY_NAME_MAX } from "@/lib/model-policy";
 import { SaleFieldGroups, type FieldView } from "@/components/sale-fields";
-import { NOTE_HINT, QUICK_GROUPS, columnHint, fieldLabel } from "@/lib/sale-form-layout";
+import { NOTE_HINT, QUICK_GROUPS, W_HINT, columnHint, fieldLabel } from "@/lib/sale-form-layout";
 import type { QuickBatchResponse, SaveSaleResponse } from "@/lib/save-sale-api";
 
 /*
@@ -548,7 +548,12 @@ function QuickItemCard({
     return {
       id: `quick-${item.id}-${id}`,
       label: fieldLabel(id),
-      hint: saved ? columnHint(field.column!) : NOTE_HINT,
+      hint:
+        id === "useExtraSupport" || id === "useInstallment"
+          ? W_HINT
+          : saved
+            ? columnHint(field.column!)
+            : NOTE_HINT,
       note: !saved,
       value: dateBlocked ? "" : item.fields[id],
       onChange: (value) => onChange(id, value),
