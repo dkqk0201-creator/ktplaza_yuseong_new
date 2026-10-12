@@ -10,6 +10,11 @@ import {
   updateRowInAppsScript,
   type UpdateCell,
 } from "@/lib/server/apps-script";
+import {
+  POLICY_NAME_FIELD,
+  cleanPolicyName,
+  policyNameError,
+} from "@/lib/model-policy";
 import type { ColumnKey } from "@/lib/sheet-columns";
 import type {
   UpdateSaleResponse,
@@ -96,6 +101,28 @@ interface ParsedChanges {
   list: { key: ColumnKey; before: string; after: string }[];
 }
 
+/** 정책명 변경 검사: 없으면 null, 형식 오류면 글자 */
+function parsePolicyName(
+  input: unknown,
+): { before: string; after: string } | null | string {
+  if (input === undefined || input === null) return null;
+  if (typeof input !== "object") return "정책명 형식이 올바르지 않습니다.";
+  const { before, after } = input as Record<string, unknown>;
+  if (
+    typeof before !== "string" ||
+    typeof after !== "string" ||
+    before.length > 600 ||
+    after.length > 600
+  ) {
+    return "정책명 형식이 올바르지 않습니다.";
+  }
+  const problem = policyNameError(after);
+  if (problem) return problem;
+  const b = cleanPolicyName(before);
+  const a = cleanPolicyName(after);
+  return a === b ? null : { before: b, after: a };
+}
+
 /** 바꿀 칸 검사 → Apps Script 로 보낼 칸 (금액은 숫자, 글자는 '로 글자 그대로 저장) */
 function parseChanges(input: unknown): ParsedChanges | string {
   if (!Array.isArray(input) || input.length === 0) {
@@ -163,7 +190,18 @@ export async function POST(request: Request) {
         return !(typeof key === "string" && isRowFormulaKey(key));
       })
     : raw.changes;
-  const parsed = parseChanges(submitted);
+  const policyName = parsePolicyName(raw.policyName);
+  if (typeof policyName === "string") {
+    return reply({ ok: false, message: policyName }, 400);
+  }
+  // 정책명만 바꾼 경우: 장표 칸 변경 없이 정책명만 저장
+  const onlyPolicyName =
+    policyName !== null &&
+    Array.isArray(submitted) &&
+    submitted.length === 0;
+  const parsed: ParsedChanges | string = onlyPolicyName
+    ? { cells: [], list: [] }
+    : parseChanges(submitted);
   if (typeof parsed === "string") {
     return reply({ ok: false, message: parsed }, 400);
   }
@@ -171,14 +209,36 @@ export async function POST(request: Request) {
   try {
     // 사용자가 바꾼 칸만 쓴다 (N·U·AB·AC 는 장표 수식이 계산)
     const cells: UpdateCell[] = parsed.cells;
-    const result = await updateRowInAppsScript(target, cells);
+    const result = await updateRowInAppsScript(
+      target,
+      cells,
+      [],
+      policyName
+        ? {
+            notePatch: {
+              field: POLICY_NAME_FIELD,
+              before: policyName.before,
+              value: policyName.after,
+            },
+          }
+        : {},
+    );
+    const policyNotSaved = policyName !== null && result.notePatched !== true;
     return reply(
       {
         ok: true,
-        message: "판매내역이 수정되었습니다.",
+        message:
+          cells.length > 0 ? "판매내역이 수정되었습니다." : "정책명이 수정되었습니다.",
         row: result.row,
         no: result.no,
         values: result.values,
+        ...(policyName && result.notes ? { notes: result.notes } : {}),
+        ...(policyNotSaved
+          ? {
+              warning:
+                "장표 칸은 수정됐지만 정책명은 저장하지 못했습니다. 화면을 새로고침한 뒤 정책명을 다시 확인해 주세요.",
+            }
+          : {}),
       },
       200,
     );

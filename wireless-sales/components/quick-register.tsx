@@ -14,6 +14,7 @@ import {
   type QuickFields,
   type QuickNormalized,
 } from "@/lib/quick-report";
+import { POLICY_NAME_MAX } from "@/lib/model-policy";
 import { COLUMN_LABEL, COLUMN_LETTER } from "@/lib/sheet-columns";
 import type { QuickBatchResponse, SaveSaleResponse } from "@/lib/save-sale-api";
 
@@ -630,6 +631,8 @@ function QuickItemCard({
 
       <div className="grid grid-cols-1 gap-x-5 gap-y-3 p-4 md:grid-cols-2">
         {QUICK_FIELDS.map((field) => {
+          // 정책명은 S열(그외) 금액 입력칸 바로 아래에 함께 보여준다
+          if (field.id === "modelPolicyName") return null;
           const problems = issuesByField.get(field.id);
           const saved = field.column !== null;
           const shown = normalized.display[field.id];
@@ -704,6 +707,41 @@ function QuickItemCard({
                   {p}
                 </p>
               ))}
+              {field.id === "policyOther" && (
+                <div className="mt-2">
+                  <label
+                    htmlFor={`quick-${item.id}-modelPolicyName`}
+                    className="flex flex-wrap items-baseline gap-x-2 text-xs font-semibold text-ink-sub"
+                  >
+                    ㄴ 정책명
+                    <span className="font-normal text-amber-700">
+                      장표 저장 안 함 (웹앱 보관 · S열 금액의 정책명)
+                    </span>
+                  </label>
+                  <input
+                    id={`quick-${item.id}-modelPolicyName`}
+                    value={item.fields.modelPolicyName}
+                    onChange={(e) => onChange("modelPolicyName", e.target.value)}
+                    disabled={locked}
+                    autoComplete="off"
+                    maxLength={POLICY_NAME_MAX + 20}
+                    placeholder="정책명 직접 입력"
+                    aria-invalid={
+                      issuesByField.get("modelPolicyName") ? true : undefined
+                    }
+                    className={`mt-1 h-10 w-full rounded-lg border px-3 text-base outline-none focus:border-brand disabled:bg-zinc-50 ${
+                      issuesByField.get("modelPolicyName")
+                        ? "border-rose-400 bg-rose-50/40"
+                        : "border-dashed border-line bg-zinc-50/60"
+                    }`}
+                  />
+                  {issuesByField.get("modelPolicyName")?.map((p) => (
+                    <p key={p} className="mt-0.5 text-xs font-medium text-rose-600">
+                      {p}
+                    </p>
+                  ))}
+                </div>
+              )}
             </div>
           );
         })}

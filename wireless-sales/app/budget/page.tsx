@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { BudgetTabs } from "@/components/budget-tabs";
 import { BudgetView } from "@/components/budget-view";
 import { PageHeader } from "@/components/page-header";
 
@@ -11,6 +12,7 @@ export default function BudgetPage() {
         title="예산관리"
         description="선택한 월 시트의 고객혜택·스팟·현금 예산과 무선 목표를 봅니다."
       />
+      <BudgetTabs active="/budget" />
       <BudgetView />
     </>
   );

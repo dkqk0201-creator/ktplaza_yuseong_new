@@ -1,5 +1,6 @@
 import type { ColumnKey, SheetRowValues } from "@/lib/sheet-columns";
 import { formatCtn } from "@/lib/format";
+import { cleanPolicyName, policyNameError } from "@/lib/model-policy";
 
 /*
  * 간편등록: 직원 카톡 판매보고 → 분석 → 검수 → 장표 한 행.
@@ -65,6 +66,8 @@ export const QUICK_FIELDS = [
   { id: "planChange", label: "요금제 → 유지/변경", column: "planChange" },
   { id: "policyBenefit", label: "정책 → 고객혜택", column: "customerBenefit" },
   { id: "policyOther", label: "정책 → 그외(스팟제외)", column: "modelPolicy" },
+  // S열 모델정책 금액의 정책명: 자유 입력. 장표에 쓰지 않고 참고내용(웹앱참고)으로 보관 (lib/model-policy.ts)
+  { id: "modelPolicyName", label: "정책명", column: null },
   {
     id: "policySecond",
     label: "정책 → 2ND연계정책",
@@ -129,6 +132,7 @@ const TOP_LEVEL: {
     children: {
       고객혜택: "policyBenefit",
       "그외(스팟제외)": "policyOther",
+      정책명: "modelPolicyName",
       "2nd연계정책": "policySecond",
     },
   },
@@ -373,7 +377,8 @@ export const NOTE_FIELDS = QUICK_FIELDS.filter(
 export function quickNotes(fields: QuickFields): SaleNotes {
   const notes: SaleNotes = {};
   for (const { id } of NOTE_FIELDS) {
-    const value = fields[id].trim();
+    const value =
+      id === "modelPolicyName" ? cleanPolicyName(fields[id]) : fields[id].trim();
     if (value) notes[id] = value.slice(0, 500);
   }
   return notes;
@@ -739,6 +744,15 @@ export function normalizeQuick(
         message: `가능일 "${v("availableDate")}" 를 확인해 주세요. 년.월로 입력해 주세요. (예: 27.03)`,
       });
     }
+  }
+
+  // 정책명: 자유 입력 (목록·자동완성 없음). 장표에는 쓰지 않는다
+  const policyName = cleanPolicyName(fields.modelPolicyName);
+  const policyNameProblem = policyNameError(fields.modelPolicyName);
+  if (policyNameProblem) {
+    issues.push({ field: "modelPolicyName", message: policyNameProblem });
+  } else if (policyName) {
+    display.modelPolicyName = policyName;
   }
 
   if (v("customerPromise")) {

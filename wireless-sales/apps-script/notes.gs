@@ -9,6 +9,9 @@
  *   - 조회(list-handler): 키가 정확히 한 판매에만 맞을 때만 그 판매에 붙인다 (같은 키 판매가 2건이면 붙이지 않음)
  *   - 수정(update-handler): 고객명(D)·CTN(E)을 바꾸면 키를 새 값으로 옮긴다
  *   - 삭제(delete-handler): 그 판매의 키 기록을 지운다
+ *   - 정책명(modelPolicyName): S열 모델정책 금액의 정책명. 장표에는 쓰지 않고 여기만 보관한다.
+ *     판매 수정(update-handler, sale-update)에서 이 항목 하나만 바꿀 수 있다 (다른 참고 항목은 그대로 유지).
+ *     같은 키(개통일·CTN·고객)를 가진 판매가 장표에 2건 이상이면 다른 판매에 붙을 수 있으므로 저장하지 않는다.
  * 보조 시트는 처음 저장할 때 자동으로 만들고 숨긴다. 직접 고치지 마세요.
  */
 var WS_NOTES_SHEET = "웹앱참고";
@@ -146,6 +149,54 @@ function wsMoveNoteForRow_(ss, sheetName, beforeValues, afterValues, tz) {
   var notes = existing.notes;
   sheet.deleteRow(existing.row);
   wsWriteNote_(ss, info.key, info, notes);
+}
+
+/** 판매 수정 화면에서 고칠 수 있는 참고내용 항목 (정책명만. 나머지는 판매보고 원문이라 고치지 않음) */
+var WS_EDITABLE_NOTE_FIELDS = { modelPolicyName: true };
+
+/** 월 시트에서 이 키를 가진 판매 행 수 (행 번호·No. 와 무관) */
+function wsCountNoteKey_(sheet, tz, key) {
+  if (!key) return 0;
+  var last = sheet.getLastRow();
+  if (last < WS_FIRST_ROW) return 0;
+  var values = sheet
+    .getRange(WS_FIRST_ROW, 1, last - WS_FIRST_ROW + 1, WS_COLUMN_COUNT)
+    .getValues();
+  var name = sheet.getName();
+  var n = 0;
+  for (var i = 0; i < values.length; i++) {
+    if (wsNoteKey_(name, values[i], tz) === key) n++;
+  }
+  return n;
+}
+
+/** 키의 참고내용 중 한 항목의 현재 값 (없으면 "") */
+function wsNoteValue_(ss, key, field) {
+  if (!key) return "";
+  var sheet = wsNotesSheet_(ss, false);
+  if (!sheet) return "";
+  var rec = wsReadNotes_(sheet)[key];
+  var v = rec && rec.notes ? rec.notes[field] : "";
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/** 키의 참고내용 중 한 항목만 바꾼다 (다른 항목은 그대로). value 가 "" 이면 그 항목만 지운다. 저장 후 참고내용 반환 */
+function wsPatchNote_(ss, info, field, value) {
+  if (!info.key) return {};
+  var sheet = wsNotesSheet_(ss, false);
+  var existing = sheet ? wsReadNotes_(sheet)[info.key] : null;
+  var notes = {};
+  if (existing && existing.notes) {
+    for (var k in existing.notes) {
+      if (Object.prototype.hasOwnProperty.call(existing.notes, k)) notes[k] = existing.notes[k];
+    }
+  }
+  if (value) notes[field] = value;
+  else delete notes[field];
+  wsWriteNote_(ss, info.key, info, notes);
+  var after = wsNotesSheet_(ss, false);
+  var rec = after ? wsReadNotes_(after)[info.key] : null;
+  return (rec && wsCleanNotes_(rec.notes)) || {};
 }
 
 /**

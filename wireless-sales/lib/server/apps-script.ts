@@ -429,6 +429,15 @@ export interface UpdateCheckCell {
   check: true;
 }
 
+/** 참고내용(웹앱참고) 한 항목 수정: 정책명(modelPolicyName)만 허용 */
+export interface NotePatch {
+  field: "modelPolicyName";
+  /** 화면에서 본 값 (보관된 현재 값과 대조) */
+  before: string;
+  /** 새 값 ("" = 지우기) */
+  value: string;
+}
+
 /** 예전 update-handler.gs 가 확인 칸을 받았을 때 돌려주는 거부 문구 */
 const OLD_HANDLER_FORMAT_ERROR = "수정할 항목 형식이 올바르지 않습니다.";
 
@@ -445,11 +454,25 @@ export async function updateRowInAppsScript(
   target: DeleteTarget,
   changes: UpdateCell[],
   checks: UpdateCheckCell[] = [],
-  /** onlyChanges: 바꿀 칸만 쓴다 (Apps Script 가 N·U·AB·AC 수식 변환도 하지 않음) */
-  options: { onlyChanges?: boolean } = {},
-): Promise<{ sheet: string; row: number; no: string; values: unknown[] }> {
+  /**
+   * onlyChanges: 바꿀 칸만 쓴다 (Apps Script 가 N·U·AB·AC 수식 변환도 하지 않음)
+   * notePatch: 장표 밖 참고내용(웹앱참고) 한 항목 수정 (정책명). 있으면 changes 가 비어도 된다.
+   */
+  options: { onlyChanges?: boolean; notePatch?: NotePatch } = {},
+): Promise<{
+  sheet: string;
+  row: number;
+  no: string;
+  values: unknown[];
+  /** notePatch 를 보냈을 때만: 저장 후 이 판매의 참고내용 */
+  notes?: Record<string, string>;
+  /** notePatch 를 보냈을 때만: 참고내용 저장 성공 여부 */
+  notePatched?: boolean;
+}> {
+  const notePatch = options.notePatch;
   if (
-    changes.length === 0 ||
+    (changes.length === 0 && !notePatch) ||
+    (notePatch && options.onlyChanges) ||
     [...changes, ...checks].some((c) => c.col === 1 || c.col === 2)
   ) {
     throw new AppsScriptError(
@@ -476,12 +499,41 @@ export async function updateRowInAppsScript(
       {
         action: "sale-update",
         target,
-        changes: [...changes, ...checks],
+        changes: [
+          ...changes,
+          ...checks,
+          // col: -1 → 정책명 수정 기능이 없는 예전 update-handler.gs 는 요청 전체를 "형식 오류"로 거부 (아무것도 안 씀)
+          ...(notePatch
+            ? [
+                {
+                  col: -1,
+                  before: null,
+                  note: notePatch.field,
+                  noteBefore: notePatch.before,
+                  noteValue: notePatch.value,
+                },
+              ]
+            : []),
+        ],
         ...(options.onlyChanges ? { keepRowFormulas: true } : {}),
       },
       "Apps Script가 수정을 거부했습니다.",
     );
   } catch (error) {
+    // 정책명 항목을 모르는 예전 update-handler.gs: 아무것도 쓰지 않고 거부했다
+    if (
+      notePatch &&
+      error instanceof AppsScriptError &&
+      error.code === "rejected" &&
+      error.details.handler === SALE_UPDATE_HANDLER &&
+      error.message === OLD_HANDLER_FORMAT_ERROR
+    ) {
+      throw new AppsScriptError(
+        "rejected",
+        "정책명 수정은 Apps Script에 최신 update-handler.gs·notes.gs 를 배포해야 저장할 수 있습니다. " +
+          "이번 수정은 장표에 저장되지 않았습니다.",
+      );
+    }
     // 확인 칸을 모르는 예전 update-handler.gs: 아무것도 쓰지 않고 거부했다
     if (
       checks.length > 0 &&
@@ -525,5 +577,11 @@ export async function updateRowInAppsScript(
     row: rowNumber,
     no: data.no === undefined || data.no === null ? "" : String(data.no),
     values: data.values.slice(0, COLUMN_COUNT),
+    ...(notePatch
+      ? {
+          notePatched: data.notePatched === true,
+          notes: parseNotes(data.notes) ?? {},
+        }
+      : {}),
   };
 }

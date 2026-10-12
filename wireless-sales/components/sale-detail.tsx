@@ -24,6 +24,12 @@ import {
   type ColumnKey,
 } from "@/lib/sheet-columns";
 import { isO, parseSheetRow, type SheetSale } from "@/lib/sheet-record";
+import {
+  POLICY_NAME_MAX,
+  cleanPolicyName,
+  policyNameError,
+  policyNameOf,
+} from "@/lib/model-policy";
 
 /*
  * 판매 1건 상세 보기 (장표 A~AL 그대로) + 판매 수정 + 판매 삭제.
@@ -100,11 +106,15 @@ const SECTIONS: { title: string; keys: ColumnKey[]; strong?: ColumnKey[] }[] = [
  * 값은 Apps Script 보조 시트 "웹앱참고" 에서 이 판매에 연결된 것 (sale.notes).
  * always: 비어 있어도 "-" 로 항상 보이는 항목 / 나머지는 직원이 적은 경우에만 보인다.
  */
-type NoteRow = { id: string; label: string; always?: boolean };
+type NoteRow = { id: string; label: string; always?: boolean; tag?: string };
 const NOTES_BEFORE: Partial<Record<ColumnKey, NoteRow[]>> = {
   usedPhoneSale: [{ id: "usedPhone", label: "중고폰&현물 판매", always: true }],
 };
 const NOTES_AFTER: Partial<Record<ColumnKey, NoteRow[]>> = {
+  // S열 모델정책 금액의 정책명 (장표 저장 안 함, 웹앱참고 보관)
+  modelPolicy: [
+    { id: "modelPolicyName", label: "ㄴ 정책명", always: true, tag: "웹앱 보관" },
+  ],
   usedModelPlan: [
     { id: "useInstallment", label: "고혜(기존할부금)" },
     { id: "usePlan", label: "고혜(요금)" },
@@ -134,7 +144,7 @@ function NoteRows({ sale, rows }: { sale: SheetSale; rows?: NoteRow[] }) {
             <dt className="shrink-0 text-ink-sub">
               {r.label}
               <span className="ml-1.5 text-[11px] text-ink-muted">
-                판매보고
+                {r.tag ?? "판매보고"}
               </span>
             </dt>
             <dd className="text-right break-all whitespace-pre-wrap text-ink">
@@ -190,6 +200,17 @@ export function SaleDetail({
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const changes = mode === "view" ? [] : diffSale(sale, edited);
   const fieldErrors = validateEdits(changes);
+  // 정책명 (장표 밖 웹앱참고 보관): null = 손대지 않음
+  const [policyEdit, setPolicyEdit] = useState<string | null>(null);
+  const policyBefore = policyNameOf(sale);
+  const policyChange =
+    mode !== "view" &&
+    policyEdit !== null &&
+    cleanPolicyName(policyEdit) !== policyBefore
+      ? { before: policyBefore, after: cleanPolicyName(policyEdit) }
+      : null;
+  const policyError = policyEdit === null ? null : policyNameError(policyEdit);
+  const changeCount = changes.length + (policyChange ? 1 : 0);
 
   // 삭제·수정 요청 중에는 창을 닫지 않는다 (Esc·배경 클릭·닫기 버튼 모두)
   const deletingRef = useRef(false);
@@ -263,14 +284,18 @@ export function SaleDetail({
 
   function startEdit() {
     setEdited({});
+    setPolicyEdit(null);
     setUpdateError(null);
     setUpdateNotice(null);
     setDeleteError(null);
     setMode("edit");
   }
 
-  async function handleUpdate(list: SaleChange[]) {
-    if (deletingRef.current || list.length === 0) return;
+  async function handleUpdate(
+    list: SaleChange[],
+    policy: { before: string; after: string } | null,
+  ) {
+    if (deletingRef.current || (list.length === 0 && !policy)) return;
     deletingRef.current = true;
     setSaving(true);
     setUpdateError(null);
@@ -284,17 +309,28 @@ export function SaleDetail({
         ctn: sale.ctn,
       },
       changes: list,
+      ...(policy ? { policyName: policy } : {}),
     });
     deletingRef.current = false;
     setSaving(false);
     if (result.ok) {
       // 참고내용은 장표 값이 아니므로 수정 응답에 없다 → 보던 참고내용을 그대로 유지
       // (고객명·CTN 을 바꾸면 Apps Script 가 참고내용 연결 키도 함께 옮긴다)
+      // 정책명을 바꿨으면 Apps Script 가 돌려준 저장 후 참고내용으로 바꾼다
       const next = parseSheetRow(result.row, result.no, result.values);
-      setUpdated(sale.notes ? { ...next, notes: sale.notes } : next);
+      const notes = result.notes ?? sale.notes;
+      const shown: SheetSale = {
+        ...next,
+        ...(notes && Object.keys(notes).length > 0 ? { notes } : {}),
+      };
+      setUpdated(shown);
       setMode("view");
       setEdited({});
-      setUpdateNotice(`${result.message} (${list.length}개 항목)`);
+      setPolicyEdit(null);
+      setUpdateNotice(
+        `${result.message} (${list.length + (policy ? 1 : 0)}개 항목)` +
+          (result.warning ? ` ⚠ ${result.warning}` : ""),
+      );
       onUpdated?.(result.message);
     } else {
       setUpdateError(result.message);
@@ -373,9 +409,15 @@ export function SaleDetail({
               onChange={(key, value) =>
                 setEdited((prev) => ({ ...prev, [key]: value }))
               }
+              policyName={policyEdit ?? policyBefore}
+              policyChanged={policyChange !== null}
+              policyError={policyError}
+              onPolicyChange={setPolicyEdit}
             />
           )}
-          {mode === "confirm" && <ChangeList changes={changes} />}
+          {mode === "confirm" && (
+            <ChangeList changes={changes} policy={policyChange} />
+          )}
         </div>
 
         {!readOnly && (
@@ -444,11 +486,13 @@ export function SaleDetail({
                   type="button"
                   onClick={() => setMode("confirm")}
                   disabled={
-                    changes.length === 0 || Object.keys(fieldErrors).length > 0
+                    changeCount === 0 ||
+                    Object.keys(fieldErrors).length > 0 ||
+                    policyError !== null
                   }
                   className="h-11 rounded-lg bg-ink text-[15px] font-semibold text-white disabled:opacity-40"
                 >
-                  변경 확인 ({changes.length})
+                  변경 확인 ({changeCount})
                 </button>
               </div>
             )}
@@ -464,8 +508,8 @@ export function SaleDetail({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleUpdate(changes)}
-                  disabled={saving || changes.length === 0}
+                  onClick={() => void handleUpdate(changes, policyChange)}
+                  disabled={saving || changeCount === 0}
                   aria-busy={saving}
                   className="h-11 rounded-lg bg-brand text-[15px] font-bold text-white disabled:cursor-wait disabled:opacity-70"
                 >
@@ -596,11 +640,19 @@ function SaleEditForm({
   edited,
   errors,
   onChange,
+  policyName,
+  policyChanged,
+  policyError,
+  onPolicyChange,
 }: {
   sale: SheetSale;
   edited: Partial<Record<ColumnKey, string>>;
   errors: Partial<Record<ColumnKey, string>>;
   onChange: (key: ColumnKey, value: string) => void;
+  policyName: string;
+  policyChanged: boolean;
+  policyError: string | null;
+  onPolicyChange: (value: string) => void;
 }) {
   return (
     <>
@@ -726,6 +778,14 @@ function SaleEditForm({
                         {errors[key]}
                       </p>
                     )}
+                    {key === "modelPolicy" && (
+                      <PolicyNameInput
+                        value={policyName}
+                        changed={policyChanged}
+                        error={policyError}
+                        onChange={onPolicyChange}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -734,6 +794,55 @@ function SaleEditForm({
         );
       })}
     </>
+  );
+}
+
+/** 정책명 입력 (S열 모델정책 금액 입력칸 바로 아래). 자유 입력: 목록·자동완성 없음 */
+function PolicyNameInput({
+  value,
+  changed,
+  error,
+  onChange,
+}: {
+  value: string;
+  changed: boolean;
+  error: string | null;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="mt-2">
+      <label
+        htmlFor="edit-modelPolicyName"
+        className="flex items-baseline gap-1.5 text-xs font-semibold text-ink-sub"
+      >
+        ㄴ 정책명
+        <span className="font-normal text-ink-muted">
+          장표 저장 안 함 (웹앱 보관)
+        </span>
+        {changed && (
+          <span className="ml-auto font-semibold text-brand">변경됨</span>
+        )}
+      </label>
+      <input
+        id="edit-modelPolicyName"
+        value={value}
+        autoComplete="off"
+        maxLength={POLICY_NAME_MAX + 20}
+        placeholder="정책명 직접 입력"
+        onChange={(e) => onChange(e.target.value)}
+        aria-invalid={error ? true : undefined}
+        className={`mt-1 h-10 w-full rounded-lg border px-3 text-base outline-none focus:border-brand ${
+          error
+            ? "border-rose-400 bg-rose-50/40"
+            : changed
+              ? "border-brand/50 bg-rose-50/20"
+              : "border-dashed border-line"
+        }`}
+      />
+      {error && (
+        <p className="mt-0.5 text-xs font-medium text-rose-600">{error}</p>
+      )}
+    </div>
   );
 }
 
@@ -747,11 +856,17 @@ function changeValueText(key: ColumnKey, value: string): string {
 }
 
 /** 저장 전 "변경된 항목" 확인 */
-function ChangeList({ changes }: { changes: SaleChange[] }) {
+function ChangeList({
+  changes,
+  policy,
+}: {
+  changes: SaleChange[];
+  policy: { before: string; after: string } | null;
+}) {
   return (
     <section aria-label="변경된 항목" className="rounded-xl border border-line">
       <h3 className="border-b border-line bg-zinc-50 px-4 py-2.5 text-sm font-bold text-ink">
-        변경된 항목 {changes.length}개
+        변경된 항목 {changes.length + (policy ? 1 : 0)}개
       </h3>
       <ul className="divide-y divide-line">
         {changes.map(({ key, before, after, auto, autoNote }) => (
@@ -778,9 +893,32 @@ function ChangeList({ changes }: { changes: SaleChange[] }) {
             </p>
           </li>
         ))}
+        {policy && (
+          <li className="px-4 py-3 text-sm">
+            <p className="font-semibold text-ink">
+              정책명
+              <span className="ml-1.5 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-muted">
+                웹앱 보관 (장표 저장 안 함)
+              </span>
+            </p>
+            <p className="mt-1 text-ink-sub">
+              기존:{" "}
+              <span className="whitespace-pre-wrap text-ink">
+                {policy.before || "(빈칸)"}
+              </span>
+            </p>
+            <p className="text-ink-sub">
+              변경:{" "}
+              <span className="font-semibold whitespace-pre-wrap text-brand">
+                {policy.after || "(빈칸)"}
+              </span>
+            </p>
+          </li>
+        )}
       </ul>
       <p className="border-t border-line px-4 py-2.5 text-xs text-ink-muted">
         [수정 저장]을 누르면 장표의 같은 행에 위 항목만 반영됩니다.
+        {policy && " 정책명은 장표가 아니라 웹앱 보관 시트에 저장됩니다."}
       </p>
     </section>
   );

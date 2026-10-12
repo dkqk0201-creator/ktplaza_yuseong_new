@@ -30,6 +30,13 @@
  *   wsRenumberSaleRows_). UMNP 행은 No. 가 빈칸이라 화면에서 본 No. 도 빈칸이어야 한다.
  *   keepRowFormulas: true(카드 등록완료)면 번호도 다시 매기지 않는다.
  * - 고객명(D)·CTN(E)을 바꾸면 판매보고 참고내용(notes.gs 보조 시트)의 연결 키도 새 값으로 옮긴다.
+ * - 정책명(장표에 없는 값, notes.gs 보조 시트 보관)은 changes 안의 한 항목으로 함께 받는다:
+ *     { col: -1, before: null, note: "modelPolicyName", noteBefore: "화면에서 본 정책명", noteValue: "새 정책명" }
+ *   col: -1 은 예전 update-handler.gs 가 "형식 오류"로 요청 전체를 거부하게 하려는 것이다
+ *   (예전 코드가 장표 칸만 고치고 정책명은 몰래 빠뜨리는 일이 없다).
+ *   정책명만 바꾸면 장표 칸은 하나도 쓰지 않는다 (수식 변환·번호 다시 매기기도 안 함).
+ *   개통일·CTN 이 없거나, 같은 개통일·고객·CTN 판매가 2건 이상이면(다른 판매에 붙을 수 있음) 아무것도 쓰지 않고 거부한다.
+ *   지금 보관된 정책명이 화면에서 본 값(noteBefore)과 다르면 거부한다.
  * 시트 이름은 실제 월 시트 이름 "1월"~"12월" 형식 (예: "10월"). "2026년 10월" 같은 화면 표시용 글자는 받지 않는다.
  * 응답: { ok, handler, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
  */
@@ -64,8 +71,40 @@ function wsHandleSaleUpdate_(e) {
   }
 
   // 바꿀 칸 검사: A, D~AL 만 (B No.·C 개통일 금지), 같은 칸 두 번 금지
-  var changes = body.changes;
-  if (!Array.isArray(changes) || changes.length === 0 || changes.length > WS_COLUMN_COUNT) {
+  var rawChanges = body.changes;
+  if (
+    !Array.isArray(rawChanges) ||
+    rawChanges.length === 0 ||
+    rawChanges.length > WS_COLUMN_COUNT + 1
+  ) {
+    return reply({ ok: false, message: "수정할 항목이 없습니다." });
+  }
+  // 정책명(참고내용) 항목은 장표 칸과 따로 뺀다
+  var changes = [];
+  var notePatch = null;
+  for (var r = 0; r < rawChanges.length; r++) {
+    var item = rawChanges[r] || {};
+    if (typeof item.note === "string") {
+      if (
+        notePatch ||
+        !Object.prototype.hasOwnProperty.call(WS_EDITABLE_NOTE_FIELDS, item.note) ||
+        typeof item.noteBefore !== "string" ||
+        typeof item.noteValue !== "string" ||
+        item.noteValue.length > 500 ||
+        body.keepRowFormulas === true
+      ) {
+        return reply({ ok: false, message: "수정할 항목 형식이 올바르지 않습니다." });
+      }
+      notePatch = {
+        field: item.note,
+        before: item.noteBefore.trim(),
+        value: item.noteValue.trim(),
+      };
+      continue;
+    }
+    changes.push(item);
+  }
+  if (changes.length > WS_COLUMN_COUNT) {
     return reply({ ok: false, message: "수정할 항목이 없습니다." });
   }
   var seen = {};
@@ -89,7 +128,7 @@ function wsHandleSaleUpdate_(e) {
     seen[col] = true;
     if (!checkOnly) writes++;
   }
-  if (writes === 0) {
+  if (writes === 0 && !notePatch) {
     return reply({ ok: false, message: "수정할 항목이 없습니다." });
   }
 
@@ -166,6 +205,42 @@ function wsHandleSaleUpdate_(e) {
       });
     }
 
+    // 정책명: 장표에 아무것도 쓰기 전에 연결 키·현재 값 확인 (실패하면 아무것도 쓰지 않음)
+    if (notePatch) {
+      var preview = current.slice();
+      for (var p = 0; p < changes.length; p++) {
+        if (changes[p].check === true) continue;
+        var pv = changes[p].value;
+        preview[Number(changes[p].col)] =
+          typeof pv === "string" ? pv.replace(/^'/, "") : pv;
+      }
+      var fromKey = wsNoteKey_(sheetName, current, tz);
+      var toKey = wsNoteKey_(sheetName, preview, tz);
+      if (!fromKey || !toKey) {
+        return reply({
+          ok: false,
+          message: "개통일·CTN 이 없는 판매라 정책명을 저장할 수 없습니다. 수정하지 않았습니다.",
+        });
+      }
+      if (
+        wsCountNoteKey_(sheet, tz, fromKey) !== 1 ||
+        (toKey !== fromKey && wsCountNoteKey_(sheet, tz, toKey) !== 0)
+      ) {
+        return reply({
+          ok: false,
+          message:
+            "같은 개통일·고객·CTN 판매가 장표에 2건 이상 있어 정책명이 다른 판매에 붙을 수 있습니다. 수정하지 않았습니다.",
+        });
+      }
+      if (wsNoteValue_(ss, fromKey, notePatch.field) !== notePatch.before) {
+        return reply({
+          ok: false,
+          message:
+            "보관된 정책명이 화면과 달라 수정하지 않았습니다. 화면을 새로고침한 뒤 다시 확인해 주세요.",
+        });
+      }
+    }
+
     // 바뀐 칸만 그 칸에 쓴다 (B·C 열과 다른 칸, 확인만 하는 칸은 그대로)
     for (var w = 0; w < changes.length; w++) {
       if (changes[w].check === true) continue;
@@ -173,7 +248,7 @@ function wsHandleSaleUpdate_(e) {
     }
     // N·U·AB·AC 가 숫자로 고정돼 있으면 같은 행 수식으로 (이미 수식이면 그대로)
     // keepRowFormulas: true 면 바꿀 칸 외에는 아무것도 쓰지 않는다
-    for (var s = 0; body.keepRowFormulas !== true && s < WS_ROW_FORMULA_COLUMNS.length; s++) {
+    for (var s = 0; body.keepRowFormulas !== true && writes > 0 && s < WS_ROW_FORMULA_COLUMNS.length; s++) {
       var fc = WS_ROW_FORMULA_COLUMNS[s];
       if (formulas[fc] === "") {
         sheet.getRange(rowNumber, fc + 1).setFormula(wsRowFormula_(fc, rowNumber));
@@ -181,7 +256,7 @@ function wsHandleSaleUpdate_(e) {
     }
     SpreadsheetApp.flush();
     // B열 판매 No. 다시 매기기 (개통구분 UMNP ↔ 일반 변경 반영). 실패해도 수정은 그대로 (다음 저장 때 다시 매김)
-    if (body.keepRowFormulas !== true) {
+    if (body.keepRowFormulas !== true && writes > 0) {
       try {
         wsRenumberSaleRows_(sheet, tz, rowNumber - WS_FIRST_ROW);
         SpreadsheetApp.flush();
@@ -196,7 +271,18 @@ function wsHandleSaleUpdate_(e) {
     } catch (err) {
       // 참고내용 키 이동에 실패해도 판매 수정은 그대로
     }
-    return reply({
+    // 정책명: 수정 후 값(고객명·CTN 이 바뀌었으면 새 키)에 그 항목만 저장 (다른 참고 항목은 그대로)
+    var savedNotes = null;
+    var notePatched = false;
+    if (notePatch) {
+      try {
+        savedNotes = wsPatchNote_(ss, wsNoteInfo_(sheetName, after, tz), notePatch.field, notePatch.value);
+        notePatched = true;
+      } catch (err) {
+        // 장표 칸 수정은 그대로. 웹앱이 notePatched 가 없으면 정책명 미저장을 알린다
+      }
+    }
+    var result = {
       ok: true,
       sheet: sheetName,
       row: rowNumber,
@@ -204,8 +290,13 @@ function wsHandleSaleUpdate_(e) {
       values: after.map(function (v) {
         return v instanceof Date ? Utilities.formatDate(v, tz, "yyyy-MM-dd") : v;
       }),
-      message: "판매내역이 수정되었습니다.",
-    });
+      message: writes > 0 ? "판매내역이 수정되었습니다." : "정책명이 수정되었습니다.",
+    };
+    if (notePatch) {
+      result.notePatched = notePatched;
+      if (savedNotes) result.notes = savedNotes;
+    }
+    return reply(result);
   } finally {
     lock.releaseLock();
   }

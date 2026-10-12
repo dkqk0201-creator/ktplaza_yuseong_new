@@ -13,10 +13,25 @@ export interface UpdateSaleRequest {
   target: UpdateSaleTarget;
   /** 바꾼 칸 (N·U·AB·AC 자동 항목이 섞여 있어도 서버가 버림 — 장표 수식이 계산) */
   changes: SaleChange[];
+  /**
+   * 정책명(S열 모델정책 금액의 정책명) 변경. 장표가 아니라 웹앱참고 보조 시트에 보관.
+   * before = 화면에서 본 값, after = 새 값 ("" = 지우기). 바뀌었을 때만 보낸다.
+   */
+  policyName?: { before: string; after: string };
 }
 
 export type UpdateSaleResponse =
-  | { ok: true; message: string; row: number; no: string; values: unknown[] }
+  | {
+      ok: true;
+      message: string;
+      row: number;
+      no: string;
+      values: unknown[];
+      /** 정책명을 보냈을 때: 저장 후 이 판매의 참고내용 */
+      notes?: Record<string, string>;
+      /** 장표 칸은 수정됐지만 정책명은 저장하지 못한 경우 등 */
+      warning?: string;
+    }
   | { ok: false; message: string; errors?: string[] };
 
 export const UPDATE_SALE_ENDPOINT = "/api/sales/update";
