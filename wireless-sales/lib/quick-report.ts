@@ -817,7 +817,7 @@ const EMPTY = (v: SheetRowValues[ColumnKey]) =>
  *   G·H              → X (검수·수납은 신규 등록 시 항상 X)
  *   O~T              → 값이 없으면 "-",  N = O+P+Q+R+S+T
  *   V~AA             → 값이 없으면 "-",  U = V+W+X+Y (Z·AA 제외)
- *   AB = Z − AA,  AC = N + U + AB   ("-"·빈칸은 0 으로 계산, AB 가 음수여도 0 으로 바꾸지 않음)
+ *   AB = Z − AA,  AC = N − U + AB 최종 남은 예산  ("-"·빈칸은 0 으로 계산, AB 가 음수여도 0 으로 바꾸지 않음)
  *   AD~AG, AI·AJ     → 값이 없으면 X
  *   AH·AK·AL 및 그 밖의 칸은 기존 규칙 그대로 (여기서 바꾸지 않음)
  */
@@ -855,9 +855,9 @@ export function applyQuickColumnRules(input: SheetRowValues): SheetRowValues {
   row.usedPhoneRemaining =
     amountOf(row.usedPhoneSale) - amountOf(row.usedPhoneUsed); // AB = Z − AA
   row.finalTotal =
-    amountOf(row.securedTotal) +
+    amountOf(row.securedTotal) -
     amountOf(row.usedTotal) +
-    amountOf(row.usedPhoneRemaining); // AC = N + U + AB
+    amountOf(row.usedPhoneRemaining); // AC = N − U + AB (최종 남은 예산, 장표에는 Apps Script 가 수식으로 넣음)
   xIfEmpty(["secondPerformance", "jeca", "cardType", "cardChecked"]); // AD~AG
   xIfEmpty(["addon", "insurance"]); // AI·AJ
   return row;

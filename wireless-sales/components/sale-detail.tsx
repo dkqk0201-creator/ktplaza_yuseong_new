@@ -123,7 +123,7 @@ const SECTIONS: { title: string; keys: ColumnKey[]; strong?: ColumnKey[] }[] = [
       "wiredAvailableDate",
     ],
   },
-  { title: "합계", keys: ["finalTotal"], strong: ["finalTotal"] },
+  { title: "최종 남은 예산", keys: ["finalTotal"], strong: ["finalTotal"] },
 ];
 
 /*

@@ -35,7 +35,7 @@ export const SHEET_COLUMNS = [
   { letter: "Z", key: "usedPhoneSale", label: "중고판매 판매" },
   { letter: "AA", key: "usedPhoneUsed", label: "중고판매 사용" },
   { letter: "AB", key: "usedPhoneRemaining", label: "중고판매 잔여" },
-  { letter: "AC", key: "finalTotal", label: "합계" },
+  { letter: "AC", key: "finalTotal", label: "최종 남은 예산" },
   { letter: "AD", key: "secondPerformance", label: "2ND" },
   { letter: "AE", key: "jeca", label: "제카" },
   { letter: "AF", key: "cardType", label: "카드 종류" },

@@ -22,7 +22,7 @@
  *     정렬하지 않고 예전 방식(위에서부터 첫 빈 행)으로 저장한다 (응답 sorted: false).
  *     이때도 새 판매를 쓰는 그 한 행의 A열·C~AL열 메모만 비운다 (다른 행 메모는 그대로).
  * N·U·AB·AC열: 판매 행에는 숫자 대신 같은 행 수식을 넣는다 → 시트에서 O~T·V~Y·Z·AA 를 고치면 바로 다시 계산.
- *   N = SUM(O행:T행), U = SUM(V행:Y행), AB = N(Z행)-N(AA행), AC = SUM(N행,U행,AB행)
+ *   N = SUM(O행:T행), U = SUM(V행:Y행), AB = N(Z행)-N(AA행), AC = N(N행)-N(U행)+N(AB행) (최종 남은 예산 = N − U + AB)
  *   ("-"·빈칸·글자는 0, 음수 그대로). 정렬로 판매가 다른 행으로 옮겨지면 그 행 번호의 수식을 새로 쓴다.
  *   빈 행(판매 없음)은 기존 빈 행 모양 그대로. 8행 합계 수식은 건드리지 않는다.
  * B열 판매 No. 자동 번호 (저장·수정·삭제 후): 판매 자리를 위에서부터 1, 2, 3… 으로 매기되
@@ -40,7 +40,7 @@ var WS_SAVE_BATCH_MAX = 30;
 var WS_N_INDEX = 13; // N열 총 확보금액 = O+P+Q+R+S+T
 var WS_U_INDEX = 20; // U열 총 사용금액 = V+W+X+Y
 var WS_AB_INDEX = 27; // AB열 중고판매 잔여 = Z − AA
-var WS_AC_INDEX = 28; // AC열 합계 = N + U + AB
+var WS_AC_INDEX = 28; // AC열 최종 남은 예산 = N − U + AB (총 확보 − 총 사용 + 중고판매 잔여)
 var WS_ROW_FORMULA_COLUMNS = [WS_N_INDEX, WS_U_INDEX, WS_AB_INDEX, WS_AC_INDEX];
 
 /** N·U·AB·AC열인지 */
@@ -53,7 +53,9 @@ function wsRowFormula_(index, r) {
   if (index === WS_N_INDEX) return "=SUM(O" + r + ":T" + r + ")";
   if (index === WS_U_INDEX) return "=SUM(V" + r + ":Y" + r + ")";
   if (index === WS_AB_INDEX) return "=N(Z" + r + ")-N(AA" + r + ")";
-  return "=SUM(N" + r + ",U" + r + ",AB" + r + ")";
+  // AC: 최종 남은 예산 = N − U + AB (예: =N(N9)-N(U9)+N(AB9)). =N9-U9+AB9 와 값은 같고,
+  // 사람이 N·U·AB 칸에 "-" 같은 글자를 쳐도 #VALUE! 오류 없이 0 으로 계산한다 (AB 수식과 같은 방식)
+  return "=N(N" + r + ")-N(U" + r + ")+N(AB" + r + ")";
 }
 
 /** 판매 행 38칸에 N·U·AB·AC 수식을 넣은 사본 (rowNumber = 실제로 쓰일 행) */

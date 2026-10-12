@@ -12,7 +12,7 @@ import { amountOf } from "@/lib/quick-report";
  * 검수관리 "판매 수정": 기존 판매 1건의 값 고치기 (화면·서버 공용 규칙).
  * - B열 No.·C열 개통일은 고칠 수 없다.
  * - N·U·AB·AC열은 장표의 같은 행 수식이라 직접 고치지 않는다 (웹앱은 이 4칸을 쓰지 않음):
- *     N = O+…+T, U = V+W+X+Y, AB = Z − AA, AC = N + U + AB  ("-"·빈칸은 0, 음수 그대로)
+ *     N = O+…+T, U = V+W+X+Y, AB = Z − AA, AC = N − U + AB (최종 남은 예산)  ("-"·빈칸은 0, 음수 그대로)
  *   O~T·V~Y·Z·AA 를 고치면 장표가 다시 계산하고, 화면에는 바뀔 값을 자동 항목으로 보여준다.
  * - 바뀐 칸만 보낸다. before = 화면에서 본 값(장표와 대조용), after = 새 값.
  */
@@ -23,7 +23,7 @@ export const LOCKED_KEYS = [
   "securedTotal", // N = SUM(O:T) 수식
   "usedTotal", // U = SUM(V:Y) 수식
   "usedPhoneRemaining", // AB = Z − AA 수식
-  "finalTotal", // AC = N + U + AB 수식
+  "finalTotal", // AC = N − U + AB 수식 (최종 남은 예산)
 ] as const;
 
 /** N·U·AB·AC열: 장표 행별 수식 칸 (직접 수정 불가, 화면 표시용 자동 항목) */
@@ -58,7 +58,7 @@ export const USED_PART_KEYS = [
 
 /**
  * 장표 행별 수식이 계산할 N·U·AB·AC (수정 화면 입력값 기준, 장표 SUM·N 함수와 같게 "-"·빈칸·글자는 0)
- *   N = O+…+T, U = V+W+X+Y, AB = Z − AA, AC = N + U + AB
+ *   N = O+…+T, U = V+W+X+Y, AB = Z − AA, AC = N − U + AB
  */
 export function rowFormulaValues(
   sale: SheetSale,
@@ -176,13 +176,13 @@ export const ROW_FORMULA_NOTE: Record<RowFormulaKey, string> = {
   securedTotal: "O~T 합계 수식 자동",
   usedTotal: "V~Y 합계 수식 자동",
   usedPhoneRemaining: "Z−AA 수식 자동",
-  finalTotal: "N+U+AB 수식 자동",
+  finalTotal: "N−U+AB 수식 자동",
 };
 
 /* ---------- 행별 수식 칸 N·U·AB·AC (장표가 계산, 화면은 바뀔 값만 표시) ---------- */
 
 /**
- * AB = Z − AA,  AC = N + U + AB
+ * AB = Z − AA,  AC = N − U + AB (최종 남은 예산 = 총 확보 − 총 사용 + 중고판매 잔여)
  * "-"·빈칸·숫자가 아닌 값은 계산할 때만 0 (간편등록 applyQuickColumnRules·장표 수식과 같은 결과).
  * AB 가 음수여도 0 으로 바꾸지 않는다.
  */
@@ -197,7 +197,7 @@ export function calcUsedPhone(values: {
   return {
     usedPhoneRemaining: remaining,
     finalTotal:
-      amountOf(values.securedTotal) + amountOf(values.usedTotal) + remaining,
+      amountOf(values.securedTotal) - amountOf(values.usedTotal) + remaining,
   };
 }
 
