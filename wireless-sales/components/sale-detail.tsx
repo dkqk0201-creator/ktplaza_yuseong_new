@@ -374,10 +374,10 @@ export function SaleDetail({
       // (고객명·CTN 을 바꾸면 Apps Script 가 참고내용 연결 키도 함께 옮긴다)
       // 정책명을 바꿨으면 Apps Script 가 돌려준 저장 후 참고내용으로 바꾼다
       const next = parseSheetRow(result.row, result.no, result.values);
-      const notes = result.notes ?? sale.notes;
+      const savedNotes = result.notes ?? sale.notes;
       const shown: SheetSale = {
         ...next,
-        ...(notes && Object.keys(notes).length > 0 ? { notes } : {}),
+        ...(savedNotes && Object.keys(savedNotes).length > 0 ? { notes: savedNotes } : {}),
         ...(sale.review ? { review: sale.review } : {}),
       };
       setUpdated(shown);
