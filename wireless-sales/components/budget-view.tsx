@@ -107,7 +107,8 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
 /**
  * 고객혜택 사용금액 확인 (예산 금액은 장표 U열 = SUM(V:Y) 기준 그대로, 여기서는 확인만 — 자동으로 고치지 않음)
  *  1) V열(고혜(요금)+고혜(기존할부금) 합계)과 웹앱 세부 합계가 다른 판매 (구글시트에서 V열을 직접 고친 경우 등)
- *  2) 이전에 잘못 적용했던 규칙(W열에 고혜(기존할부금) 합산)으로 저장된 의심 판매
+ *  2) 이전에 잘못 적용했던 규칙(W열에 고혜(기존할부금) 합산)으로 입력된 금액이 현재 W열에 그대로 남아 있는 판매
+ *     (과거 웹앱참고 기록만 남고 W열은 이미 바로잡은 판매는 표시하지 않음 — oldWRuleSuspect 기준)
  */
 function UsedCheckSection({ sales }: { sales: SheetSale[] }) {
   const mismatches = vMismatches(sales);
@@ -124,7 +125,7 @@ function UsedCheckSection({ sales }: { sales: SheetSale[] }) {
       key: `w${sale.row}`,
       sale,
       kind: "이전 규칙 의심 (W열 합산)",
-      detail: `W열 ${wonText(suspect.w)} 중 고혜(기존할부금) ${wonText(suspect.installment)}이 합산됐을 수 있음 · V열 ${wonText(sale.usedModelPlan ?? 0)}`,
+      detail: `W열 ${wonText(suspect.w)} = 이전 규칙 합계 그대로 (추가지원금 ${wonText(suspect.extra ?? 0)} + 고혜(기존할부금) ${wonText(suspect.installment)}) · V열 ${wonText(sale.usedModelPlan ?? 0)}`,
     })),
   ];
   return (

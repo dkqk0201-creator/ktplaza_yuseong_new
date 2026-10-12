@@ -54,15 +54,21 @@ export function vSplitOf(sale: Pick<SheetSale, "notes" | "usedModelPlan">): VSpl
 }
 
 /**
- * 이전 잘못된 규칙(W열에 고혜(기존할부금) 합산)으로 저장된 것으로 의심되는 판매.
- * 세부 기록에 고혜(기존할부금)(wInstallment)이 0 이 아닌 금액으로 남아 있으면 의심 건. 금액은 고치지 않는다.
+ * 이전 잘못된 규칙(W열에 고혜(기존할부금) 합산)으로 입력된 금액이 현재 W열에 실제로 남아 있는 판매.
+ * - 세부 기록에 고혜(기존할부금)(wInstallment)이 0 이 아닌 금액으로 있고,
+ * - 현재 W열 = 이전 규칙 합계(추가지원금 wExtraSupport(없으면 0) + wInstallment) 그대로일 때만 의심 건.
+ * W열을 이미 바로잡은 판매(W열이 이전 합계와 다름 — 빈칸·0·정상 추가지원금)는 과거 기록이 남아 있어도 경고하지 않는다.
+ * 예산관리·판매 상세·판매 수정 화면이 모두 이 함수 하나로 판별한다. 금액·기록은 고치지 않는다.
  */
 export function oldWRuleSuspect(
   sale: Pick<SheetSale, "notes" | "usedExtraSupport">,
 ): { installment: number; extra: number | null; w: number } | null {
   const installment = storedAmount(sale, OLD_W_INSTALLMENT);
   if (installment === null || installment === 0) return null;
-  return { installment, extra: storedAmount(sale, OLD_W_EXTRA), w: sale.usedExtraSupport ?? 0 };
+  const extra = storedAmount(sale, OLD_W_EXTRA);
+  const w = sale.usedExtraSupport ?? 0;
+  if (w !== (extra ?? 0) + installment) return null;
+  return { installment, extra, w };
 }
 
 /** 금액 입력 → 숫자 (빈칸 null, 숫자가 아니면 undefined). 쉼표·"원" 허용 */
