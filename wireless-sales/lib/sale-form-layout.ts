@@ -3,7 +3,7 @@ import { NOTE_FIELDS, QUICK_FIELDS, type QuickFieldId } from "@/lib/quick-report
 import { EDITABLE_KEYS, ROW_FORMULA_KEYS } from "@/lib/sale-edit";
 import { COLUMN_LABEL, COLUMN_LETTER, SHEET_COLUMNS, type ColumnKey } from "@/lib/sheet-columns";
 import type { SheetSale } from "@/lib/sheet-record";
-import { W_EXTRA, W_INSTALLMENT, W_PART_KEYS, parseWPart, type WPartKey } from "@/lib/w-split";
+import { V_INSTALLMENT, V_PART_KEYS, V_PLAN, parseVPart, type VPartKey } from "@/lib/v-split";
 
 /*
  * 간편등록 · 판매 수정 공용 입력 화면 구성 (항목·제목·순서·그룹).
@@ -101,30 +101,30 @@ export const NOTE_HINT = "장표 저장 안 함 (참고)";
 
 /**
  * 참고내용(웹앱참고) 항목 id: 장표 저장 안 함 항목 + 2ND 첫 줄 원문
- * + W열 세부 금액(wExtraSupport·wInstallment — 판매 수정의 추가지원금·고혜(기존할부금) 입력이 함께 바꿈)
+ * + V열 세부 금액(vPlan·vInstallment — 판매 수정의 고혜(요금)·고혜(기존할부금) 입력이 함께 바꿈)
  */
-export type NoteFieldId = (typeof NOTE_FIELDS)[number]["id"] | WPartKey;
+export type NoteFieldId = (typeof NOTE_FIELDS)[number]["id"] | VPartKey;
 /** 화면 입력칸이 있는 참고 항목 (장표 저장 안 함) */
 export const NOTE_FIELD_IDS: readonly NoteFieldId[] = NOTE_FIELDS.map((f) => f.id);
 /** 판매 수정으로 고칠 수 있는 참고내용 키 전부 (Apps Script notes.gs WS_EDITABLE_NOTE_FIELDS 와 같게 유지) */
-export const EDITABLE_NOTE_KEYS: readonly NoteFieldId[] = [...NOTE_FIELD_IDS, ...W_PART_KEYS];
+export const EDITABLE_NOTE_KEYS: readonly NoteFieldId[] = [...NOTE_FIELD_IDS, ...V_PART_KEYS];
 const NOTE_SET = new Set<string>(EDITABLE_NOTE_KEYS);
 export function isNoteField(id: string): id is NoteFieldId {
   return NOTE_SET.has(id);
 }
-function isWPart(id: string): id is WPartKey {
-  return id === W_EXTRA || id === W_INSTALLMENT;
+function isVPart(id: string): id is VPartKey {
+  return id === V_PLAN || id === V_INSTALLMENT;
 }
 
 /** 판매 수정 입력칸 1개 */
 export type EditSpec =
   | { kind: "column"; id: QuickFieldId; key: ColumnKey; label: string; hint: string }
   | { kind: "note"; id: QuickFieldId; field: NoteFieldId; label: string; hint: string }
-  /** W열 합계의 한 부분 (추가지원금 / 고혜(기존할부금)) — W열 = 두 입력의 합, 세부는 참고내용 */
-  | { kind: "wpart"; id: QuickFieldId; part: WPartKey; label: string; hint: string };
+  /** V열 합계의 한 부분 (고혜(요금) / 고혜(기존할부금)) — V열 = 두 입력의 합, 세부는 참고내용 */
+  | { kind: "vpart"; id: QuickFieldId; part: VPartKey; label: string; hint: string };
 
-/** W열 합산 항목 안내 */
-export const W_HINT = "→ W열 (추가지원금 + 고혜(기존할부금) 합계)";
+/** V열 합산 항목 안내 */
+export const V_HINT = "→ V열 (고혜(요금) + 고혜(기존할부금) 합계)";
 
 /**
  * 간편등록 항목 1개 → 판매 수정 입력칸 (보통 1개).
@@ -147,8 +147,8 @@ export function editSpecsFor(id: QuickFieldId): EditSpec[] {
       },
     ];
   }
-  if (id === "useExtraSupport") return [{ kind: "wpart", id, part: W_EXTRA, label, hint: W_HINT }];
-  if (id === "useInstallment") return [{ kind: "wpart", id, part: W_INSTALLMENT, label, hint: W_HINT }];
+  if (id === "usePlan") return [{ kind: "vpart", id, part: V_PLAN, label, hint: V_HINT }];
+  if (id === "useInstallment") return [{ kind: "vpart", id, part: V_INSTALLMENT, label, hint: V_HINT }];
   if (field.column) {
     return [{ kind: "column", id, key: field.column, label, hint: columnHint(field.column) }];
   }
@@ -179,7 +179,7 @@ export function extraColumnKeys(): ColumnKey[] {
     for (const it of g.items)
       for (const s of [...it.main, ...it.children]) {
         if (s.kind === "column") used.add(s.key);
-        if (s.kind === "wpart") used.add("usedExtraSupport"); // W열은 두 입력의 합계로만 고친다
+        if (s.kind === "vpart") used.add("usedModelPlan"); // V열은 두 입력의 합계로만 고친다
       }
   const allowed = new Set<ColumnKey>([...EDITABLE_KEYS, ...ROW_FORMULA_KEYS]);
   return SHEET_COLUMNS.map((c) => c.key).filter((k) => allowed.has(k) && !used.has(k));
@@ -226,15 +226,15 @@ export function diffNotes(
 /** 참고 항목 입력 검사 (문제 없으면 null) */
 export function noteError(field: NoteFieldId, value: string): string | null {
   if (field === POLICY_NAME_FIELD) return policyNameError(value);
-  if (isWPart(field)) return parseWPart(value) === undefined ? "금액은 숫자로 입력해 주세요." : null;
+  if (isVPart(field)) return parseVPart(value) === undefined ? "금액은 숫자로 입력해 주세요." : null;
   return value.trim().length > NOTE_MAX ? `${NOTE_MAX}자 이내로 입력해 주세요.` : null;
 }
 
 /** 참고 항목 화면 이름 (변경 확인 목록용) */
 export function noteLabel(field: NoteFieldId): string {
   if (field === "second") return "2ND (보고 내용)";
-  if (field === W_EXTRA) return "정책사용 → 추가지원금 (W열 세부)";
-  if (field === W_INSTALLMENT) return "정책사용 → 고혜(기존할부금) (W열 세부)";
+  if (field === V_PLAN) return "정책사용 → 고혜(요금) (V열 세부)";
+  if (field === V_INSTALLMENT) return "정책사용 → 고혜(기존할부금) (V열 세부)";
   if (field === POLICY_NAME_FIELD) return "정책 → 정책명";
   return FIELD_BY_ID.get(field as QuickFieldId)?.label ?? field;
 }

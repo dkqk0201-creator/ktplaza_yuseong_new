@@ -11,7 +11,7 @@ import { BUDGET_COLUMNS, calculateBudget } from "@/lib/budget";
 import { formatNumber } from "@/lib/format";
 import type { SheetSale } from "@/lib/sheet-record";
 import { postpaidCount } from "@/lib/umnp";
-import { wMismatches, wonText } from "@/lib/w-split";
+import { oldWRuleSuspects, vMismatches, wonText } from "@/lib/v-split";
 import { formatCtn } from "@/lib/format";
 import { monthDayText } from "@/lib/sale-display";
 
@@ -96,7 +96,7 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         ))}
       </section>
 
-      <WMismatchSection sales={sales} />
+      <UsedCheckSection sales={sales} />
 
       {/* 현재 실적 = 후불 실적 건수 (UMNP 제외). 위 예산 금액은 UMNP 포함 */}
       <GoalSection sheet={sheet} achieved={postpaidCount(sales)} />
@@ -105,44 +105,57 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
 }
 
 /**
- * W열(추가지원금 + 고혜(기존할부금) 합계)과 웹앱 세부 합계가 다른 판매 (구글시트에서 W열을 직접 고친 경우 등).
- * 예산 사용금액은 장표 W열(U열 수식) 기준 그대로이며, 여기서는 확인만 한다 (자동으로 고치지 않음).
+ * 고객혜택 사용금액 확인 (예산 금액은 장표 U열 = SUM(V:Y) 기준 그대로, 여기서는 확인만 — 자동으로 고치지 않음)
+ *  1) V열(고혜(요금)+고혜(기존할부금) 합계)과 웹앱 세부 합계가 다른 판매 (구글시트에서 V열을 직접 고친 경우 등)
+ *  2) 이전에 잘못 적용했던 규칙(W열에 고혜(기존할부금) 합산)으로 저장된 의심 판매
  */
-function WMismatchSection({ sales }: { sales: SheetSale[] }) {
-  const list = wMismatches(sales);
-  if (list.length === 0) return null;
+function UsedCheckSection({ sales }: { sales: SheetSale[] }) {
+  const mismatches = vMismatches(sales);
+  const suspects = oldWRuleSuspects(sales);
+  if (mismatches.length === 0 && suspects.length === 0) return null;
+  const rows: { key: string; sale: SheetSale; kind: string; detail: string }[] = [
+    ...mismatches.map(({ sale, split }) => ({
+      key: `v${sale.row}`,
+      sale,
+      kind: "V열 세부 불일치",
+      detail: `V열 ${wonText(split.v)} ≠ 세부 합계 ${wonText(split.detailSum ?? 0)} (고혜(요금) ${wonText(split.plan ?? 0)} + 고혜(기존할부금) ${wonText(split.installment ?? 0)})`,
+    })),
+    ...suspects.map(({ sale, suspect }) => ({
+      key: `w${sale.row}`,
+      sale,
+      kind: "이전 규칙 의심 (W열 합산)",
+      detail: `W열 ${wonText(suspect.w)} 중 고혜(기존할부금) ${wonText(suspect.installment)}이 합산됐을 수 있음 · V열 ${wonText(sale.usedModelPlan ?? 0)}`,
+    })),
+  ];
   return (
     <section
-      aria-label="W열 세부 불일치"
+      aria-label="고객혜택 사용금액 확인"
       className="overflow-x-auto rounded-xl border border-amber-300 bg-white"
     >
       <p className="border-b border-amber-200 bg-amber-50/60 px-4 py-3 text-sm font-bold text-amber-900">
-        ⚠ W열(추가지원금+고혜(기존할부금)) 세부 불일치 {list.length}건
+        ⚠ 고객혜택 사용금액 확인 필요 {rows.length}건
         <span className="mt-0.5 block text-xs font-normal text-amber-800">
-          예산 금액은 장표 W열 값 기준입니다. 검수관리 → 판매 수정에서 두 금액을 확인해 주세요. (자동으로 고치지 않음)
+          예산 금액은 장표 V·W열(U열 합계) 기준입니다. 검수관리 → 판매 상세 → 판매 수정에서 확인 후 직접 고쳐 주세요.
+          (자동으로 옮기거나 고치지 않음 · 규칙: V열 = 고혜(요금)+고혜(기존할부금), W열 = 추가지원금)
         </span>
       </p>
-      <table className="w-full min-w-[520px] text-sm">
+      <table className="w-full min-w-[640px] text-sm">
         <thead className="bg-zinc-50 text-xs text-ink-sub">
           <tr>
-            {["개통일", "고객명", "CTN", "W열", "웹앱 세부 합계"].map((h) => (
+            {["행", "개통일", "고객명", "CTN", "구분", "내용"].map((h) => (
               <th key={h} className="px-3 py-2 text-left font-semibold">{h}</th>
             ))}
           </tr>
         </thead>
         <tbody className="divide-y divide-line tabular-nums text-ink">
-          {list.map(({ sale, split }) => (
-            <tr key={sale.row}>
+          {rows.map(({ key, sale, kind, detail }) => (
+            <tr key={key} className="align-top">
+              <td className="px-3 py-2 whitespace-nowrap text-ink-muted">{sale.row}행</td>
               <td className="px-3 py-2 whitespace-nowrap">{monthDayText(sale.activatedAt)}</td>
               <td className="px-3 py-2 whitespace-nowrap">{sale.customer || "-"}</td>
               <td className="px-3 py-2 whitespace-nowrap">{formatCtn(sale.ctn) || "-"}</td>
-              <td className="px-3 py-2 whitespace-nowrap">{wonText(split.w)}</td>
-              <td className="px-3 py-2 whitespace-nowrap">
-                {wonText(split.detailSum ?? 0)}
-                <span className="ml-1 text-xs text-ink-muted">
-                  (추가 {wonText(split.extra ?? 0)} + 할부 {wonText(split.installment ?? 0)})
-                </span>
-              </td>
+              <td className="px-3 py-2 whitespace-nowrap font-semibold text-rose-600">{kind}</td>
+              <td className="px-3 py-2 text-xs">{detail}</td>
             </tr>
           ))}
         </tbody>

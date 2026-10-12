@@ -1,7 +1,7 @@
 import type { ColumnKey, SheetRowValues } from "@/lib/sheet-columns";
 import { formatCtn } from "@/lib/format";
 import { cleanPolicyName, policyNameError } from "@/lib/model-policy";
-import { quickWSplit, type WPartKey } from "@/lib/w-split";
+import { quickVSplit, type VPartKey } from "@/lib/v-split";
 
 /*
  * 간편등록: 직원 카톡 판매보고 → 분석 → 검수 → 장표 한 행.
@@ -75,9 +75,8 @@ export const QUICK_FIELDS = [
     column: "securedSecond",
   },
   { id: "useExtraSupport", label: "정책사용 → 추가지원금", column: "usedExtraSupport" },
-  // 고혜(기존할부금): W열에 추가지원금과 합산 저장 (세부 금액은 참고내용 wInstallment, lib/w-split.ts)
-  { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: "usedExtraSupport" },
-  // 고혜(요금): V열(모델/요금)에 금액 저장
+  // 고혜(기존할부금)·고혜(요금): V열(모델/요금)에 두 금액의 합계 저장 (세부는 참고내용 vInstallment·vPlan, lib/v-split.ts)
+  { id: "useInstallment", label: "정책사용 → 고혜(기존할부금)", column: "usedModelPlan" },
   { id: "usePlan", label: "정책사용 → 고혜(요금)", column: "usedModelPlan" },
   // 2ND 첫 줄: 내용이 있으면 AD = O, 공란·X 면 AD = X. 적은 글자(예: 워치)는 참고내용으로도 보관
   { id: "second", label: "2ND", column: "secondPerformance" },
@@ -366,8 +365,8 @@ export interface QuickNormalized {
   notes: SaleNotes;
 }
 
-/** 참고 항목 id → 직원이 적은 원문 (+ W열 세부 금액 wExtraSupport·wInstallment) */
-export type SaleNotes = Partial<Record<QuickFieldId | WPartKey, string>>;
+/** 참고 항목 id → 직원이 적은 원문 (+ V열 세부 금액 vPlan·vInstallment) */
+export type SaleNotes = Partial<Record<QuickFieldId | VPartKey, string>>;
 
 /**
  * 참고내용으로 보관하는 항목: 장표 저장 안 함(참고) 항목 + 2ND 첫 줄 원문
@@ -506,7 +505,7 @@ export function normalizeQuick(
   const issues: QuickIssue[] = [];
   const display: Partial<Record<QuickFieldId, string>> = {};
   const row: SheetRowValues = {};
-  let wNotes: Partial<Record<WPartKey, string>> = {};
+  let vNotes: Partial<Record<VPartKey, string>> = {};
   const v = (id: QuickFieldId) => fields[id].trim();
   const need = (id: QuickFieldId, label: string) => {
     if (!v(id))
@@ -637,7 +636,7 @@ export function normalizeQuick(
     "policySecond",
     "dichoBenefit",
     "secondBenefit",
-    "usePlan", // V 모델/요금 ← 고혜(요금)
+    "useExtraSupport", // W 추가지원금 (단독, 다른 금액을 더하지 않음)
   ] as const) {
     const parsed = parseAmount(fields[id]);
     const column = QUICK_FIELDS.find((f) => f.id === id)!.column as ColumnKey;
@@ -649,20 +648,20 @@ export function normalizeQuick(
     }
   }
 
-  // W열 = 추가지원금 + 고혜(기존할부금) 합계 (한 번만 더함). 세부 금액은 참고내용으로 따로 보관
+  // V열 = 고혜(요금) + 고혜(기존할부금) 합계 (한 번만 더함). 세부 금액은 참고내용으로 따로 보관
   {
-    const extra = parseAmount(fields.useExtraSupport);
+    const plan = parseAmount(fields.usePlan);
     const installment = parseAmount(fields.useInstallment);
-    if ("error" in extra) issues.push({ field: "useExtraSupport", message: extra.error });
+    if ("error" in plan) issues.push({ field: "usePlan", message: plan.error });
     if ("error" in installment) issues.push({ field: "useInstallment", message: installment.error });
-    if (!("error" in extra) && !("error" in installment)) {
-      const split = quickWSplit(extra.value, installment.value);
-      if (split.w !== null) row.usedExtraSupport = split.w;
-      wNotes = split.notes;
-      if (extra.value !== null) display.useExtraSupport = `${extra.value.toLocaleString("ko-KR")}원`;
+    if (!("error" in plan) && !("error" in installment)) {
+      const split = quickVSplit(plan.value, installment.value);
+      if (split.v !== null) row.usedModelPlan = split.v;
+      vNotes = split.notes;
       if (installment.value !== null) display.useInstallment = `${installment.value.toLocaleString("ko-KR")}원`;
-      if (split.w !== null && extra.value !== null && installment.value !== null) {
-        display.useInstallment += ` (W열 합계 ${split.w.toLocaleString("ko-KR")}원)`;
+      if (plan.value !== null) display.usePlan = `${plan.value.toLocaleString("ko-KR")}원`;
+      if (split.v !== null && plan.value !== null && installment.value !== null) {
+        display.usePlan += ` (V열 합계 ${split.v.toLocaleString("ko-KR")}원)`;
       }
     }
   }
@@ -795,7 +794,7 @@ export function normalizeQuick(
     display,
     duplicateKey:
       activatedAt && ctnDigits ? `${activatedAt}|${ctnDigits}` : null,
-    notes: { ...quickNotes(fields), ...wNotes },
+    notes: { ...quickNotes(fields), ...vNotes },
   };
 }
 

@@ -154,8 +154,10 @@ function wsMoveNoteForRow_(ss, sheetName, beforeValues, afterValues, tz) {
 
 /**
  * 판매 수정 화면에서 고칠 수 있는 참고내용 항목 (간편등록의 "장표 저장 안 함 (참고)" 항목 + 2ND 원문 + 정책명
- * + W열 세부 금액). 웹앱 lib/sale-form-layout.ts 의 EDITABLE_NOTE_KEYS 와 같다.
- * useInstallment·usePlan 은 이제 W·V열 금액이지만, 예전에 글자로 보관된 기록을 지우지 않도록 목록에 남겨 둔다.
+ * + V열 세부 금액). 웹앱 lib/sale-form-layout.ts 의 EDITABLE_NOTE_KEYS 와 같다.
+ * 고객혜택 사용금액 규칙: V열 = 고혜(요금) + 고혜(기존할부금) (세부 vPlan·vInstallment), W열 = 추가지원금 단독.
+ * useInstallment·usePlan(예전 글자 메모), wExtraSupport·wInstallment(이전 W열 합산 규칙 기록)는
+ * 지우지 않도록 목록에 남겨 둔다.
  */
 var WS_EDITABLE_NOTE_FIELDS = {
   modelPolicyName: true, // 정책 → 정책명
@@ -168,9 +170,12 @@ var WS_EDITABLE_NOTE_FIELDS = {
   dichoGift: true, // 디초/삼초 → 사은품판매or수령
   usedPhone: true, // 중고폰&현물 판매
   usedPhoneWhere: true, // 중고폰&현물 → 어디에
-  // W열 세부 금액 (W열 = 추가지원금 + 고혜(기존할부금) 합계. 판매 수정에서 W열과 함께 바꾼다)
-  wExtraSupport: true, // 정책사용 → 추가지원금 금액
-  wInstallment: true, // 정책사용 → 고혜(기존할부금) 금액
+  // V열 세부 금액 (V열 = 고혜(요금) + 고혜(기존할부금) 합계. 판매 수정에서 V열과 함께 바꾼다)
+  vPlan: true, // 정책사용 → 고혜(요금) 금액
+  vInstallment: true, // 정책사용 → 고혜(기존할부금) 금액
+  // 이전(잘못된) W열 합산 규칙의 세부 기록 — 웹앱은 더 이상 쓰지 않음. 예전 기록 보존용으로만 남겨 둔다
+  wExtraSupport: true,
+  wInstallment: true,
 };
 
 /** 월 시트에서 이 키를 가진 판매 행 수 (행 번호·No. 와 무관) */

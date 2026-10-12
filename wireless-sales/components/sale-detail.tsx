@@ -46,15 +46,15 @@ import {
 } from "@/lib/sale-form-layout";
 import { POLICY_NAME_FIELD, POLICY_NAME_MAX } from "@/lib/model-policy";
 import {
-  W_EXTRA,
-  W_INSTALLMENT,
-  planWSplit,
-  wPartPrefill,
-  wSplitOf,
+  V_PLAN,
+  oldWRuleSuspect,
+  planVSplit,
+  vPartPrefill,
+  vSplitOf,
   wonText,
-  type WPartKey,
-  type WSplitEdit,
-} from "@/lib/w-split";
+  type VPartKey,
+  type VSplitEdit,
+} from "@/lib/v-split";
 
 /*
  * 판매 1건 상세 보기 (장표 A~AL 그대로) + 판매 수정 + 판매 삭제.
@@ -227,18 +227,19 @@ export function SaleDetail({
   const [saving, setSaving] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
   const [updateNotice, setUpdateNotice] = useState<string | null>(null);
-  // W열 = 추가지원금 + 고혜(기존할부금): 두 입력 중 하나라도 건드리면 W열은 두 금액의 합으로 (세부는 참고내용)
-  const [wEdit, setWEdit] = useState<WSplitEdit>({});
-  const wPlan = planWSplit(sale, mode === "view" ? {} : wEdit);
+  // V열 = 고혜(요금) + 고혜(기존할부금): 두 입력 중 하나라도 건드리면 V열은 두 금액의 합으로 (세부는 참고내용)
+  // W열(추가지원금)은 단독 장표 칸 그대로
+  const [vEdit, setVEdit] = useState<VSplitEdit>({});
+  const vPlan = planVSplit(sale, mode === "view" ? {} : vEdit);
   const editedAll: Partial<Record<ColumnKey, string>> =
-    wPlan.wAfter !== undefined ? { ...edited, usedExtraSupport: wPlan.wAfter } : edited;
+    vPlan.vAfter !== undefined ? { ...edited, usedModelPlan: vPlan.vAfter } : edited;
   const changes = mode === "view" ? [] : diffSale(sale, editedAll);
   const fieldErrors = validateEdits(changes);
   // 참고 항목 (장표 저장 안 함, 웹앱참고 보관): 손댄 항목만 값이 있다
   const [notesEdit, setNotesEdit] = useState<Partial<Record<NoteFieldId, string>>>({});
   const noteChanges: NoteChange[] =
-    mode === "view" ? [] : [...diffNotes(sale, notesEdit), ...wPlan.notes];
-  const noteErrors: Partial<Record<NoteFieldId, string>> = { ...wPlan.errors };
+    mode === "view" ? [] : [...diffNotes(sale, notesEdit), ...vPlan.notes];
+  const noteErrors: Partial<Record<NoteFieldId, string>> = { ...vPlan.errors };
   for (const field of NOTE_FIELD_IDS) {
     const value = notesEdit[field];
     if (value === undefined) continue;
@@ -357,7 +358,7 @@ export function SaleDetail({
   function startEdit() {
     setEdited({});
     setNotesEdit({});
-    setWEdit({});
+    setVEdit({});
     setUpdateError(null);
     setUpdateNotice(null);
     setDeleteError(null);
@@ -401,7 +402,7 @@ export function SaleDetail({
       setMode("view");
       setEdited({});
       setNotesEdit({});
-      setWEdit({});
+      setVEdit({});
       setUpdateNotice(
         `${result.message} (${list.length + notes.length}개 항목)` +
           (result.warning ? ` ⚠ ${result.warning}` : ""),
@@ -503,9 +504,9 @@ export function SaleDetail({
             <SaleEditForm
               sale={sale}
               edited={editedAll}
-              wEdit={wEdit}
-              wPreview={wPlan.preview}
-              onWChange={(part, value) => setWEdit((prev) => ({ ...prev, [part]: value }))}
+              vEdit={vEdit}
+              vPreview={vPlan.preview}
+              onVChange={(part, value) => setVEdit((prev) => ({ ...prev, [part]: value }))}
               errors={fieldErrors}
               onChange={(key, value) =>
                 setEdited((prev) => ({ ...prev, [key]: value }))
@@ -700,36 +701,48 @@ function MarkDoneButtons({
   );
 }
 
-/** W열 세부: 추가지원금 / 고혜(기존할부금) (웹앱 보관) + 불일치·세부 없음 표시 */
-function WSplitRows({ sale }: { sale: SheetSale }) {
-  const split = wSplitOf(sale);
+/** V열 세부: 고혜(요금) / 고혜(기존할부금) (웹앱 보관) + 불일치·세부 없음 표시 */
+function VSplitRows({ sale }: { sale: SheetSale }) {
+  const split = vSplitOf(sale);
   return (
     <div className="space-y-1 px-4 py-2.5 text-sm">
       {split.status !== "none" &&
         (
           [
-            ["ㄴ 추가지원금", split.extra],
+            ["ㄴ 고혜(요금)", split.plan],
             ["ㄴ 고혜(기존할부금)", split.installment],
           ] as const
         ).map(([label, value]) => (
           <div key={label} className="flex items-start justify-between gap-4">
             <dt className="shrink-0 text-ink-sub">
               {label}
-              <span className="ml-1.5 text-[11px] text-ink-muted">W열 세부 · 웹앱 보관</span>
+              <span className="ml-1.5 text-[11px] text-ink-muted">V열 세부 · 웹앱 보관</span>
             </dt>
             <dd className="text-right text-ink tabular-nums">{value === null ? "-" : wonText(value)}</dd>
           </div>
         ))}
-      {split.status === "none" && split.w !== 0 && (
-        <p className="text-xs text-ink-muted">W열 세부 내역 없음 (예전 등록 — 추가지원금·고혜(기존할부금)로 나누지 않음)</p>
+      {split.status === "none" && split.v !== 0 && (
+        <p className="text-xs text-ink-muted">V열 세부 내역 없음 (고혜(요금)·고혜(기존할부금)로 나누지 않음)</p>
       )}
       {split.status === "mismatch" && (
         <p role="alert" className="rounded-lg bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700">
-          ⚠ 불일치: W열 {wonText(split.w)} ≠ 세부 합계 {wonText(split.detailSum ?? 0)} — 구글시트 W열이 직접 수정된 것으로
+          ⚠ 불일치: V열 {wonText(split.v)} ≠ 세부 합계 {wonText(split.detailSum ?? 0)} — 구글시트 V열이 직접 수정된 것으로
           보입니다. 판매 수정에서 두 금액을 확인해 주세요.
         </p>
       )}
     </div>
+  );
+}
+
+/** W열(추가지원금) 아래: 이전 잘못된 합산 규칙으로 저장된 의심 건 안내 (금액은 고치지 않음) */
+function OldWRuleRow({ sale }: { sale: SheetSale }) {
+  const suspect = oldWRuleSuspect(sale);
+  if (!suspect) return null;
+  return (
+    <p role="alert" className="mx-4 my-2 rounded-lg bg-rose-50 px-2.5 py-1.5 text-xs font-semibold text-rose-700">
+      ⚠ 이전 규칙 의심: W열 {wonText(suspect.w)}에 고혜(기존할부금) {wonText(suspect.installment)}이 합산돼 저장됐을 수
+      있습니다 (지금 규칙: 고혜(기존할부금)은 V열). 확인 후 판매 수정에서 직접 고쳐 주세요.
+    </p>
   );
 }
 
@@ -762,7 +775,8 @@ function SaleView({ sale }: { sale: SheetSale }) {
                     {valueText(sale, key) || "-"}
                   </dd>
                 </div>
-                {key === "usedExtraSupport" && <WSplitRows sale={sale} />}
+                {key === "usedModelPlan" && <VSplitRows sale={sale} />}
+                {key === "usedExtraSupport" && <OldWRuleRow sale={sale} />}
                 <NoteRows sale={sale} rows={NOTES_AFTER[key]} />
               </Fragment>
             ))}
@@ -787,14 +801,14 @@ function SaleEditForm({
   notesEdit,
   noteErrors,
   onNoteChange,
-  wEdit,
-  wPreview,
-  onWChange,
+  vEdit,
+  vPreview,
+  onVChange,
 }: {
   sale: SheetSale;
-  wEdit: WSplitEdit;
-  wPreview: number | null;
-  onWChange: (part: keyof WSplitEdit, value: string) => void;
+  vEdit: VSplitEdit;
+  vPreview: number | null;
+  onVChange: (part: keyof VSplitEdit, value: string) => void;
   edited: Partial<Record<ColumnKey, string>>;
   errors: Partial<Record<ColumnKey, string>>;
   onChange: (key: ColumnKey, value: string) => void;
@@ -850,51 +864,60 @@ function SaleEditForm({
   // 예전에 참고내용으로 적었던 고혜(기존할부금)·고혜(요금) 글자는 지우지 않고 안내로만 보여준다
   const legacy = (id: "useInstallment" | "usePlan") =>
     sale.notes?.[id] ? `예전 참고 메모 (장표 아님): ${sale.notes[id]}` : null;
-  const split = wSplitOf(sale);
-  const wInfo = (
+  const split = vSplitOf(sale);
+  const vInfo = (
     <>
-      {wPreview !== null ? (
+      {vPreview !== null ? (
         <p className="font-semibold text-ink">
-          W열 저장 값: {wonText(wPreview)} (지금 W열 {wonText(split.w)})
+          V열 저장 값: {wonText(vPreview)} (지금 V열 {wonText(split.v)})
         </p>
       ) : split.status === "ok" ? (
-        <p>W열 {wonText(split.w)} = 추가지원금 + 고혜(기존할부금)</p>
+        <p>V열 {wonText(split.v)} = 고혜(요금) + 고혜(기존할부금)</p>
       ) : split.status === "none" ? (
         <p className="text-amber-700">
-          세부 내역 없음 — 지금 W열 {wonText(split.w)} (예전 등록이라 나누지 않음). 금액을 입력하면 W열은 두 금액의 합계로
-          저장됩니다.
+          세부 내역 없음 — 지금 V열 {wonText(split.v)} (나누지 않음). 금액을 입력하면 V열은 두 금액의 합계로 저장됩니다.
         </p>
       ) : (
         <p className="font-semibold text-rose-600">
-          불일치 — W열 {wonText(split.w)} ≠ 웹앱 세부 합계 {wonText(split.detailSum ?? 0)} (구글시트에서 직접 수정된 것으로 보입니다).
+          불일치 — V열 {wonText(split.v)} ≠ 웹앱 세부 합계 {wonText(split.detailSum ?? 0)} (구글시트에서 직접 수정된 것으로 보입니다).
           그대로 두면 아무것도 바뀌지 않습니다.
         </p>
       )}
       {legacy("useInstallment") && <p>{legacy("useInstallment")}</p>}
+      {legacy("usePlan") && <p>{legacy("usePlan")}</p>}
     </>
   );
-  const wView = (part: WPartKey, label: string, hint: string): FieldView => {
-    const key: keyof WSplitEdit = part === W_EXTRA ? "extra" : "installment";
-    const original = wPartPrefill(sale, part);
-    const value = wEdit[key] ?? original;
+  const vView = (part: VPartKey, label: string, hint: string): FieldView => {
+    const key: keyof VSplitEdit = part === V_PLAN ? "plan" : "installment";
+    const original = vPartPrefill(sale, part);
+    const value = vEdit[key] ?? original;
     return {
       id: `edit-${part}`,
       label,
       hint,
       value,
-      onChange: (v) => onWChange(key, v),
+      onChange: (v) => onVChange(key, v),
       numeric: true,
       placeholder: split.status === "none" ? "세부 금액 입력" : undefined,
-      changed: key in wEdit && value.trim() !== original,
+      changed: key in vEdit && value.trim() !== original,
       problems: noteErrors[part] ? [noteErrors[part]!] : undefined,
-      info: part === W_INSTALLMENT ? wInfo : undefined,
+      // 정책사용 그룹 순서: 추가지원금 · 고혜(기존할부금) · 고혜(요금) → V열 안내는 마지막 칸(고혜(요금)) 아래
+      info: part === V_PLAN ? vInfo : undefined,
     };
   };
+  // 이전 잘못된 규칙(W열에 고혜(기존할부금) 합산)으로 저장된 의심 건: W열 칸 아래 안내만 (금액은 고치지 않음)
+  const suspect = oldWRuleSuspect(sale);
+  const suspectInfo = suspect ? (
+    <p className="font-semibold text-rose-600">
+      이전 규칙 의심 — W열 {wonText(suspect.w)}에 고혜(기존할부금) {wonText(suspect.installment)}이 합산돼 저장됐을 수
+      있습니다. 확인 후 직접 고쳐 주세요 (자동으로 옮기지 않음).
+    </p>
+  ) : undefined;
   const view = (spec: EditSpec): FieldView => {
-    if (spec.kind === "wpart") return wView(spec.part, spec.label, spec.hint);
+    if (spec.kind === "vpart") return vView(spec.part, spec.label, spec.hint);
     if (spec.kind === "note") return noteView(spec.field, spec.label, spec.hint);
     const v = columnView(spec.key, spec.label, spec.hint);
-    return spec.id === "usePlan" && legacy("usePlan") ? { ...v, info: legacy("usePlan") } : v;
+    return spec.key === "usedExtraSupport" && suspectInfo ? { ...v, info: suspectInfo } : v;
   };
 
   const groups: FieldGroup[] = editGroups().map((g) => ({
