@@ -1,5 +1,6 @@
 import type { DeleteSaleRequest } from "@/lib/delete-sale-api";
 import type { SaleChange } from "@/lib/sale-edit";
+import type { NoteChange } from "@/lib/sale-form-layout";
 
 /*
  * 화면 ↔ 우리 서버(/api/sales/update) 사이의 약속 (기존 판매 수정).
@@ -18,6 +19,11 @@ export interface UpdateSaleRequest {
    * before = 화면에서 본 값, after = 새 값 ("" = 지우기). 바뀌었을 때만 보낸다.
    */
   policyName?: { before: string; after: string };
+  /**
+   * 참고 항목(장표 저장 안 함, 웹앱참고 보관) 변경: 바꾼 항목만. before = 화면에서 본 값, after = 새 값 ("" = 지우기).
+   * 바꾸지 않은 참고 항목은 그대로 남는다.
+   */
+  notes?: NoteChange[];
 }
 
 export type UpdateSaleResponse =

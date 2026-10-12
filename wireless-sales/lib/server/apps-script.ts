@@ -435,7 +435,8 @@ export interface UpdateCheckCell {
 
 /** 참고내용(웹앱참고) 한 항목 수정: 정책명(modelPolicyName)만 허용 */
 export interface NotePatch {
-  field: "modelPolicyName";
+  /** 참고 항목 id (정책명·고혜(요금)·2ND 자부담 등, lib/sale-form-layout.ts NOTE_FIELD_IDS) */
+  field: string;
   /** 화면에서 본 값 (보관된 현재 값과 대조) */
   before: string;
   /** 새 값 ("" = 지우기) */
@@ -460,9 +461,10 @@ export async function updateRowInAppsScript(
   checks: UpdateCheckCell[] = [],
   /**
    * onlyChanges: 바꿀 칸만 쓴다 (Apps Script 가 N·U·AB·AC 수식 변환도 하지 않음)
-   * notePatch: 장표 밖 참고내용(웹앱참고) 한 항목 수정 (정책명). 있으면 changes 가 비어도 된다.
+   * notePatches: 장표 밖 참고내용(웹앱참고) 항목 수정 (여러 개 가능, 바꾼 항목만). 있으면 changes 가 비어도 된다.
+   *   바꾸지 않은 다른 참고 항목은 Apps Script 가 그대로 둔다.
    */
-  options: { onlyChanges?: boolean; notePatch?: NotePatch } = {},
+  options: { onlyChanges?: boolean; notePatches?: NotePatch[] } = {},
 ): Promise<{
   sheet: string;
   row: number;
@@ -475,7 +477,8 @@ export async function updateRowInAppsScript(
   /** G열이 O 가 되어 진행 중 검수 보완 요청을 닫았으면 true */
   reviewClosed?: boolean;
 }> {
-  const notePatch = options.notePatch;
+  const notePatches = options.notePatches ?? [];
+  const notePatch = notePatches.length > 0 ? notePatches : null;
   if (
     (changes.length === 0 && !notePatch) ||
     (notePatch && options.onlyChanges) ||
@@ -509,17 +512,13 @@ export async function updateRowInAppsScript(
           ...changes,
           ...checks,
           // col: -1 → 정책명 수정 기능이 없는 예전 update-handler.gs 는 요청 전체를 "형식 오류"로 거부 (아무것도 안 씀)
-          ...(notePatch
-            ? [
-                {
-                  col: -1,
-                  before: null,
-                  note: notePatch.field,
-                  noteBefore: notePatch.before,
-                  noteValue: notePatch.value,
-                },
-              ]
-            : []),
+          ...notePatches.map((p) => ({
+            col: -1,
+            before: null,
+            note: p.field,
+            noteBefore: p.before,
+            noteValue: p.value,
+          })),
         ],
         ...(options.onlyChanges ? { keepRowFormulas: true } : {}),
       },
@@ -536,7 +535,7 @@ export async function updateRowInAppsScript(
     ) {
       throw new AppsScriptError(
         "rejected",
-        "정책명 수정은 Apps Script에 최신 update-handler.gs·notes.gs 를 배포해야 저장할 수 있습니다. " +
+        "참고 항목(장표 저장 안 함) 수정은 Apps Script에 최신 update-handler.gs·notes.gs 를 배포해야 저장할 수 있습니다. " +
           "이번 수정은 장표에 저장되지 않았습니다.",
       );
     }

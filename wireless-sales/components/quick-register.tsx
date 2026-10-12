@@ -15,7 +15,8 @@ import {
   type QuickNormalized,
 } from "@/lib/quick-report";
 import { POLICY_NAME_MAX } from "@/lib/model-policy";
-import { COLUMN_LABEL, COLUMN_LETTER } from "@/lib/sheet-columns";
+import { SaleFieldGroups, type FieldView } from "@/components/sale-fields";
+import { NOTE_HINT, QUICK_GROUPS, columnHint, fieldLabel } from "@/lib/sale-form-layout";
 import type { QuickBatchResponse, SaveSaleResponse } from "@/lib/save-sale-api";
 
 /*
@@ -537,6 +538,38 @@ function QuickItemCard({
     ]);
   }
 
+  // 간편등록 칸 1개 → 공용 입력칸 (판매 수정과 같은 모양·이름·순서)
+  const quickFieldView = (id: QuickFieldId): FieldView => {
+    const field = QUICK_FIELDS.find((f) => f.id === id)!;
+    const saved = field.column !== null;
+    const shown = normalized.display[id];
+    // 동판에 X 이외의 글자가 있으면 가능일은 입력 불가 (AL열 X 저장)
+    const dateBlocked = id === "availableDate" && !availableDateAllowed(item.fields.dongpan);
+    return {
+      id: `quick-${item.id}-${id}`,
+      label: fieldLabel(id),
+      hint: saved ? columnHint(field.column!) : NOTE_HINT,
+      note: !saved,
+      value: dateBlocked ? "" : item.fields[id],
+      onChange: (value) => onChange(id, value),
+      disabled: locked || dateBlocked,
+      multiline: id === "customerPromise",
+      placeholder:
+        id === "availableDate" && !dateBlocked
+          ? "년.월 (예: 27.03)"
+          : id === "modelPolicyName"
+            ? "정책명 직접 입력"
+            : undefined,
+      maxLength: id === "modelPolicyName" ? POLICY_NAME_MAX + 20 : undefined,
+      problems: issuesByField.get(id),
+      info: dateBlocked
+        ? "동판에 값이 있어 가능일은 입력할 수 없습니다. (AL열 X)"
+        : saved && shown !== undefined && shown !== item.fields[id].trim()
+          ? `저장 값: ${shown}`
+          : undefined,
+    };
+  };
+
   return (
     <li
       className={`rounded-xl border bg-white ${
@@ -629,122 +662,16 @@ function QuickItemCard({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-x-5 gap-y-3 p-4 md:grid-cols-2">
-        {QUICK_FIELDS.map((field) => {
-          // 정책명은 S열(그외) 금액 입력칸 바로 아래에 함께 보여준다
-          if (field.id === "modelPolicyName") return null;
-          const problems = issuesByField.get(field.id);
-          const saved = field.column !== null;
-          const shown = normalized.display[field.id];
-          const inputId = `quick-${item.id}-${field.id}`;
-          // 동판에 X 이외의 글자가 있으면 가능일은 입력 불가 (AL열 X 저장)
-          const dateBlocked =
-            field.id === "availableDate" &&
-            !availableDateAllowed(item.fields.dongpan);
-          return (
-            <div
-              key={field.id}
-              className={field.id === "customerPromise" ? "md:col-span-2" : ""}
-            >
-              <label
-                htmlFor={inputId}
-                className="flex flex-wrap items-baseline gap-x-2 text-xs font-semibold text-ink-sub"
-              >
-                {field.label}
-                <span
-                  className={`font-normal ${saved ? "text-ink-muted" : "text-amber-700"}`}
-                >
-                  {saved
-                    ? `→ ${COLUMN_LETTER[field.column!]}열 ${COLUMN_LABEL[field.column!]}`
-                    : "장표 저장 안 함 (참고)"}
-                </span>
-              </label>
-              {field.id === "customerPromise" ? (
-                <textarea
-                  id={inputId}
-                  value={item.fields[field.id]}
-                  onChange={(e) => onChange(field.id, e.target.value)}
-                  disabled={locked}
-                  rows={2}
-                  className={`mt-1 w-full rounded-lg border px-3 py-2 text-base outline-none focus:border-brand disabled:bg-zinc-50 ${problems ? "border-rose-400" : "border-line"}`}
-                />
-              ) : (
-                <input
-                  id={inputId}
-                  value={dateBlocked ? "" : item.fields[field.id]}
-                  placeholder={
-                    field.id === "availableDate" && !dateBlocked
-                      ? "년.월 (예: 27.03)"
-                      : undefined
-                  }
-                  onChange={(e) => onChange(field.id, e.target.value)}
-                  disabled={locked || dateBlocked}
-                  aria-invalid={problems ? true : undefined}
-                  className={`mt-1 h-10 w-full rounded-lg border px-3 text-base outline-none focus:border-brand disabled:bg-zinc-50 ${
-                    problems
-                      ? "border-rose-400 bg-rose-50/40"
-                      : saved
-                        ? "border-line"
-                        : "border-dashed border-line bg-zinc-50/60"
-                  }`}
-                />
-              )}
-              {dateBlocked && (
-                <p className="mt-0.5 text-xs text-ink-muted">
-                  동판에 값이 있어 가능일은 입력할 수 없습니다. (AL열 X)
-                </p>
-              )}
-              {saved &&
-                !dateBlocked &&
-                shown !== undefined &&
-                shown !== item.fields[field.id].trim() && (
-                  <p className="mt-0.5 text-xs text-ink-muted">
-                    저장 값: {shown}
-                  </p>
-                )}
-              {problems?.map((p) => (
-                <p key={p} className="mt-0.5 text-xs font-medium text-rose-600">
-                  {p}
-                </p>
-              ))}
-              {field.id === "policyOther" && (
-                <div className="mt-2">
-                  <label
-                    htmlFor={`quick-${item.id}-modelPolicyName`}
-                    className="flex flex-wrap items-baseline gap-x-2 text-xs font-semibold text-ink-sub"
-                  >
-                    ㄴ 정책명
-                    <span className="font-normal text-amber-700">
-                      장표 저장 안 함 (웹앱 보관 · S열 금액의 정책명)
-                    </span>
-                  </label>
-                  <input
-                    id={`quick-${item.id}-modelPolicyName`}
-                    value={item.fields.modelPolicyName}
-                    onChange={(e) => onChange("modelPolicyName", e.target.value)}
-                    disabled={locked}
-                    autoComplete="off"
-                    maxLength={POLICY_NAME_MAX + 20}
-                    placeholder="정책명 직접 입력"
-                    aria-invalid={
-                      issuesByField.get("modelPolicyName") ? true : undefined
-                    }
-                    className={`mt-1 h-10 w-full rounded-lg border px-3 text-base outline-none focus:border-brand disabled:bg-zinc-50 ${
-                      issuesByField.get("modelPolicyName")
-                        ? "border-rose-400 bg-rose-50/40"
-                        : "border-dashed border-line bg-zinc-50/60"
-                    }`}
-                  />
-                  {issuesByField.get("modelPolicyName")?.map((p) => (
-                    <p key={p} className="mt-0.5 text-xs font-medium text-rose-600">
-                      {p}
-                    </p>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
+      <div className="p-4">
+        <SaleFieldGroups
+          groups={QUICK_GROUPS.map((group) => ({
+            title: group.title,
+            fields: group.items.map(({ id, children }) => ({
+              ...quickFieldView(id),
+              children: children?.map(quickFieldView),
+            })),
+          }))}
+        />
       </div>
 
       {item.unknownLines.length > 0 && (

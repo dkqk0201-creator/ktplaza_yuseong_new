@@ -10,11 +10,14 @@ import {
   updateRowInAppsScript,
   type UpdateCell,
 } from "@/lib/server/apps-script";
+import { POLICY_NAME_FIELD } from "@/lib/model-policy";
 import {
-  POLICY_NAME_FIELD,
-  cleanPolicyName,
-  policyNameError,
-} from "@/lib/model-policy";
+  NOTE_FIELD_IDS,
+  cleanNote,
+  isNoteField,
+  noteError,
+  type NoteChange,
+} from "@/lib/sale-form-layout";
 import type { ColumnKey } from "@/lib/sheet-columns";
 import type {
   UpdateSaleResponse,
@@ -101,26 +104,51 @@ interface ParsedChanges {
   list: { key: ColumnKey; before: string; after: string }[];
 }
 
-/** 정책명 변경 검사: 없으면 null, 형식 오류면 글자 */
-function parsePolicyName(
-  input: unknown,
-): { before: string; after: string } | null | string {
-  if (input === undefined || input === null) return null;
-  if (typeof input !== "object") return "정책명 형식이 올바르지 않습니다.";
-  const { before, after } = input as Record<string, unknown>;
-  if (
-    typeof before !== "string" ||
-    typeof after !== "string" ||
-    before.length > 600 ||
-    after.length > 600
-  ) {
-    return "정책명 형식이 올바르지 않습니다.";
+/**
+ * 참고 항목(장표 저장 안 함, 웹앱참고 보관) 변경 검사 → 바뀐 항목만. 형식 오류면 글자.
+ * notes: [{ field, before, after }] (판매 수정 화면) + policyName: { before, after } (예전 화면 호환, 정책명)
+ */
+function parseNoteChanges(notesInput: unknown, policyInput: unknown): NoteChange[] | string {
+  const raw: { field: unknown; before: unknown; after: unknown }[] = [];
+  if (notesInput !== undefined && notesInput !== null) {
+    if (!Array.isArray(notesInput) || notesInput.length > NOTE_FIELD_IDS.length) {
+      return "참고 항목 형식이 올바르지 않습니다.";
+    }
+    for (const item of notesInput) {
+      if (typeof item !== "object" || item === null) return "참고 항목 형식이 올바르지 않습니다.";
+      const r = item as Record<string, unknown>;
+      raw.push({ field: r.field, before: r.before, after: r.after });
+    }
   }
-  const problem = policyNameError(after);
-  if (problem) return problem;
-  const b = cleanPolicyName(before);
-  const a = cleanPolicyName(after);
-  return a === b ? null : { before: b, after: a };
+  if (policyInput !== undefined && policyInput !== null) {
+    if (typeof policyInput !== "object") return "정책명 형식이 올바르지 않습니다.";
+    const r = policyInput as Record<string, unknown>;
+    if (!raw.some((x) => x.field === POLICY_NAME_FIELD)) {
+      raw.push({ field: POLICY_NAME_FIELD, before: r.before, after: r.after });
+    }
+  }
+  const seen = new Set<string>();
+  const out: NoteChange[] = [];
+  for (const { field, before, after } of raw) {
+    if (
+      typeof field !== "string" ||
+      !isNoteField(field) ||
+      seen.has(field) ||
+      typeof before !== "string" ||
+      typeof after !== "string" ||
+      before.length > 600 ||
+      after.length > 600
+    ) {
+      return "참고 항목 형식이 올바르지 않습니다.";
+    }
+    seen.add(field);
+    const problem = noteError(field, after);
+    if (problem) return problem;
+    const b = cleanNote(field, before);
+    const a = cleanNote(field, after);
+    if (a !== b) out.push({ field, before: b, after: a });
+  }
+  return out;
 }
 
 /** 바꿀 칸 검사 → Apps Script 로 보낼 칸 (금액은 숫자, 글자는 '로 글자 그대로 저장) */
@@ -190,16 +218,15 @@ export async function POST(request: Request) {
         return !(typeof key === "string" && isRowFormulaKey(key));
       })
     : raw.changes;
-  const policyName = parsePolicyName(raw.policyName);
-  if (typeof policyName === "string") {
-    return reply({ ok: false, message: policyName }, 400);
+  const noteChanges = parseNoteChanges(raw.notes, raw.policyName);
+  if (typeof noteChanges === "string") {
+    return reply({ ok: false, message: noteChanges }, 400);
   }
-  // 정책명만 바꾼 경우: 장표 칸 변경 없이 정책명만 저장
-  const onlyPolicyName =
-    policyName !== null &&
-    Array.isArray(submitted) &&
-    submitted.length === 0;
-  const parsed: ParsedChanges | string = onlyPolicyName
+  // 참고 항목만 바꾼 경우: 장표 칸 변경 없이 참고내용만 저장
+  const onlyNotes =
+    noteChanges.length > 0 &&
+    (submitted === undefined || (Array.isArray(submitted) && submitted.length === 0));
+  const parsed: ParsedChanges | string = onlyNotes
     ? { cells: [], list: [] }
     : parseChanges(submitted);
   if (typeof parsed === "string") {
@@ -213,30 +240,36 @@ export async function POST(request: Request) {
       target,
       cells,
       [],
-      policyName
+      noteChanges.length > 0
         ? {
-            notePatch: {
-              field: POLICY_NAME_FIELD,
-              before: policyName.before,
-              value: policyName.after,
-            },
+            notePatches: noteChanges.map((n) => ({
+              field: n.field,
+              before: n.before,
+              value: n.after,
+            })),
           }
         : {},
     );
-    const policyNotSaved = policyName !== null && result.notePatched !== true;
+    const notesNotSaved = noteChanges.length > 0 && result.notePatched !== true;
+    const onlyPolicy =
+      noteChanges.length === 1 && noteChanges[0].field === POLICY_NAME_FIELD;
     return reply(
       {
         ok: true,
         message:
-          cells.length > 0 ? "판매내역이 수정되었습니다." : "정책명이 수정되었습니다.",
+          cells.length > 0
+            ? "판매내역이 수정되었습니다."
+            : onlyPolicy
+              ? "정책명이 수정되었습니다."
+              : "참고내용이 수정되었습니다.",
         row: result.row,
         no: result.no,
         values: result.values,
-        ...(policyName && result.notes ? { notes: result.notes } : {}),
-        ...(policyNotSaved
+        ...(noteChanges.length > 0 && result.notes ? { notes: result.notes } : {}),
+        ...(notesNotSaved
           ? {
               warning:
-                "장표 칸은 수정됐지만 정책명은 저장하지 못했습니다. 화면을 새로고침한 뒤 정책명을 다시 확인해 주세요.",
+                "장표 칸은 수정됐지만 참고 항목(장표 저장 안 함)은 저장하지 못했습니다. 화면을 새로고침한 뒤 다시 확인해 주세요.",
             }
           : {}),
       },

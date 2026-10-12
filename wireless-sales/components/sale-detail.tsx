@@ -27,11 +27,24 @@ import {
 } from "@/lib/sheet-columns";
 import { isO, parseSheetRow, type SheetSale } from "@/lib/sheet-record";
 import {
-  POLICY_NAME_MAX,
-  cleanPolicyName,
-  policyNameError,
-  policyNameOf,
-} from "@/lib/model-policy";
+  SaleFieldGroups,
+  type FieldGroup,
+  type FieldView,
+} from "@/components/sale-fields";
+import {
+  diffNotes,
+  editGroups,
+  extraColumnKeys,
+  NOTE_FIELD_IDS,
+  noteError,
+  noteLabel,
+  noteOriginal,
+  NOTE_MAX,
+  type EditSpec,
+  type NoteChange,
+  type NoteFieldId,
+} from "@/lib/sale-form-layout";
+import { POLICY_NAME_FIELD, POLICY_NAME_MAX } from "@/lib/model-policy";
 
 /*
  * 판매 1건 상세 보기 (장표 A~AL 그대로) + 판매 수정 + 판매 삭제.
@@ -206,16 +219,17 @@ export function SaleDetail({
   const changes = mode === "view" ? [] : diffSale(sale, edited);
   const fieldErrors = validateEdits(changes);
   // 정책명 (장표 밖 웹앱참고 보관): null = 손대지 않음
-  const [policyEdit, setPolicyEdit] = useState<string | null>(null);
-  const policyBefore = policyNameOf(sale);
-  const policyChange =
-    mode !== "view" &&
-    policyEdit !== null &&
-    cleanPolicyName(policyEdit) !== policyBefore
-      ? { before: policyBefore, after: cleanPolicyName(policyEdit) }
-      : null;
-  const policyError = policyEdit === null ? null : policyNameError(policyEdit);
-  const changeCount = changes.length + (policyChange ? 1 : 0);
+  // 참고 항목 (장표 저장 안 함, 웹앱참고 보관): 손댄 항목만 값이 있다
+  const [notesEdit, setNotesEdit] = useState<Partial<Record<NoteFieldId, string>>>({});
+  const noteChanges = mode === "view" ? [] : diffNotes(sale, notesEdit);
+  const noteErrors: Partial<Record<NoteFieldId, string>> = {};
+  for (const field of NOTE_FIELD_IDS) {
+    const value = notesEdit[field];
+    if (value === undefined) continue;
+    const problem = noteError(field, value);
+    if (problem) noteErrors[field] = problem;
+  }
+  const changeCount = changes.length + noteChanges.length;
 
   // 삭제·수정 요청 중에는 창을 닫지 않는다 (Esc·배경 클릭·닫기 버튼 모두)
   const deletingRef = useRef(false);
@@ -326,7 +340,7 @@ export function SaleDetail({
 
   function startEdit() {
     setEdited({});
-    setPolicyEdit(null);
+    setNotesEdit({});
     setUpdateError(null);
     setUpdateNotice(null);
     setDeleteError(null);
@@ -335,9 +349,9 @@ export function SaleDetail({
 
   async function handleUpdate(
     list: SaleChange[],
-    policy: { before: string; after: string } | null,
+    notes: NoteChange[],
   ) {
-    if (deletingRef.current || (list.length === 0 && !policy)) return;
+    if (deletingRef.current || (list.length === 0 && notes.length === 0)) return;
     deletingRef.current = true;
     setSaving(true);
     setUpdateError(null);
@@ -351,7 +365,7 @@ export function SaleDetail({
         ctn: sale.ctn,
       },
       changes: list,
-      ...(policy ? { policyName: policy } : {}),
+      ...(notes.length > 0 ? { notes } : {}),
     });
     deletingRef.current = false;
     setSaving(false);
@@ -369,9 +383,9 @@ export function SaleDetail({
       setUpdated(shown);
       setMode("view");
       setEdited({});
-      setPolicyEdit(null);
+      setNotesEdit({});
       setUpdateNotice(
-        `${result.message} (${list.length + (policy ? 1 : 0)}개 항목)` +
+        `${result.message} (${list.length + notes.length}개 항목)` +
           (result.warning ? ` ⚠ ${result.warning}` : ""),
       );
       onUpdated?.(result.message);
@@ -475,14 +489,15 @@ export function SaleDetail({
               onChange={(key, value) =>
                 setEdited((prev) => ({ ...prev, [key]: value }))
               }
-              policyName={policyEdit ?? policyBefore}
-              policyChanged={policyChange !== null}
-              policyError={policyError}
-              onPolicyChange={setPolicyEdit}
+              notesEdit={notesEdit}
+              noteErrors={noteErrors}
+              onNoteChange={(field, value) =>
+                setNotesEdit((prev) => ({ ...prev, [field]: value }))
+              }
             />
           )}
           {mode === "confirm" && (
-            <ChangeList changes={changes} policy={policyChange} />
+            <ChangeList changes={changes} notes={noteChanges} />
           )}
         </div>
 
@@ -554,7 +569,7 @@ export function SaleDetail({
                   disabled={
                     changeCount === 0 ||
                     Object.keys(fieldErrors).length > 0 ||
-                    policyError !== null
+                    Object.keys(noteErrors).length > 0
                   }
                   className="h-11 rounded-lg bg-ink text-[15px] font-semibold text-white disabled:opacity-40"
                 >
@@ -574,7 +589,7 @@ export function SaleDetail({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleUpdate(changes, policyChange)}
+                  onClick={() => void handleUpdate(changes, noteChanges)}
                   disabled={saving || changeCount === 0}
                   aria-busy={saving}
                   className="h-11 rounded-lg bg-brand text-[15px] font-bold text-white disabled:cursor-wait disabled:opacity-70"
@@ -703,215 +718,114 @@ function SaleView({ sale }: { sale: SheetSale }) {
   );
 }
 
-/** 수정 입력창: 섹션별로 장표 칸 이름과 열을 함께 보여준다. No.·개통일은 고칠 수 없다. */
+/**
+ * 수정 입력창: 간편등록과 같은 그룹·항목 이름·순서 (공용 SaleFieldGroups).
+ * - 장표 칸은 저장된 값, 참고 항목(장표 저장 안 함)은 웹앱참고에 보관된 값을 채워서 보여준다.
+ * - 간편등록 양식에 없는 장표 칸(검수·수납·SPOT 등)은 맨 아래 "장표 추가 항목" 에서 그대로 고칠 수 있다.
+ * - No.·개통일은 고칠 수 없고, N·U·AB·AC 는 장표 수식이 계산한 값을 보여준다.
+ */
 function SaleEditForm({
   sale,
   edited,
   errors,
   onChange,
-  policyName,
-  policyChanged,
-  policyError,
-  onPolicyChange,
+  notesEdit,
+  noteErrors,
+  onNoteChange,
 }: {
   sale: SheetSale;
   edited: Partial<Record<ColumnKey, string>>;
   errors: Partial<Record<ColumnKey, string>>;
   onChange: (key: ColumnKey, value: string) => void;
-  policyName: string;
-  policyChanged: boolean;
-  policyError: string | null;
-  onPolicyChange: (value: string) => void;
+  notesEdit: Partial<Record<NoteFieldId, string>>;
+  noteErrors: Partial<Record<NoteFieldId, string>>;
+  onNoteChange: (field: NoteFieldId, value: string) => void;
 }) {
+  const formula = rowFormulaValues(sale, edited);
+  const columnView = (key: ColumnKey, label: string, hint: string): FieldView => {
+    if (key === "activatedAt") {
+      return { id: `edit-${key}`, label, hint: `${hint} · 수정 불가`, value: monthDayText(sale.activatedAt), readOnly: true };
+    }
+    if (isRowFormulaKey(key)) {
+      return {
+        id: `edit-${key}`,
+        label,
+        hint,
+        value: `${formatNumber(formula[key])}원`,
+        readOnly: true,
+        info: ROW_FORMULA_NOTE[key],
+      };
+    }
+    const original = editText(sale, key);
+    const value = edited[key] ?? original;
+    return {
+      id: `edit-${key}`,
+      label,
+      hint,
+      value,
+      onChange: (v) => onChange(key, v),
+      numeric: isAmountKey(key),
+      multiline: key === "customerPromise",
+      changed: key in edited && value.trim() !== original.trim(),
+      problems: errors[key] ? [errors[key]!] : undefined,
+    };
+  };
+  const noteView = (field: NoteFieldId, label: string, hint: string): FieldView => {
+    const original = noteOriginal(sale, field);
+    const value = notesEdit[field] ?? original;
+    return {
+      id: `edit-note-${field}`,
+      label,
+      hint,
+      note: true,
+      value,
+      onChange: (v) => onNoteChange(field, v),
+      maxLength: (field === POLICY_NAME_FIELD ? POLICY_NAME_MAX : NOTE_MAX) + 20,
+      placeholder: field === POLICY_NAME_FIELD ? "정책명 직접 입력" : undefined,
+      changed: field in notesEdit && value.trim() !== original,
+      problems: noteErrors[field] ? [noteErrors[field]!] : undefined,
+    };
+  };
+  const view = (spec: EditSpec): FieldView =>
+    spec.kind === "column"
+      ? columnView(spec.key, spec.label, spec.hint)
+      : noteView(spec.field, spec.label, spec.hint);
+
+  const groups: FieldGroup[] = editGroups().map((g) => ({
+    title: g.title,
+    fields: g.items.flatMap(({ main, children }) => {
+      // 한 항목이 칸 두 개(2ND: 보고 내용 + AD열)면 첫 칸 아래에 나머지를 붙인다
+      const [first, ...rest] = main.map(view);
+      return first ? [{ ...first, children: [...rest, ...children.map(view)] }] : [];
+    }),
+  }));
+  groups.push({
+    title: "장표 추가 항목 (간편등록 양식에 없는 칸)",
+    fields: [
+      { id: "edit-no", label: "No.", hint: "B열 · 수정 불가", value: sale.no || "없음 (UMNP)", readOnly: true },
+      ...extraColumnKeys().map((key) =>
+        columnView(key, COLUMN_LABEL[key], `${COLUMN_LETTER[key]}열`),
+      ),
+    ],
+  });
+
   return (
     <>
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
         <p className="font-semibold">판매 수정</p>
         <p className="mt-0.5 text-xs">
-          바꾼 칸만 장표의 같은 행에 저장됩니다. No.와 개통일은 수정할 수
-          없습니다. N(O~T 합계)·U(V~Y 합계)·AB(Z−AA)·AC(N+U+AB)는 장표
-          수식이 자동으로 계산합니다. 카드
-          종류(AF)에 카드사명을 넣으면 제카(AE)는 O, 카드실적 검수(AG)는
-          빈칸으로 함께 저장됩니다.
+          간편등록과 같은 항목·순서입니다. 바꾼 칸만 저장됩니다. 장표 칸은 같은
+          행에, &ldquo;장표 저장 안 함 (참고)&rdquo; 항목은 웹앱 보관 시트에
+          저장되며 바꾸지 않은 참고 항목은 그대로 남습니다. No.·개통일은 수정할
+          수 없고 N·U·AB·AC는 장표 수식이 자동 계산합니다. 카드 종류(AF)에
+          카드사명을 넣으면 제카(AE)는 O, 카드실적 검수(AG)는 빈칸으로 함께
+          저장됩니다.
         </p>
       </div>
-      <section className="rounded-xl border border-line">
-        <dl className="divide-y divide-line">
-          {(
-            [
-              ["No.", "B", sale.no || "없음 (UMNP)"],
-              ["개통일", "C", monthDayText(sale.activatedAt)],
-            ] as const
-          ).map(([label, letter, value]) => (
-            <div
-              key={label}
-              className="flex items-center justify-between gap-4 px-4 py-2.5 text-sm"
-            >
-              <dt className="text-ink-sub">
-                {label}
-                <span className="ml-1.5 text-[11px] text-ink-muted">
-                  {letter}열
-                </span>
-              </dt>
-              <dd className="text-right text-ink tabular-nums">
-                {value || "-"}{" "}
-                <span className="ml-1 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-ink-muted">
-                  수정 불가
-                </span>
-              </dd>
-            </div>
-          ))}
-        </dl>
+      <section className="rounded-xl border border-line px-4 py-4">
+        <SaleFieldGroups groups={groups} />
       </section>
-      {SECTIONS.map((section) => {
-        const keys = section.keys.filter((k) => k !== "activatedAt");
-        return (
-          <section
-            key={section.title}
-            className="rounded-xl border border-line"
-          >
-            <h3 className="border-b border-line bg-zinc-50 px-4 py-2.5 text-sm font-bold text-ink">
-              {section.title}
-            </h3>
-            <div className="space-y-3 px-4 py-3">
-              {keys.map((key) => {
-                // N·U·AB·AC: 장표 행별 수식 → 직접 수정하지 않고, 입력값 기준 계산값만 보여준다
-                if (isRowFormulaKey(key)) {
-                  return (
-                    <div
-                      key={key}
-                      className="flex items-center justify-between gap-4 rounded-lg bg-zinc-50 px-3 py-2.5 text-sm"
-                    >
-                      <span className="text-xs font-semibold text-ink-sub">
-                        {COLUMN_LABEL[key]}
-                        <span className="ml-1.5 font-normal text-ink-muted">
-                          {COLUMN_LETTER[key]}열
-                        </span>
-                      </span>
-                      <span className="text-right text-ink tabular-nums">
-                        {formatNumber(rowFormulaValues(sale, edited)[key])}원
-                        <span className="ml-1.5 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] text-ink-muted">
-                          {ROW_FORMULA_NOTE[key]}
-                        </span>
-                      </span>
-                    </div>
-                  );
-                }
-                const id = `edit-${key}`;
-                const original = editText(sale, key);
-                const value = edited[key] ?? original;
-                const changed =
-                  key in edited && value.trim() !== original.trim();
-                return (
-                  <div key={key}>
-                    <label
-                      htmlFor={id}
-                      className="flex items-baseline gap-1.5 text-xs font-semibold text-ink-sub"
-                    >
-                      {COLUMN_LABEL[key]}
-                      <span className="font-normal text-ink-muted">
-                        {COLUMN_LETTER[key]}열
-                      </span>
-                      {changed && (
-                        <span className="ml-auto font-semibold text-brand">
-                          변경됨
-                        </span>
-                      )}
-                    </label>
-                    {key === "customerPromise" ? (
-                      <textarea
-                        id={id}
-                        rows={2}
-                        value={value}
-                        onChange={(e) => onChange(key, e.target.value)}
-                        className="mt-1 w-full rounded-lg border border-line px-3 py-2 text-base outline-none focus:border-brand"
-                      />
-                    ) : (
-                      <input
-                        id={id}
-                        value={value}
-                        inputMode={isAmountKey(key) ? "numeric" : undefined}
-                        onChange={(e) => onChange(key, e.target.value)}
-                        aria-invalid={errors[key] ? true : undefined}
-                        className={`mt-1 h-10 w-full rounded-lg border px-3 text-base outline-none focus:border-brand ${
-                          errors[key]
-                            ? "border-rose-400 bg-rose-50/40"
-                            : changed
-                              ? "border-brand/50 bg-rose-50/20"
-                              : "border-line"
-                        } ${isAmountKey(key) ? "text-right tabular-nums" : ""}`}
-                      />
-                    )}
-                    {errors[key] && (
-                      <p className="mt-0.5 text-xs font-medium text-rose-600">
-                        {errors[key]}
-                      </p>
-                    )}
-                    {key === "modelPolicy" && (
-                      <PolicyNameInput
-                        value={policyName}
-                        changed={policyChanged}
-                        error={policyError}
-                        onChange={onPolicyChange}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        );
-      })}
     </>
-  );
-}
-
-/** 정책명 입력 (S열 모델정책 금액 입력칸 바로 아래). 자유 입력: 목록·자동완성 없음 */
-function PolicyNameInput({
-  value,
-  changed,
-  error,
-  onChange,
-}: {
-  value: string;
-  changed: boolean;
-  error: string | null;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div className="mt-2">
-      <label
-        htmlFor="edit-modelPolicyName"
-        className="flex items-baseline gap-1.5 text-xs font-semibold text-ink-sub"
-      >
-        ㄴ 정책명
-        <span className="font-normal text-ink-muted">
-          장표 저장 안 함 (웹앱 보관)
-        </span>
-        {changed && (
-          <span className="ml-auto font-semibold text-brand">변경됨</span>
-        )}
-      </label>
-      <input
-        id="edit-modelPolicyName"
-        value={value}
-        autoComplete="off"
-        maxLength={POLICY_NAME_MAX + 20}
-        placeholder="정책명 직접 입력"
-        onChange={(e) => onChange(e.target.value)}
-        aria-invalid={error ? true : undefined}
-        className={`mt-1 h-10 w-full rounded-lg border px-3 text-base outline-none focus:border-brand ${
-          error
-            ? "border-rose-400 bg-rose-50/40"
-            : changed
-              ? "border-brand/50 bg-rose-50/20"
-              : "border-dashed border-line"
-        }`}
-      />
-      {error && (
-        <p className="mt-0.5 text-xs font-medium text-rose-600">{error}</p>
-      )}
-    </div>
   );
 }
 
@@ -927,15 +841,15 @@ function changeValueText(key: ColumnKey, value: string): string {
 /** 저장 전 "변경된 항목" 확인 */
 function ChangeList({
   changes,
-  policy,
+  notes,
 }: {
   changes: SaleChange[];
-  policy: { before: string; after: string } | null;
+  notes: NoteChange[];
 }) {
   return (
     <section aria-label="변경된 항목" className="rounded-xl border border-line">
       <h3 className="border-b border-line bg-zinc-50 px-4 py-2.5 text-sm font-bold text-ink">
-        변경된 항목 {changes.length + (policy ? 1 : 0)}개
+        변경된 항목 {changes.length + notes.length}개
       </h3>
       <ul className="divide-y divide-line">
         {changes.map(({ key, before, after, auto, autoNote }) => (
@@ -962,32 +876,33 @@ function ChangeList({
             </p>
           </li>
         ))}
-        {policy && (
-          <li className="px-4 py-3 text-sm">
+        {notes.map((n) => (
+          <li key={n.field} className="px-4 py-3 text-sm">
             <p className="font-semibold text-ink">
-              정책명
+              {noteLabel(n.field)}
               <span className="ml-1.5 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-muted">
-                웹앱 보관 (장표 저장 안 함)
+                참고 · 장표 저장 안 함
               </span>
             </p>
             <p className="mt-1 text-ink-sub">
               기존:{" "}
               <span className="whitespace-pre-wrap text-ink">
-                {policy.before || "(빈칸)"}
+                {n.before || "(빈칸)"}
               </span>
             </p>
             <p className="text-ink-sub">
               변경:{" "}
               <span className="font-semibold whitespace-pre-wrap text-brand">
-                {policy.after || "(빈칸)"}
+                {n.after || "(빈칸)"}
               </span>
             </p>
           </li>
-        )}
+        ))}
       </ul>
       <p className="border-t border-line px-4 py-2.5 text-xs text-ink-muted">
         [수정 저장]을 누르면 장표의 같은 행에 위 항목만 반영됩니다.
-        {policy && " 정책명은 장표가 아니라 웹앱 보관 시트에 저장됩니다."}
+        {notes.length > 0 &&
+          " 참고 항목은 장표가 아니라 웹앱 보관 시트에 저장되며, 바꾸지 않은 참고 항목은 그대로 남습니다."}
       </p>
     </section>
   );

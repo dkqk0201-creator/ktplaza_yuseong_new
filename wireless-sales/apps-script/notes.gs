@@ -10,7 +10,8 @@
  *   - 수정(update-handler): 고객명(D)·CTN(E)을 바꾸면 키를 새 값으로 옮긴다
  *   - 삭제(delete-handler): 그 판매의 키 기록을 지운다
  *   - 정책명(modelPolicyName): S열 모델정책 금액의 정책명. 장표에는 쓰지 않고 여기만 보관한다.
- *     판매 수정(update-handler, sale-update)에서 이 항목 하나만 바꿀 수 있다 (다른 참고 항목은 그대로 유지).
+ *   - 판매 수정(update-handler, sale-update)에서 참고 항목(WS_EDITABLE_NOTE_FIELDS)을 바꿀 수 있다.
+ *     바꾼 항목만 고치고 다른 참고 항목은 그대로 유지한다.
  *     같은 키(개통일·CTN·고객)를 가진 판매가 장표에 2건 이상이면 다른 판매에 붙을 수 있으므로 저장하지 않는다.
  * 보조 시트는 처음 저장할 때 자동으로 만들고 숨긴다. 직접 고치지 마세요.
  */
@@ -151,8 +152,22 @@ function wsMoveNoteForRow_(ss, sheetName, beforeValues, afterValues, tz) {
   wsWriteNote_(ss, info.key, info, notes);
 }
 
-/** 판매 수정 화면에서 고칠 수 있는 참고내용 항목 (정책명만. 나머지는 판매보고 원문이라 고치지 않음) */
-var WS_EDITABLE_NOTE_FIELDS = { modelPolicyName: true };
+/**
+ * 판매 수정 화면에서 고칠 수 있는 참고내용 항목 (간편등록의 "장표 저장 안 함 (참고)" 항목 전부 + 2ND 원문 + 정책명).
+ * 웹앱 lib/sale-form-layout.ts 의 NOTE_FIELD_IDS 와 같다.
+ */
+var WS_EDITABLE_NOTE_FIELDS = {
+  modelPolicyName: true, // 정책 → 정책명
+  useInstallment: true, // 정책사용 → 고혜(기존할부금)
+  usePlan: true, // 정책사용 → 고혜(요금)
+  second: true, // 2ND (보고 내용)
+  secondSelfPay: true, // 2ND → 자부담
+  secondGift: true, // 2ND → 사은품판매or수령
+  dicho: true, // 디초/삼초
+  dichoGift: true, // 디초/삼초 → 사은품판매or수령
+  usedPhone: true, // 중고폰&현물 판매
+  usedPhoneWhere: true, // 중고폰&현물 → 어디에
+};
 
 /** 월 시트에서 이 키를 가진 판매 행 수 (행 번호·No. 와 무관) */
 function wsCountNoteKey_(sheet, tz, key) {
@@ -193,6 +208,30 @@ function wsPatchNote_(ss, info, field, value) {
   }
   if (value) notes[field] = value;
   else delete notes[field];
+  wsWriteNote_(ss, info.key, info, notes);
+  var after = wsNotesSheet_(ss, false);
+  var rec = after ? wsReadNotes_(after)[info.key] : null;
+  return (rec && wsCleanNotes_(rec.notes)) || {};
+}
+
+/**
+ * 키의 참고내용 중 여러 항목을 한 번에 바꾼다 (patches: [{ field, value }]). 나머지 항목은 그대로.
+ * value 가 "" 이면 그 항목만 지운다. 남는 항목이 없으면 기록을 지운다. 저장 후 참고내용 반환
+ */
+function wsPatchNotes_(ss, info, patches) {
+  if (!info.key) return {};
+  var sheet = wsNotesSheet_(ss, false);
+  var existing = sheet ? wsReadNotes_(sheet)[info.key] : null;
+  var notes = {};
+  if (existing && existing.notes) {
+    for (var k in existing.notes) {
+      if (Object.prototype.hasOwnProperty.call(existing.notes, k)) notes[k] = existing.notes[k];
+    }
+  }
+  for (var i = 0; i < patches.length; i++) {
+    if (patches[i].value) notes[patches[i].field] = patches[i].value;
+    else delete notes[patches[i].field];
+  }
   wsWriteNote_(ss, info.key, info, notes);
   var after = wsNotesSheet_(ss, false);
   var rec = after ? wsReadNotes_(after)[info.key] : null;
