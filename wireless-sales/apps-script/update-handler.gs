@@ -42,6 +42,7 @@
  * - 검수(G열)가 O 로 바뀌면 그 판매의 진행 중 검수 보완 요청(inspection-review.gs 보조 시트)을 "검수완료"로 닫는다
  *   (기록은 이력으로 남김, 응답 reviewClosed: true). 고객명·CTN 을 바꾸면 보완 기록 키도 옮긴다.
  * - action = "inspection-review" 요청은 inspection-review.gs 의 wsHandleInspectionReview_ 로 넘긴다.
+ * - action = "gobulbi" 요청(예산관리 고불비사용)은 gobulbi.gs 의 wsHandleGobulbi_ 로 넘긴다.
  * 시트 이름은 실제 월 시트 이름 "1월"~"12월" 형식 (예: "10월"). "2026년 10월" 같은 화면 표시용 글자는 받지 않는다.
  * 응답: { ok, handler, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
  */
@@ -52,6 +53,10 @@ function wsHandleSaleUpdate_(e) {
   // 검수 보완 요청(inspection-review.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
   if (body && body.action === "inspection-review" && typeof wsHandleInspectionReview_ === "function") {
     return wsHandleInspectionReview_(body);
+  }
+  // 예산관리 고불비사용(gobulbi.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
+  if (body && body.action === "gobulbi" && typeof wsHandleGobulbi_ === "function") {
+    return wsHandleGobulbi_(body);
   }
   if (!body || body.action !== "sale-update") return null;
   // 이 handler 의 응답에는 항상 handler 표시를 붙인다 (웹앱이 올바른 코드가 배포됐는지 확인)

@@ -1,6 +1,13 @@
 import "server-only";
 import { COLUMN_COUNT, type SheetRowArray } from "@/lib/sheet-columns";
 import { parseReview, type SaleReview } from "@/lib/inspection-review";
+import {
+  GOBULBI_HANDLER,
+  parseGobulbiItem,
+  type GobulbiBefore,
+  type GobulbiItem,
+  type GobulbiMonth,
+} from "@/lib/gobulbi";
 
 /*
  * Google Apps Script 웹앱과 통신한다.
@@ -631,4 +638,113 @@ export async function saveReviewInAppsScript(
   }
   if (data.handler !== INSPECTION_REVIEW_HANDLER) throw notDeployed;
   return { review: parseReview(data.review), message: shortText(data.message) };
+}
+
+/* ── 예산관리 고불비사용 (gobulbi.gs, 별도 시트 "고불비사용내역") ─────────── */
+
+const GOBULBI_NOT_DEPLOYED =
+  "Apps Script에 고불비사용 코드(gobulbi.gs)와 최신 update-handler.gs 가 배포되어 있지 않아 처리하지 않았습니다.";
+
+/** gobulbi.gs 에 요청. 우리 코드(handler 표시)가 대답한 ok 응답만 돌려준다 */
+async function postGobulbi(
+  payload: Record<string, unknown>,
+  rejectedMessage: string,
+): Promise<Record<string, unknown>> {
+  let data: Record<string, unknown>;
+  try {
+    data = await postToAppsScript({ action: "gobulbi", ...payload }, rejectedMessage);
+  } catch (error) {
+    if (
+      error instanceof AppsScriptError &&
+      error.code === "rejected" &&
+      error.details.handler !== GOBULBI_HANDLER
+    ) {
+      // 다른 코드(예전 Apps Script)가 거부: 고불비 기능이 아직 배포되지 않음
+      throw new AppsScriptError("rejected", GOBULBI_NOT_DEPLOYED, { notDeployed: true });
+    }
+    throw error;
+  }
+  if (data.handler !== GOBULBI_HANDLER) {
+    throw new AppsScriptError("rejected", GOBULBI_NOT_DEPLOYED, { notDeployed: true });
+  }
+  return data;
+}
+
+/** 한 달 고불비사용 (삭제 제외, 지급일 기준) */
+export async function listGobulbiFromAppsScript(month: string): Promise<GobulbiMonth> {
+  const data = await postGobulbi({ op: "list", month }, "Apps Script가 고불비사용 조회를 거부했습니다.");
+  if (data.month !== month || !Array.isArray(data.items) || typeof data.total !== "number") {
+    throw new AppsScriptError("bad_response", "고불비사용 조회 응답 형식이 올바르지 않습니다.");
+  }
+  const items: GobulbiItem[] = [];
+  for (const raw of data.items) {
+    const item = parseGobulbiItem(raw);
+    if (!item) throw new AppsScriptError("bad_response", "고불비사용 내역 형식이 올바르지 않습니다.");
+    items.push(item);
+  }
+  const total = items.reduce((t, i) => t + i.amount, 0);
+  if (total !== data.total) {
+    throw new AppsScriptError("bad_response", "고불비사용 합계가 내역과 맞지 않습니다.");
+  }
+  return {
+    month,
+    items,
+    total,
+    invalidRows: typeof data.invalidRows === "number" ? data.invalidRows : 0,
+  };
+}
+
+export interface GobulbiInput {
+  content: string;
+  amount: number;
+  seller: string;
+}
+
+function savedItem(data: Record<string, unknown>): GobulbiItem {
+  const item = parseGobulbiItem(data.item);
+  if (!item) throw new AppsScriptError("bad_response", "고불비사용 저장 응답을 확인하지 못했습니다.");
+  return item;
+}
+
+export async function createGobulbiInAppsScript(
+  month: string,
+  id: string,
+  input: GobulbiInput,
+): Promise<{ item: GobulbiItem; duplicate: boolean; message: string }> {
+  const data = await postGobulbi(
+    { op: "create", month, id, ...input },
+    "Apps Script가 고불비사용 등록을 거부했습니다.",
+  );
+  const item = savedItem(data);
+  if (item.id !== id || item.amount !== input.amount || item.content !== input.content || item.seller !== input.seller) {
+    throw new AppsScriptError("bad_response", "저장된 고불비사용 내용이 요청과 다릅니다. 새로고침해 확인해 주세요.");
+  }
+  return { item, duplicate: data.duplicate === true, message: shortText(data.message) };
+}
+
+export async function updateGobulbiInAppsScript(
+  id: string,
+  before: GobulbiBefore,
+  input: GobulbiInput,
+): Promise<{ item: GobulbiItem; message: string }> {
+  const data = await postGobulbi(
+    { op: "update", id, before, ...input },
+    "Apps Script가 고불비사용 수정을 거부했습니다.",
+  );
+  const item = savedItem(data);
+  if (item.id !== id || item.amount !== input.amount || item.content !== input.content || item.seller !== input.seller) {
+    throw new AppsScriptError("bad_response", "수정된 고불비사용 내용이 요청과 다릅니다. 새로고침해 확인해 주세요.");
+  }
+  return { item, message: shortText(data.message) };
+}
+
+export async function deleteGobulbiInAppsScript(
+  id: string,
+  before: GobulbiBefore,
+): Promise<{ message: string }> {
+  const data = await postGobulbi({ op: "delete", id, before }, "Apps Script가 고불비사용 삭제를 거부했습니다.");
+  if (data.id !== id) {
+    throw new AppsScriptError("bad_response", "고불비사용 삭제 응답을 확인하지 못했습니다. 새로고침해 확인해 주세요.");
+  }
+  return { message: shortText(data.message) };
 }

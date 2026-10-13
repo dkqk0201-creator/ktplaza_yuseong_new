@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { GobulbiPanel, type GobulbiLoad } from "@/components/gobulbi-panel";
 import { SaleDetail } from "@/components/sale-detail";
 import { useFreshSalesData, useSalesData } from "@/components/sales-data-provider";
 import {
@@ -20,7 +21,9 @@ import { formatNumber } from "@/lib/format";
 import type { SheetSale } from "@/lib/sheet-record";
 import { isUmnpSale, postpaidCount } from "@/lib/umnp";
 import { oldWRuleSuspects, vMismatches, wonText } from "@/lib/v-split";
-import { formatCtn } from "@/lib/format";
+import { formatCtn, todayInKorea } from "@/lib/format";
+import { applyGobulbi, checkAgainstSheetAc, isCurrentMonth } from "@/lib/gobulbi";
+import { fetchGobulbi } from "@/lib/gobulbi-api";
 import { monthDayText } from "@/lib/sale-display";
 
 /* 예산관리 + 무선 목표 (선택한 월 시트의 실제 장표 데이터 기준) */
@@ -55,18 +58,58 @@ interface BudgetCard {
   label: string;
   value: number;
   hint: string;
-  /** 있으면 눌러서 고객별 사용내역을 펼치는 카드 */
-  kind?: UsageKind;
+  /** 있으면 눌러서 내역을 펼치는 카드 (고객별 사용내역 / 고불비사용 내역) */
+  kind?: Panel;
+  /** 금액 옆 경고 (예: 고불비사용 미반영) */
+  warn?: string;
+}
+
+type Panel = UsageKind | "gobulbi";
+
+/** 선택한 월의 고불비사용 불러오기 (월이 바뀌면 이전 응답은 버림) */
+function useGobulbi(month: string) {
+  const [load, setLoad] = useState<GobulbiLoad>({ status: "loading" });
+  const seq = useRef(0);
+  const reload = useCallback(async () => {
+    const my = ++seq.current;
+    setLoad({ status: "loading" });
+    const res = await fetchGobulbi(month);
+    if (my !== seq.current) return;
+    if (res.ok && res.data && res.data.month === month) setLoad({ status: "ok", data: res.data });
+    else
+      setLoad({
+        status: "error",
+        message: res.ok ? "고불비사용 응답을 확인하지 못했습니다." : res.message,
+        notDeployed: !res.ok && res.notDeployed === true,
+      });
+  }, [month]);
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+  return { load, reload };
 }
 
 function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   const { invalidate } = useSalesData();
   const b = calculateBudget(sales);
   // 펼친 카드 (한 번에 하나: 같은 카드를 다시 누르면 닫힘, 다른 카드를 누르면 그 목록으로 바뀜)
-  const [usage, setUsage] = useState<UsageKind | null>(null);
+  const [usage, setUsage] = useState<Panel | null>(null);
   const [detailRow, setDetailRow] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const usageRows = usage ? budgetUsageRows(sales, usage) : [];
+  const usageRows = usage && usage !== "gobulbi" ? budgetUsageRows(sales, usage) : [];
+  // 고불비사용 (별도 시트, 지급일 기준): 현금예산에서 한 번만 차감
+  const month = sheetToYearMonth(sheet);
+  const { load: gobulbi, reload: reloadGobulbi } = useGobulbi(month);
+  const applied = gobulbi.status === "ok" ? applyGobulbi(b, gobulbi.data.total) : null;
+  // 장표 AC열(최종 남은 예산) 합계 = AC8. 웹앱 총 매장 예산과의 차이는 고불비사용 합계와 같아야 한다
+  const acTotal = sales.reduce((t, s) => t + (s.finalTotal ?? 0), 0);
+  const acCheck = applied ? checkAgainstSheetAc(acTotal, applied) : null;
+  const gobulbiWarn =
+    gobulbi.status === "loading"
+      ? "고불비사용 확인 중 (아직 차감 전)"
+      : gobulbi.status === "error"
+        ? "고불비사용 미반영 (불러오기 실패)"
+        : undefined;
   const detail = detailRow === null ? null : sales.find((s) => s.row === detailRow) ?? null;
   const cards: BudgetCard[] = [
     {
@@ -92,7 +135,27 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
       hint: "확보금액 − 고객혜택 사용금액 − 추가지원금 사용금액",
     },
     { label: "스팟예산", value: b.spot, hint: `${BUDGET_COLUMNS.spot}열(SPOT정책) 합계` },
-    { label: "현금예산", value: b.cash, hint: `${BUDGET_COLUMNS.cash}열(중고판매 잔여) 합계` },
+    {
+      label: "기존 현금예산",
+      value: b.cash,
+      hint: `${BUDGET_COLUMNS.cash}열(중고판매 잔여) 합계 · 고불비사용 차감 전`,
+    },
+    {
+      label: "고불비사용",
+      value: applied ? applied.gobulbi : 0,
+      hint:
+        gobulbi.status === "ok"
+          ? `${month.slice(5).replace(/^0/, "")}월 지급일 기준 ${gobulbi.data.items.length}건 합계 · 누르면 사용내역`
+          : "누르면 사용내역",
+      kind: "gobulbi",
+      warn: gobulbiWarn,
+    },
+    {
+      label: "현금예산 (고불비 차감 후)",
+      value: applied ? applied.cash : b.cash,
+      hint: `${BUDGET_COLUMNS.cash}열 합계 − 고불비사용`,
+      warn: gobulbiWarn,
+    },
   ];
   return (
     <div className="space-y-6">
@@ -105,16 +168,30 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
           {sheetLabel(sheet)} 총 매장 예산
         </p>
         <p className="mt-2 text-brand">
-          <Money value={b.total} big />
+          <Money value={applied ? applied.total : b.total} big />
         </p>
         <p className="mt-2 text-xs text-ink-muted">
-          고객혜택 잔여금액 + 스팟예산 + 현금예산
+          고객혜택 잔여금액 + 스팟예산 + 현금예산(고불비 차감 후) · 고불비사용은 현금예산에서 한 번만 차감
         </p>
+        {gobulbiWarn && (
+          <p role="status" className="mt-2 text-xs font-semibold text-amber-700">
+            ⚠ {gobulbiWarn}
+            {gobulbi.status === "error" && <> — {gobulbi.message}</>}
+          </p>
+        )}
+        {acCheck && (
+          <p
+            className={`mt-2 text-xs tabular-nums ${acCheck.ok ? "text-ink-sub" : "font-semibold text-rose-600"}`}
+          >
+            장표 AC열 합계 {formatNumber(acTotal)}원 − 고불비사용 {formatNumber(applied!.gobulbi)}원 ={" "}
+            {formatNumber(acCheck.expected)}원 {acCheck.ok ? "✓ 일치" : `≠ 총 매장 예산 (차이 ${formatNumber(acCheck.expected - applied!.total)}원, 장표 AC열 수식 확인 필요)`}
+          </p>
+        )}
       </section>
 
       <section
         aria-label="예산 내역"
-        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3"
+        className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4"
       >
         {cards.map((card) => {
           const body = (
@@ -126,7 +203,13 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                     aria-hidden
                     className={`text-xs font-semibold ${usage === card.kind ? "text-brand" : "text-ink-muted"}`}
                   >
-                    {usage === card.kind ? "고객 목록 닫기 ▲" : "고객 목록 ▼"}
+                    {card.kind === "gobulbi"
+                      ? usage === card.kind
+                        ? "내역 닫기 ▲"
+                        : "사용내역 ▼"
+                      : usage === card.kind
+                        ? "고객 목록 닫기 ▲"
+                        : "고객 목록 ▼"}
                   </span>
                 )}
               </p>
@@ -134,6 +217,9 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                 <Money value={card.value} />
               </p>
               <p className="mt-1.5 text-xs text-ink-muted">{card.hint}</p>
+              {card.warn && (
+                <p className="mt-1 text-xs font-semibold text-amber-700">⚠ {card.warn}</p>
+              )}
             </>
           );
           if (!card.kind) {
@@ -162,7 +248,22 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         })}
       </section>
 
-      {usage && (
+      {usage === "gobulbi" && (
+        <GobulbiPanel
+          month={month}
+          monthLabel={sheetLabel(sheet)}
+          isCurrentMonth={isCurrentMonth(month, todayInKorea())}
+          load={gobulbi}
+          onChanged={(message) => {
+            setNotice(message);
+            void reloadGobulbi();
+          }}
+          onClose={() => setUsage(null)}
+          onRetry={() => void reloadGobulbi()}
+        />
+      )}
+
+      {usage && usage !== "gobulbi" && (
         <UsageList
           kind={usage}
           rows={usageRows}
