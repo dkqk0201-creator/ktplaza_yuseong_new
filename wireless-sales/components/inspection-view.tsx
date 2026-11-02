@@ -26,16 +26,20 @@ import {
 } from "@/lib/inspection-status";
 
 import { isReviewPending, type SaleReview } from "@/lib/inspection-review";
+import { DONGPAN_KINDS, dongpanKind, isDongpanKind, type DongpanKind } from "@/lib/dongpan";
 
 export { inspectionStatus, type InspectionStatus }; // 예전 import 경로 유지
 
-/** 목록 필터: 검수·수납 상태 + "보완 요청" (보완 요청 중이어도 검수 미완료 집계에 그대로 포함) */
-type ListFilter = Filter | "review";
+/**
+ * 목록 필터 (하나만 선택): 검수·수납 상태 + "보완 요청" (보완 요청 중이어도 검수 미완료 집계에 그대로 포함)
+ * + 동판 구분 "순동"·"신동"·"약동" (AK열, 조회 전용 — 검수·수납 상태와 상관없이 그 구분의 판매만)
+ */
+type ListFilter = Filter | "review" | DongpanKind;
 
 function matchListFilter(sale: SheetSale, filter: ListFilter): boolean {
-  return filter === "review"
-    ? isReviewPending(sale)
-    : matchFilter(inspectionStatus(sale), filter);
+  if (filter === "review") return isReviewPending(sale);
+  if (isDongpanKind(filter)) return dongpanKind(sale) === filter;
+  return matchFilter(inspectionStatus(sale), filter);
 }
 
 function ReviewBadge() {
@@ -140,7 +144,9 @@ function InspectionList({
   const chipCount = (f: ListFilter) =>
     f === "review"
       ? searched.filter((s) => isReviewPending(s)).length
-      : searchedStatuses.filter((st) => matchFilter(st, f)).length;
+      : isDongpanKind(f)
+        ? searched.filter((s) => matchListFilter(s, f)).length // 목록과 같은 조건으로 센다
+        : searchedStatuses.filter((st) => matchFilter(st, f)).length;
   // 장표와 같은 순서: C열 개통일 오름차순, 같은 날짜는 장표 행 순서
   const rows = searched
     .filter((s) => matchListFilter(s, filter))
@@ -240,6 +246,7 @@ function InspectionList({
             { value: "both", label: "둘 다 미완료", count: chipCount("both") },
             { value: "review", label: "보완 요청", count: chipCount("review") },
             { value: "done", label: "완료", count: chipCount("done") },
+            ...DONGPAN_KINDS.map((kind) => ({ value: kind, label: kind, count: chipCount(kind) })),
           ]}
         />
         <div className="ml-auto">
