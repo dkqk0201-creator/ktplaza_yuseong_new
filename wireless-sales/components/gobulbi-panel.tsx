@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { STAFF_NAMES } from "@/lib/data/staff-list";
-import { formatNumber } from "@/lib/format";
+import { activeStaffNames, staffLastMonth } from "@/lib/data/staff-list";
+import { formatNumber, todayInKorea } from "@/lib/format";
 import {
   GOBULBI_CONTENT_MAX,
   GOBULBI_SHEET,
@@ -289,7 +289,11 @@ function GobulbiForm({
   const amount = parseGobulbiAmount(amountText);
   const contentProblem = gobulbiContentError(content);
   const amountProblem = amount === null ? "금액은 숫자로 입력해 주세요 (예: 50000 또는 5만)." : gobulbiAmountError(amount);
-  const sellerProblem = gobulbiSellerError(seller, STAFF_NAMES);
+  // 판매자 선택: 이번 달 근무 중인 직원 (+ 수정이면 원래 판매자 — 지금은 근무하지 않아도 그대로 둘 수 있음)
+  const activeSellers = activeStaffNames(todayInKorea().slice(0, 7));
+  const keptSeller = editing && editing.seller && !activeSellers.includes(editing.seller) ? editing.seller : null;
+  const sellerOptions = keptSeller ? [...activeSellers, keptSeller] : activeSellers;
+  const sellerProblem = gobulbiSellerError(seller, sellerOptions);
   const invalid = !!(contentProblem || amountProblem || sellerProblem);
   const unchanged =
     !!editing &&
@@ -375,12 +379,17 @@ function GobulbiForm({
             disabled={!!busy}
           >
             <option value="">선택</option>
-            {STAFF_NAMES.map((name) => (
+            {activeSellers.map((name) => (
               <option key={name} value={name}>
                 {name}
               </option>
             ))}
-            {editing && seller && !STAFF_NAMES.includes(seller) && <option value={seller}>{seller}</option>}
+            {keptSeller && (
+              <option value={keptSeller}>
+                {keptSeller}
+                {staffLastMonth(keptSeller) ? ` (${Number(staffLastMonth(keptSeller)!.slice(5))}월까지 근무 · 기존 판매자)` : " (기존 판매자)"}
+              </option>
+            )}
           </select>
         </label>
       </div>

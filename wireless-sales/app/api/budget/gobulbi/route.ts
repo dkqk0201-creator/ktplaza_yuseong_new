@@ -1,4 +1,4 @@
-import { STAFF_NAMES } from "@/lib/data/staff-list";
+import { activeStaffNames } from "@/lib/data/staff-list";
 import { todayInKorea } from "@/lib/format";
 import {
   GOBULBI_ID_RE,
@@ -80,6 +80,23 @@ export async function GET(request: Request) {
   }
 }
 
+/**
+ * 판매자로 고를 수 있는 이름:
+ *   등록 → 이번 달(한국 시간) 근무 중인 직원만 (마지막 근무월이 지난 직원 제외)
+ *   수정 → 이번 달 근무 중인 직원 + 그 내역의 원래 판매자 (판매자를 그대로 두고 다른 내용만 고칠 수 있게).
+ *          원래 판매자(before.seller)가 실제 기록과 같은지는 Apps Script 가 다시 확인한다 (다르면 거부).
+ */
+function allowedSellers(op: "create" | "update", before: unknown): string[] {
+  const active = activeStaffNames(todayInKorea().slice(0, 7));
+  if (op === "update" && before && typeof before === "object") {
+    const original = (before as Record<string, unknown>).seller;
+    if (typeof original === "string" && original.trim() && !active.includes(original.trim())) {
+      return [...active, original.trim()];
+    }
+  }
+  return active;
+}
+
 function parseBefore(v: unknown): GobulbiBefore | null {
   if (!v || typeof v !== "object") return null;
   const o = v as Record<string, unknown>;
@@ -117,7 +134,7 @@ export async function POST(request: Request) {
     const problem =
       gobulbiContentError(content) ??
       gobulbiAmountError(input.amount) ??
-      gobulbiSellerError(seller, STAFF_NAMES);
+      gobulbiSellerError(seller, allowedSellers(op, input.before));
     if (problem) return reply({ ok: false, message: problem }, 400);
     fields = { content, amount: input.amount as number, seller };
   }
