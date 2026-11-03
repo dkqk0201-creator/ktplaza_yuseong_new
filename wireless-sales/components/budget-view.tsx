@@ -115,7 +115,8 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
     {
       label: "고객혜택 확보금액",
       value: b.benefitSecured,
-      hint: `${BUDGET_COLUMNS.benefitSecured}열 합계`,
+      hint: `${BUDGET_COLUMNS.benefitSecured}열 합계 · 누르면 고객별 내역`,
+      kind: "secured",
     },
     {
       label: "고객혜택 사용금액",
@@ -138,7 +139,8 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
     {
       label: "기존 현금예산",
       value: b.cash,
-      hint: `${BUDGET_COLUMNS.cash}열(중고판매 잔여) 합계 · 고불비사용 차감 전`,
+      hint: `${BUDGET_COLUMNS.cash}열(중고판매 잔여) 합계 · 고불비사용 차감 전 · 누르면 상세 내역`,
+      kind: "cash",
     },
     {
       label: "고불비사용",
@@ -207,7 +209,11 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                       ? usage === card.kind
                         ? "내역 닫기 ▲"
                         : "사용내역 ▼"
-                      : usage === card.kind
+                      : card.kind === "cash"
+                        ? usage === card.kind
+                          ? "상세 내역 닫기 ▲"
+                          : "상세 내역 ▼"
+                        : usage === card.kind
                         ? "고객 목록 닫기 ▲"
                         : "고객 목록 ▼"}
                   </span>
@@ -267,7 +273,15 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         <UsageList
           kind={usage}
           rows={usageRows}
-          cardTotal={usage === "customerBenefit" ? b.customerBenefitUsed : b.extraSupportUsed}
+          cardTotal={
+            usage === "customerBenefit"
+              ? b.customerBenefitUsed
+              : usage === "extraSupport"
+                ? b.extraSupportUsed
+                : usage === "secured"
+                  ? b.benefitSecured
+                  : b.cash
+          }
           onClose={() => setUsage(null)}
           onOpen={setDetailRow}
         />
@@ -542,9 +556,47 @@ function GoalEditor({
   );
 }
 
-const USAGE_TITLE: Record<UsageKind, string> = {
-  customerBenefit: "고객혜택 사용금액",
-  extraSupport: "추가지원금 사용금액",
+/** 카드별 목록 표시 (기존 두 목록은 이전과 같은 제목·열 구성) */
+const USAGE_META: Record<
+  UsageKind,
+  { title: string; heading: string; formula: string; note: string; totalLabel: string; who: "ctn" | "staff"; empty: string }
+> = {
+  customerBenefit: {
+    title: "고객혜택 사용금액",
+    heading: "고객별 내역",
+    formula: "V+X+Y",
+    note: "V+X+Y열 · 0원 제외",
+    totalLabel: "고객혜택 사용금액 (V+X+Y)",
+    who: "ctn",
+    empty: "사용금액이 있는 판매가 없습니다.",
+  },
+  extraSupport: {
+    title: "추가지원금 사용금액",
+    heading: "고객별 내역",
+    formula: "W",
+    note: "W열 · 0원 제외",
+    totalLabel: "추가지원금 사용금액 (W)",
+    who: "ctn",
+    empty: "사용금액이 있는 판매가 없습니다.",
+  },
+  secured: {
+    title: "고객혜택 확보금액",
+    heading: "고객별 내역",
+    formula: "P+Q+R+S+T",
+    note: "P+Q+R+S+T열 · 0원 제외",
+    totalLabel: "확보금액 합계",
+    who: "staff",
+    empty: "확보금액이 있는 판매가 없습니다.",
+  },
+  cash: {
+    title: "기존 현금예산",
+    heading: "상세 내역",
+    formula: "AB",
+    note: "AB열(= Z − AA) · AB 0원 제외 · 음수 포함",
+    totalLabel: "AB 잔여금액",
+    who: "staff",
+    empty: "AB열 금액이 있는 판매가 없습니다.",
+  },
 };
 
 function UsageWon({ value, strong = false }: { value: number; strong?: boolean }) {
@@ -576,24 +628,29 @@ function UsageList({
   useEffect(() => {
     ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [kind]);
-  const showParts = kind === "customerBenefit";
+  const meta = USAGE_META[kind];
+  const showParts = kind !== "extraSupport";
   const partCols = showParts ? (rows[0]?.parts ?? []) : [];
   const totals = partCols.map((_, i) => rows.reduce((t, r) => t + r.parts[i].amount, 0));
-  const title = USAGE_TITLE[kind];
-  const formula = kind === "customerBenefit" ? "V+X+Y" : "W";
+  const title = meta.title;
+  const byStaff = meta.who === "staff";
+  const who = (r: UsageRow) => (byStaff ? r.sale.staff || "-" : formatCtn(r.sale.ctn) || "-");
+  // 현금예산: AB 값이 Z − AA 와 다르면 그 행에 표시 (장표 수식이 바뀐 경우 확인용, 금액은 AB 그대로)
+  const abMismatch = (r: UsageRow) =>
+    kind === "cash" && r.amount !== r.parts[0].amount - r.parts[1].amount;
   return (
     <section
       id="budget-usage-list"
       ref={ref}
       tabIndex={-1}
-      aria-label={`${title} 고객별 내역`}
+      aria-label={`${title} ${meta.heading}`}
       className="overflow-hidden rounded-xl border border-brand/30 bg-white"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-brand-soft/30 px-4 py-3">
         <h3 className="text-sm font-bold text-ink">
-          {title} 고객별 내역 · {formatNumber(rows.length)}건
+          {title} {meta.heading} · {formatNumber(rows.length)}건
         </h3>
-        <span className="text-xs text-ink-muted">{formula}열 · 0원 제외 · 고객을 누르면 판매 상세</span>
+        <span className="text-xs text-ink-muted">{meta.note} · 고객을 누르면 판매 상세</span>
         <button
           type="button"
           onClick={onClose}
@@ -604,7 +661,7 @@ function UsageList({
       </div>
 
       {rows.length === 0 ? (
-        <p className="px-4 py-6 text-center text-sm text-ink-sub">사용금액이 있는 판매가 없습니다.</p>
+        <p className="px-4 py-6 text-center text-sm text-ink-sub">{meta.empty}</p>
       ) : (
         <>
           {/* PC·태블릿: 표 */}
@@ -614,14 +671,14 @@ function UsageList({
                 <tr>
                   <th scope="col" className="px-3 py-2.5 text-left font-semibold">개통일</th>
                   <th scope="col" className="px-3 py-2.5 text-left font-semibold">고객명</th>
-                  <th scope="col" className="px-3 py-2.5 text-left font-semibold">CTN</th>
+                  <th scope="col" className="px-3 py-2.5 text-left font-semibold">{byStaff ? "직원명" : "CTN"}</th>
                   {partCols.map((p) => (
                     <th key={p.column} scope="col" className="px-3 py-2.5 text-right font-semibold">
                       {p.column} {p.label}
                     </th>
                   ))}
                   <th scope="col" className="px-3 py-2.5 text-right font-semibold">
-                    {title} ({formula})
+                    {meta.totalLabel}
                   </th>
                 </tr>
               </thead>
@@ -650,7 +707,7 @@ function UsageList({
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">{formatCtn(r.sale.ctn) || "-"}</td>
+                    <td className="px-3 py-2.5 whitespace-nowrap">{who(r)}</td>
                     {r.parts.slice(0, partCols.length).map((p) => (
                       <td key={p.column} className="px-3 py-2.5 text-right whitespace-nowrap text-ink-sub">
                         {p.amount === 0 ? "-" : <UsageWon value={p.amount} />}
@@ -658,6 +715,9 @@ function UsageList({
                     ))}
                     <td className="px-3 py-2.5 text-right whitespace-nowrap">
                       <UsageWon value={r.amount} strong />
+                      {abMismatch(r) && (
+                        <span className="block text-[11px] font-semibold text-rose-600">⚠ Z−AA 와 다름</span>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -703,11 +763,13 @@ function UsageList({
                     </span>
                   </span>
                   <span className="mt-0.5 block text-xs text-ink-sub">
-                    {monthDayText(r.sale.activatedAt) || "-"} · {formatCtn(r.sale.ctn) || "-"}
+                    {monthDayText(r.sale.activatedAt) || "-"} · {who(r)}
                   </span>
                   {showParts && (
                     <span className="mt-1 block text-xs text-ink-muted">
                       {r.parts.map((p) => `${p.column} ${formatNumber(p.amount)}`).join(" · ")}
+                      {kind === "cash" && ` → AB ${formatNumber(r.amount)}`}
+                      {abMismatch(r) && " ⚠ Z−AA 와 다름"}
                     </span>
                   )}
                 </button>
@@ -722,6 +784,7 @@ function UsageList({
             {showParts && (
               <li className="bg-brand-soft/20 px-4 pb-3 text-xs text-ink-muted tabular-nums">
                 {partCols.map((p, i) => `${p.column} ${formatNumber(totals[i])}`).join(" · ")}
+                {kind === "cash" && ` → AB ${formatNumber(total)}`}
               </li>
             )}
           </ul>

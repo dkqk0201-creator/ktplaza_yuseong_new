@@ -87,10 +87,14 @@ export const BUDGET_COLUMNS = {
 
 /* ── 예산관리 카드 → 고객별 사용내역 ───────────────────────────── */
 
-export type UsageKind = "customerBenefit" | "extraSupport";
+/**
+ * customerBenefit: 고객혜택 사용금액 (V+X+Y) · extraSupport: 추가지원금 사용금액 (W)
+ * secured: 고객혜택 확보금액 (P+Q+R+S+T) · cash: 기존 현금예산 (AB = Z − AA, 장표 행 수식 =N(Z)-N(AA))
+ */
+export type UsageKind = "customerBenefit" | "extraSupport" | "secured" | "cash";
 
 export interface UsagePart {
-  /** 열 글자 (V, X, Y, W) */
+  /** 열 글자 (V, X, Y, W / P~T / Z, AA) */
   column: string;
   label: string;
   amount: number;
@@ -98,9 +102,9 @@ export interface UsagePart {
 
 export interface UsageRow {
   sale: SheetSale;
-  /** 이 카드에 해당하는 금액 합계 */
+  /** 이 카드에 해당하는 금액 (카드 합계와 같은 열: 고객혜택 V+X+Y / 추가지원금 W / 확보 P~T 합 / 현금 AB) */
   amount: number;
-  /** 열별 금액 (고객혜택: V·X·Y / 추가지원금: W) */
+  /** 열별 금액 (고객혜택: V·X·Y / 추가지원금: W / 확보: P·Q·R·S·T / 현금: Z·AA — 현금의 amount 는 AB 값 그대로) */
   parts: UsagePart[];
 }
 
@@ -111,7 +115,22 @@ const USAGE_PARTS: Record<UsageKind, readonly { key: keyof SheetSale; label: str
     { key: "usedSecond", label: "2nd" },
   ],
   extraSupport: [{ key: "usedExtraSupport", label: "추가지원금" }],
+  secured: [
+    { key: "securedDicho", label: "디초/삼초" },
+    { key: "appleMania", label: "애플매니아" },
+    { key: "securedSecond", label: "2ND" },
+    { key: "modelPolicy", label: "모델정책" },
+    { key: "customerBenefit", label: "고객혜택" },
+  ],
+  // 현금예산: 참고용 Z·AA 를 보여주고, 금액은 카드와 같은 AB 값 (장표 수식 결과) 그대로
+  cash: [
+    { key: "usedPhoneSale", label: "중고판매 금액" },
+    { key: "usedPhoneUsed", label: "사용금액" },
+  ],
 };
+
+/** 금액을 열 합계가 아니라 한 열 값 그대로 쓰는 목록 (현금예산 = AB) */
+const USAGE_AMOUNT_KEY: Partial<Record<UsageKind, keyof SheetSale>> = { cash: "usedPhoneRemaining" };
 
 /**
  * 카드별 고객 목록: 금액이 0원인 판매는 뺀다 (빈 칸·"-" = 0). 개통일 → 행 순서.
@@ -126,7 +145,11 @@ export function budgetUsageRows(sales: readonly SheetSale[], kind: UsageKind): U
         label,
         amount: (sale[key] as number | null) ?? 0,
       }));
-      return { sale, parts, amount: parts.reduce((t, p) => t + p.amount, 0) };
+      const amountKey = USAGE_AMOUNT_KEY[kind];
+      const amount = amountKey
+        ? ((sale[amountKey] as number | null) ?? 0)
+        : parts.reduce((t, p) => t + p.amount, 0);
+      return { sale, parts, amount };
     })
     .filter((r) => r.amount !== 0)
     .sort((a, b) =>
