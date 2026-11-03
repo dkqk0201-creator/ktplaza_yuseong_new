@@ -1,8 +1,11 @@
-/* 검수완료(G)·수납완료(H)·카드실적 등록완료(AG)·검수 보완 요청 — 현재 동작 회귀 테스트 */
+/*
+ * 검수완료(G)·수납완료(H)·카드실적 등록완료(AG)·검수 보완 요청 — 회귀 테스트
+ * [마스킹 적용 후 기대값 변경] 4번 보완 기록 키가 판매 ID(월|id:…)로, 고객·CTN 칸은 마스킹 값. 그 밖은 수정 전과 같다.
+ */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { setup, register, report, list, byName, markDone, cardCheck, review, edit, deleteSale } from "../harness/web.ts";
-import { PEOPLE, digits } from "../harness/fake-people.ts";
+import { PEOPLE, tMaskName as MN, tMaskPhone as MP } from "../harness/fake-people.ts";
 import { colNum as L } from "../harness/formula.ts";
 
 const [A, B, C] = PEOPLE;
@@ -30,8 +33,9 @@ test("2) 완료: 화면에서 본 값이 다르거나(그사이 O), 판매 확�
   assert.equal((await markDone(s, "inspected")).ok, false);
   const s2 = byName(await list(), A.name);
   const snap = JSON.stringify(ss.month().rows);
-  assert.equal((await markDone({ ...s2, ctn: B.ctn }, "paid")).ok, false);
-  assert.equal((await markDone({ ...s2, customer: B.name }, "paid")).ok, false);
+  assert.equal((await markDone({ ...s2, ctn: MP(B.ctn) }, "paid")).ok, false);
+  assert.equal((await markDone({ ...s2, customer: MN(B.name) }, "paid")).ok, false);
+  assert.equal((await markDone({ ...s2, saleId: "S-AAAAAAAAAAAAAAAAAAAA" }, "paid")).ok, false);
   assert.equal(JSON.stringify(ss.month().rows), snap);
 });
 
@@ -46,7 +50,7 @@ test("3) 카드실적 등록완료: AG열만 O", async () => {
   assert.deepEqual(ss.month().writes.slice(w0), [`setValue ${s.row},${L("AG")} 1x1`]);
 });
 
-test("4) 보완 요청: 저장 → 목록에 붙음 → 취소, 기록은 검수보완 시트에 (판매 키 = 월|개통일|CTN 숫자|고객명)", async () => {
+test("4) 보완 요청: 저장 → 목록에 붙음 → 취소, 기록은 검수보완 시트에 (판매 키 = 월|id:판매ID, 고객·CTN 칸은 마스킹)", async () => {
   const { ss } = setup();
   await register(report(A.name, A.ctn));
   let s = byName(await list(), A.name);
@@ -56,7 +60,8 @@ test("4) 보완 요청: 저장 → 목록에 붙음 → 취소, 기록은 검수
   assert.equal(s.review?.active?.content, "가입신청서 서명 누락");
   const sheet = ss.getSheetByName("검수보완")!;
   assert.equal(sheet.hidden, true);
-  assert.equal(sheet.value(2, 2), `10월|2026-10-05|${digits(A.ctn)}|${A.name}`);
+  assert.equal(sheet.value(2, 2), `10월|id:${s.saleId}`);
+  assert.deepEqual([sheet.value(2, 6), sheet.value(2, 7)], [MN(A.name), MP(A.ctn)]);
   assert.equal((await review(s, "cancel")).ok, true);
   assert.equal(byName(await list(), A.name).review?.active ?? null, null);
 });

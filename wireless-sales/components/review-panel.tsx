@@ -1,5 +1,6 @@
 "use client";
 
+import { saleTargetOf } from "@/lib/sale-target";
 import { useEffect, useState } from "react";
 import { copyText } from "@/components/copy-text";
 import { formatCtn } from "@/lib/format";
@@ -67,14 +68,7 @@ export function ReviewPanel({
     setNotice(null);
     setCopied(null);
     const result = await postReview({
-      target: {
-        sheet,
-        row: sale.row,
-        no: sale.no,
-        activatedAt: sale.activatedAt,
-        customer: sale.customer,
-        ctn: sale.ctn,
-      },
+      target: saleTargetOf(sheet, sale),
       op,
       before: saved,
       content: op === "save" ? value : "",

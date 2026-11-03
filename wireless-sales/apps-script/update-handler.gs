@@ -15,7 +15,7 @@
  * - check: true 칸은 장표에 쓰지 않는다. 지금 값이 before 와 같은지만 확인한다 (예전 화면 호환).
  * - 새 행을 찾지 않는다. target 의 "같은 월 시트 / 같은 행"만 고친다.
  * - B열(No.)·C열(개통일)은 절대 고치지 않는다 (요청에 있으면 거부).
- * - 행 번호만 믿지 않고 No.(B)·개통일(C)·고객(D)·CTN(E) 이 화면에서 본 값과 모두 같을 때만 고친다.
+ * - 행 번호만 믿지 않는다. 판매 ID(B열 메모)·No.(B)·개통일(C)·고객(D)·CTN(E)(마스킹 값끼리) 이 화면에서 본 값과 모두 같을 때만 고친다.
  * - 바꿀 칸마다 지금 장표 값이 화면에서 본 값(before)과 같은지 확인한다
  *   (그사이 다른 사람이 고쳤으면 덮어쓰지 않고 거부).
  * - 수식이 들어 있는 칸은 고치지 않는다 (요청에 있으면 거부).
@@ -30,6 +30,11 @@
  *   wsRenumberSaleRows_). UMNP 행은 No. 가 빈칸이라 화면에서 본 No. 도 빈칸이어야 한다.
  *   keepRowFormulas: true(카드 등록완료)면 번호도 다시 매기지 않는다.
  * - 고객명(D)·CTN(E)을 바꾸면 판매보고 참고내용(notes.gs 보조 시트)의 연결 키도 새 값으로 옮긴다.
+ * - 개인정보: 새로 쓰는 고객명·CTN 은 마스킹 값만, 글 칸은 글 속 전화번호를 마스킹해서 쓴다 (common.gs).
+ *   판매 확인은 common.gs 의 wsSaleTargetMismatches_ (판매 ID, 또는 기존 판매는 마스킹 값 비교 + 같은 고객 후보 1건).
+ *   기존 판매(판매 ID 없음)의 고객명·CTN 을 바꾸면 그때 판매 ID 를 새로 달고, 바꾸지 않은 쪽(고객명 또는 CTN)도
+ *   마스킹 값으로 바꾼다. 참고내용·보완 기록은 예전 키(원본 이름 포함)에서 판매 ID 키로 옮긴다.
+ *   응답 values 는 마스킹한 값이다 (원본이 웹앱으로 나가지 않음). action = "privacy-status" 도 여기서 받는다.
  * - 참고 항목(장표에 없는 값, notes.gs 보조 시트 보관: 정책명·고혜(요금)·2ND 자부담 등)은
  *   changes 안에 항목마다 하나씩 함께 받는다 (바꾼 항목만):
  *     { col: -1, before: null, note: "modelPolicyName", noteBefore: "화면에서 본 값", noteValue: "새 값" }
@@ -46,6 +51,7 @@
  * 시트 이름은 실제 월 시트 이름 "1월"~"12월" 형식 (예: "10월"). "2026년 10월" 같은 화면 표시용 글자는 받지 않는다.
  * 응답: { ok, handler, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
  */
+var WS_UPDATE_PRIVACY = 1; // 개인정보 마스킹·판매 ID 지원 표시 (common.gs 의 privacy-status 가 확인)
 var WS_SALE_UPDATE_HANDLER = "ws-sale-update";
 
 function wsHandleSaleUpdate_(e) {
@@ -57,6 +63,10 @@ function wsHandleSaleUpdate_(e) {
   // 예산관리 고불비사용(gobulbi.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
   if (body && body.action === "gobulbi" && typeof wsHandleGobulbi_ === "function") {
     return wsHandleGobulbi_(body);
+  }
+  // 개인정보 마스킹·판매 ID 지원 확인 (웹앱이 신규 등록 전에 부름, common.gs)
+  if (body && body.action === "privacy-status" && typeof wsHandlePrivacyStatus_ === "function") {
+    return wsHandlePrivacyStatus_(body);
   }
   if (!body || body.action !== "sale-update") return null;
   // 이 handler 의 응답에는 항상 handler 표시를 붙인다 (웹앱이 올바른 코드가 배포됐는지 확인)
@@ -148,6 +158,14 @@ function wsHandleSaleUpdate_(e) {
   if (writes === 0 && !notePatch) {
     return reply({ ok: false, message: "수정할 항목이 없습니다." });
   }
+  // 개인정보: 새로 쓰는 값은 Apps Script 에서도 마스킹을 강제한다 (D 고객명·E CTN·글 속 전화번호)
+  for (var mi = 0; mi < changes.length; mi++) {
+    if (changes[mi].check === true) continue;
+    changes[mi].value = wsMaskCellForSave_(Number(changes[mi].col), changes[mi].value);
+  }
+  for (var mn = 0; mn < notePatches.length; mn++) {
+    notePatches[mn].value = wsMaskFreeText_(notePatches[mn].value);
+  }
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) {
@@ -180,7 +198,7 @@ function wsHandleSaleUpdate_(e) {
     }
 
     var range = sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT);
-    var current = range.getValues()[0];
+    var current = wsWithSaleId_(sheet, rowNumber, range.getValues()[0]);
     var formulas = range.getFormulas()[0];
     var text = function (v) {
       return wsText_(v, tz);
@@ -195,11 +213,8 @@ function wsHandleSaleUpdate_(e) {
         message: "판매 내용이 없는 행입니다. 화면을 새로고침해 주세요.",
       });
     }
-    var mismatches = [];
-    if (text(current[WS_B_INDEX]) !== text(target.no)) mismatches.push("No.");
-    if (text(current[2]) !== text(target.activatedAt)) mismatches.push("개통일");
-    if (text(current[3]) !== text(target.customer)) mismatches.push("고객");
-    if (digits(current[4]) !== digits(target.ctn)) mismatches.push("CTN");
+    // 판매 확인: 판매 ID(있으면) 또는 행·No.·개통일·마스킹 고객명·마스킹 CTN + 후보 1건 (common.gs)
+    var mismatches = wsSaleTargetMismatches_(sheet, rowNumber, current, target, tz);
     for (var k = 0; k < changes.length; k++) {
       var c = Number(changes[k].col);
       if (changes[k].check !== true && formulas[c] !== "") {
@@ -208,7 +223,8 @@ function wsHandleSaleUpdate_(e) {
           message: wsColumnLetter_(c + 1) + "열은 수식 칸이라 수정할 수 없습니다.",
         });
       }
-      if (wsComparable_(current[c], tz) !== wsComparable_(changes[k].before, tz)) {
+      // 화면은 마스킹된 값만 보므로 D·E·글 칸은 마스킹한 값끼리 비교한다
+      if (wsMaskedComparable_(c, current[c], tz) !== wsMaskedComparable_(c, changes[k].before, tz)) {
         mismatches.push(wsColumnLetter_(c + 1) + "열");
       }
     }
@@ -222,9 +238,23 @@ function wsHandleSaleUpdate_(e) {
       });
     }
 
+    // 기존 판매(ID 없음)의 고객명·CTN 을 바꾸면 마스킹 값이 들어가므로 이때 판매 ID 를 새로 단다
+    var newSaleId = "";
+    if (!current.saleId) {
+      for (var nc = 0; nc < changes.length; nc++) {
+        var ncCol = Number(changes[nc].col);
+        if (changes[nc].check !== true && (ncCol === 3 || ncCol === 4)) newSaleId = wsNewSaleId_();
+      }
+      for (var nt = 0; newSaleId && wsCountSaleId_(sheet, newSaleId) !== 0 && nt < 20; nt++) newSaleId = wsNewSaleId_();
+      if (newSaleId && wsCountSaleId_(sheet, newSaleId) !== 0) {
+        return reply({ ok: false, message: "판매 ID 를 만들지 못했습니다. 다시 시도해 주세요." });
+      }
+    }
+
     // 참고 항목: 장표에 아무것도 쓰기 전에 연결 키·현재 값 확인 (실패하면 아무것도 쓰지 않음)
     if (notePatch) {
       var preview = current.slice();
+      preview.saleId = newSaleId || current.saleId;
       for (var p = 0; p < changes.length; p++) {
         if (changes[p].check === true) continue;
         var pv = changes[p].value;
@@ -250,7 +280,8 @@ function wsHandleSaleUpdate_(e) {
         });
       }
       for (var np = 0; np < notePatches.length; np++) {
-        if (wsNoteValue_(ss, fromKey, notePatches[np].field) !== notePatches[np].before) {
+        // 화면은 글 속 전화번호가 마스킹된 값을 보므로 같은 규칙으로 마스킹해서 비교
+        if (wsMaskFreeText_(wsNoteValue_(ss, fromKey, notePatches[np].field)) !== wsMaskFreeText_(notePatches[np].before)) {
           return reply({
             ok: false,
             message:
@@ -260,6 +291,14 @@ function wsHandleSaleUpdate_(e) {
       }
     }
 
+    if (newSaleId) {
+      sheet.getRange(rowNumber, 2).setNote(wsSaleIdNote_(newSaleId));
+      // 판매 ID 가 붙는 판매는 고객명·CTN 이 모두 마스킹 값이어야 한다 → 이번에 바꾸지 않은 쪽도 마스킹 값으로
+      var changedCol = {};
+      for (var cc = 0; cc < changes.length; cc++) if (changes[cc].check !== true) changedCol[Number(changes[cc].col)] = true;
+      if (!changedCol[3] && text(current[3]) !== "") sheet.getRange(rowNumber, 4).setValue(wsMaskCellForSave_(3, text(current[3])));
+      if (!changedCol[4] && text(current[4]) !== "") sheet.getRange(rowNumber, 5).setValue(wsMaskCellForSave_(4, text(current[4])));
+    }
     // 바뀐 칸만 그 칸에 쓴다 (B·C 열과 다른 칸, 확인만 하는 칸은 그대로)
     for (var w = 0; w < changes.length; w++) {
       if (changes[w].check === true) continue;
@@ -284,7 +323,7 @@ function wsHandleSaleUpdate_(e) {
       }
     }
 
-    var after = sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT).getValues()[0];
+    var after = wsWithSaleId_(sheet, rowNumber, sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT).getValues()[0]);
     try {
       wsMoveNoteForRow_(ss, sheetName, current, after, tz);
     } catch (err) {
@@ -321,7 +360,9 @@ function wsHandleSaleUpdate_(e) {
       sheet: sheetName,
       row: rowNumber,
       no: text(after[WS_B_INDEX]),
-      values: after.map(function (v) {
+      saleId: after.saleId || "",
+      // 응답에는 원본이 나가지 않게 마스킹 (기존 판매의 다른 칸 글 속 전화번호 포함)
+      values: wsMaskRowForView_(after).map(function (v) {
         return v instanceof Date ? Utilities.formatDate(v, tz, "yyyy-MM-dd") : v;
       }),
       message: writes > 0 ? "판매내역이 수정되었습니다." : "참고내용이 수정되었습니다.",

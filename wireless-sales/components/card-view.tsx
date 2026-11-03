@@ -1,5 +1,6 @@
 "use client";
 
+import { saleTargetOf } from "@/lib/sale-target";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { copyText } from "@/components/copy-text";
 import { OXMark } from "@/components/inspection-view";
@@ -97,14 +98,7 @@ function CardList({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   /** 등록완료: 장표 AG = O 저장이 확인된 뒤에만 화면을 완료로 */
   async function complete(sale: SheetSale): Promise<CheckResult> {
     const result = await postCardCheck({
-      target: {
-        sheet,
-        row: sale.row,
-        no: sale.no,
-        activatedAt: sale.activatedAt,
-        customer: sale.customer,
-        ctn: sale.ctn,
-      },
+      target: saleTargetOf(sheet, sale),
       before: sale.cardChecked,
     });
     if (!result.ok) return result;

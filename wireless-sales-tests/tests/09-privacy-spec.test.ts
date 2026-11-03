@@ -1,6 +1,5 @@
 /*
- * 개인정보 마스킹·판매 ID — 확정된 요구사항의 "기대 동작" (구현 전이라 todo 로 표시, 실패해도 전체 결과는 실패 아님).
- * 구현이 끝나면 todo 를 떼고 모두 통과해야 한다.
+ * 개인정보 마스킹·판매 ID — 확정된 요구사항의 기대 동작 (구현 전에는 todo 였고, 구현 후 todo 를 뗐다).
  *   고객명: 김수현 → 김수*   (한 글자 → *, 영문 → 앞 2글자 + *)
  *   전화:   010-1234-5678 → 010-12**-*678   (10자리 011-123-4567 → 011-12*-*567)
  *   판매 ID: B열(No.) 셀 메모, 정렬·삭제·복사에도 다른 판매에 붙지 않음, 분실·중복이면 안전하게 거부
@@ -15,7 +14,6 @@ import { colNum as L } from "../harness/formula.ts";
 import { cardPendingMessage } from "@/lib/card-message";
 import { reviewMessage } from "@/lib/inspection-review";
 
-const TODO = { todo: "마스킹·판매 ID 구현 전 (기대 동작)" };
 const [A, B, C, D] = PEOPLE;
 const mask = async () => (await import("@/lib/privacy-mask")) as { maskName: (s: string) => string; maskPhone: (s: string) => string; maskFreeText: (s: string) => string };
 /** 기존(원본 그대로) 판매를 장표에 직접 넣는다 — 10월·11월 기존 데이터 흉내 */
@@ -26,7 +24,7 @@ function legacyRow(ss: ReturnType<typeof setup>["ss"], row: number, p: { name: s
   m.cell(row, L("N")).formula = `=SUM(O${row}:T${row})`; m.cell(row, L("U")).formula = `=SUM(V${row}:Y${row})`;
 }
 
-test("S1) 마스킹 규칙 (같은 값을 다시 넣어도 그대로)", TODO, async () => {
+test("S1) 마스킹 규칙 (같은 값을 다시 넣어도 그대로)", async () => {
   const { maskName, maskPhone } = await mask();
   const cases: [string, string][] = [["김수현", "김수*"], ["이훈", "이*"], ["김", "*"], ["남궁민수", "남궁민*"], ["John Smith", "Jo********"], ["외국인", "외국*"], ["김수*", "김수*"], ["", ""]];
   for (const [i, o] of cases) assert.equal(maskName(i), o, i);
@@ -34,7 +32,7 @@ test("S1) 마스킹 규칙 (같은 값을 다시 넣어도 그대로)", TODO, as
   for (const [i, o] of phones) assert.equal(maskPhone(i), o, i);
 });
 
-test("S2) 신규 등록: 장표·웹앱참고·검수보완·응답·로그 어디에도 원본 이름·번호가 없음", TODO, async () => {
+test("S2) 신규 등록: 장표·웹앱참고·검수보완·응답·로그 어디에도 원본 이름·번호가 없음", async () => {
   const { ss, gas } = setup();
   serverLogs.length = 0; responses.length = 0;
   await register(report(A.name, A.ctn, { extra: "중고폰&현물 판매 : 메모\n" }), report(B.name, B.ctn, { date: "10.04" }));
@@ -47,7 +45,7 @@ test("S2) 신규 등록: 장표·웹앱참고·검수보완·응답·로그 어�
   assert.deepEqual([ss.month().value(a.row, L("D")), ss.month().value(a.row, L("E"))], ["가나*", "010-00**-*111"]);
 });
 
-test("S3) Apps Script 도 마스킹을 강제: 웹앱을 거치지 않고 원본을 보내도 원본은 저장되지 않음", TODO, async () => {
+test("S3) Apps Script 도 마스킹을 강제: 웹앱을 거치지 않고 원본을 보내도 원본은 저장되지 않음", async () => {
   const { ss, gas } = setup();
   const row = Array(38).fill(null);
   row[2] = "2026-10-05"; row[3] = A.name; row[4] = A.ctn; row[8] = "기기변경"; row[12] = "김수현";
@@ -55,7 +53,7 @@ test("S3) Apps Script 도 마스킹을 강제: 웹앱을 거치지 않고 원본
   assert.deepEqual(findOriginals(sheetTexts(ss), [A]), []);
 });
 
-test("S4) 마스킹을 확인할 수 없으면(예전 Apps Script 등) 신규 등록을 막고 아무것도 쓰지 않음", TODO, async () => {
+test("S4) 마스킹을 확인할 수 없으면(예전 Apps Script 등) 신규 등록을 막고 아무것도 쓰지 않음", async () => {
   const env = setup({ files: ["common", "save-handler", "list-handler"] }); // 마스킹 확인 기능이 없는 예전 코드라고 가정
   const before = JSON.stringify(env.ss.month().rows);
   const r = await register(report(A.name, A.ctn));
@@ -63,7 +61,7 @@ test("S4) 마스킹을 확인할 수 없으면(예전 Apps Script 등) 신규 �
   assert.equal(JSON.stringify(env.ss.month().rows), before);
 });
 
-test("S5) 기존 판매(장표에 원본): 조회 응답에는 마스킹 값만, 수정·검수완료·삭제는 그대로 됨, 원본 칸은 바뀌지 않음", TODO, async () => {
+test("S5) 기존 판매(장표에 원본): 조회 응답에는 마스킹 값만, 수정·검수완료·삭제는 그대로 됨, 원본 칸은 바뀌지 않음", async () => {
   const { ss } = setup();
   legacyRow(ss, 9, A); legacyRow(ss, 10, B);
   responses.length = 0;
@@ -76,19 +74,25 @@ test("S5) 기존 판매(장표에 원본): 조회 응답에는 마스킹 값만,
   assert.equal((await deleteSale(byName(await list(), "라마*"))).ok, true);
 });
 
-test("S6) 기존 판매: 마스킹하면 같아지는 다른 판매가 있어도 행·No.·개통일까지 맞는 1건에만 적용, 후보가 여러 건이면 거부", TODO, async () => {
+test("S6) 기존 판매: 같은 날 마스킹 값이 같은 후보가 여러 건이면 행·No.·개통일이 맞아도 거부 (다른 판매를 고치지 않음)", async () => {
+  // [확정 요구사항 반영] todo 작성 때는 "행·No. 가 맞는 1건에 적용" 으로 적었으나,
+  // 확정된 요구사항(후보가 여러 건이면 거부)에 맞춰 기대값을 "거부" 로 바꿨다.
   const { ss } = setup();
   legacyRow(ss, 9, TWINS[0]); legacyRow(ss, 10, TWINS[1]); // 같은 날, 마스킹하면 이름·번호가 같아짐
-  const [t0, t1] = await list();
+  legacyRow(ss, 11, C); // 대조군: 후보가 1건인 기존 판매
+  const [t0, t1, c] = await list();
   assert.equal(t0.customer, t1.customer);
-  assert.equal((await markDone(t0, "inspected")).ok, true);
-  assert.deepEqual([ss.month().value(9, L("G")), ss.month().value(10, L("G"))], ["O", "X"]);
-  // 참고내용 연결: 두 판매의 키가 같아지므로 어느 쪽에도 붙이지 않고 수정 거부
-  const r = await edit(t1, {}, { usedPhone: "x" } as Record<string, string>);
-  assert.equal(r.ok, false);
+  const snap = JSON.stringify(ss.month().rows);
+  for (const r of [await markDone(t0, "inspected"), await markDone(t1, "paid"), await edit(t1, { customerBenefit: "1" }), await edit(t1, {}, { usedPhone: "x" } as Record<string, string>), await deleteSale(t0), await review(t0, "save", "x")]) {
+    assert.equal(r.ok, false, r.message);
+  }
+  assert.equal(JSON.stringify(ss.month().rows), snap);
+  assert.equal(ss.getSheetByName("검수보완"), null, "보완 기록도 만들지 않음");
+  assert.equal((await markDone(c, "inspected")).ok, true); // 대조군은 그대로 됨
+  assert.equal(ss.month().value(11, L("G")), "O");
 });
 
-test("S7) 신규 판매 ID: B열 메모로 붙고 조회에 함께 오며, 정렬로 행이 바뀌어도 판매를 따라감", TODO, async () => {
+test("S7) 신규 판매 ID: B열 메모로 붙고 조회에 함께 오며, 정렬로 행이 바뀌어도 판매를 따라감", async () => {
   const { ss } = setup();
   await register(report(A.name, A.ctn, { date: "10.07" }));
   const a = (await list())[0] as Record<string, unknown> & { row: number };
@@ -101,7 +105,7 @@ test("S7) 신규 판매 ID: B열 메모로 붙고 조회에 함께 오며, 정�
   assert.doesNotMatch(ss.month().cell(a.row, 2).note, new RegExp(String(a.saleId)));
 });
 
-test("S8) 판매 ID: 빈 자리에 남은 예전 B열 메모를 새 판매가 물려받지 않고, 삭제하면 그 판매 ID 메모도 지움", TODO, async () => {
+test("S8) 판매 ID: 빈 자리에 남은 예전 B열 메모를 새 판매가 물려받지 않고, 삭제하면 그 판매 ID 메모도 지움", async () => {
   const { ss } = setup();
   ss.month().cell(9, 2).note = "웹앱 판매ID: OLD-STALE-0001";
   await register(report(A.name, A.ctn));
@@ -111,7 +115,7 @@ test("S8) 판매 ID: 빈 자리에 남은 예전 B열 메모를 새 판매가 �
   assert.doesNotMatch(ss.month().cell(a.row, 2).note, /판매ID/);
 });
 
-test("S9) 판매 ID 중복(행 복사): 수정·삭제·참고내용 연결을 모두 거부", TODO, async () => {
+test("S9) 판매 ID 중복(행 복사): 수정·삭제·참고내용 연결을 모두 거부", async () => {
   const { ss } = setup();
   await register(report(A.name, A.ctn, { extra: "중고폰&현물 판매 : 메모\n" }));
   const a = (await list())[0];
@@ -125,7 +129,7 @@ test("S9) 판매 ID 중복(행 복사): 수정·삭제·참고내용 연결을 �
   assert.equal(JSON.stringify(m.rows), snap);
 });
 
-test("S10) 판매 ID 분실(메모 삭제): 그 신규 판매의 수정·삭제·참고내용 연결을 거부 (다른 판매에 붙지 않음)", TODO, async () => {
+test("S10) 판매 ID 분실(메모 삭제): 그 신규 판매의 수정·삭제·참고내용 연결을 거부 (다른 판매에 붙지 않음)", async () => {
   const { ss } = setup();
   await register(report(A.name, A.ctn, { extra: "중고폰&현물 판매 : 메모\n" }));
   const a = (await list())[0];
@@ -138,7 +142,7 @@ test("S10) 판매 ID 분실(메모 삭제): 그 신규 판매의 수정·삭제�
   assert.equal(JSON.stringify(ss.month().rows), snap);
 });
 
-test("S11) 마스킹 충돌: 같은 날 마스킹 값이 같은 두 신규 판매도 참고내용·보완 요청이 섞이거나 덮어써지지 않음", TODO, async () => {
+test("S11) 마스킹 충돌: 같은 날 마스킹 값이 같은 두 신규 판매도 참고내용·보완 요청이 섞이거나 덮어써지지 않음", async () => {
   setup();
   await register(report(TWINS[0].name, TWINS[0].ctn, { extra: "중고폰&현물 판매 : 첫째\n" }), report(TWINS[1].name, TWINS[1].ctn, { extra: "중고폰&현물 판매 : 둘째\n" }));
   const [x, y] = await list();
@@ -149,7 +153,7 @@ test("S11) 마스킹 충돌: 같은 날 마스킹 값이 같은 두 신규 판�
   assert.deepEqual([x2.review?.active?.content ?? null, y2.review?.active?.content ?? null], ["x만 보완", null]);
 });
 
-test("S12) 자유 입력 메모 속 전화번호도 마스킹 (고객약속사항·참고 메모·보완 요청)", TODO, async () => {
+test("S12) 자유 입력 메모 속 전화번호도 마스킹 (고객약속사항·참고 메모·보완 요청)", async () => {
   const { ss } = setup();
   await register(report(C.name, C.ctn, { extra: `중고폰&현물 판매 : x\nㄴ어디에 : 보호자 ${D.ctn} 연락\n고객약속사항 : ${D.ctn} 로 연락\n` }));
   const c = (await list())[0];
@@ -157,7 +161,7 @@ test("S12) 자유 입력 메모 속 전화번호도 마스킹 (고객약속사�
   assert.deepEqual(findOriginals(sheetTexts(ss), [{ name: "\u0000", ctn: D.ctn }]), []);
 });
 
-test("S13) 카드실적 카톡 안내·보완 요청 전달문은 마스킹 값만", TODO, async () => {
+test("S13) 카드실적 카톡 안내·보완 요청 전달문은 마스킹 값만", async () => {
   setup();
   await register(report(A.name, A.ctn, { extra: "제카 : 우리\n" }));
   const a = (await list())[0];
@@ -165,7 +169,7 @@ test("S13) 카드실적 카톡 안내·보완 요청 전달문은 마스킹 값�
   assert.equal((await cardCheck(a)).ok, true);
 });
 
-test("S14) 오류 안내 문구에도 원본 번호를 되풀이하지 않음", TODO, async () => {
+test("S14) 오류 안내 문구에도 원본 번호를 되풀이하지 않음", async () => {
   const r = await (async () => { setup(); return register(report(A.name, "010-0000-11")); })();
   assert.deepEqual(findOriginals([JSON.stringify(r)], [{ name: "\u0000", ctn: "010-0000-11" }]), []);
 });

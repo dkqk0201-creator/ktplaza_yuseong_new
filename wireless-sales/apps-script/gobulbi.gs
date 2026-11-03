@@ -22,6 +22,7 @@
  *   list   → { month, items: [{ id, payDate, content, amount, seller, createdAt, updatedAt }], total, invalidRows }
  *   create → { item, duplicate }   update → { item }   delete → { id }
  */
+var WS_GOBULBI_PRIVACY = 1; // 개인정보 마스킹·판매 ID 지원 표시 (common.gs 의 privacy-status 가 확인)
 var WS_GOBULBI_HANDLER = "ws-gobulbi";
 var WS_GOBULBI_SHEET = "고불비사용내역";
 var WS_GOBULBI_HEADER = [
@@ -141,7 +142,7 @@ function wsGobulbiView_(rec) {
   return {
     id: rec.id,
     payDate: rec.payDate,
-    content: rec.content,
+    content: wsMaskFreeText_(rec.content), // 개인정보: 글 속 전화번호는 화면에 마스킹해서
     amount: rec.amount,
     seller: rec.seller,
     createdAt: rec.createdAt,
@@ -159,7 +160,8 @@ function wsGobulbiTextCell_(text) {
 
 /** 입력 확인. 문제 없으면 { content, amount, seller }, 있으면 { error } */
 function wsGobulbiInput_(body) {
-  var content = typeof body.content === "string" ? body.content.trim() : "";
+  // 개인정보: 글 속 전화번호는 마스킹해서 보관 (원본은 시트에 쓰지 않음)
+  var content = typeof body.content === "string" ? wsMaskFreeText_(body.content.trim()) : "";
   if (!content) return { error: "내용을 입력해 주세요." };
   if (content.length > WS_GOBULBI_CONTENT_MAX) {
     return { error: "내용은 " + WS_GOBULBI_CONTENT_MAX + "자 이하로 입력해 주세요." };
@@ -192,7 +194,7 @@ function wsGobulbiFind_(records, id) {
 function wsGobulbiSameAsBefore_(rec, before) {
   return (
     !!before &&
-    rec.content === String(before.content) &&
+    wsMaskFreeText_(rec.content) === wsMaskFreeText_(String(before.content)) &&
     rec.amount === Number(before.amount) &&
     rec.seller === String(before.seller) &&
     rec.updatedAt === String(before.updatedAt)
@@ -281,7 +283,7 @@ function wsHandleGobulbi_(body) {
         var ex = existing[0];
         if (
           existing.length === 1 &&
-          ex.content === input.content &&
+          wsMaskFreeText_(ex.content) === input.content &&
           ex.amount === input.amount &&
           ex.seller === input.seller
         ) {

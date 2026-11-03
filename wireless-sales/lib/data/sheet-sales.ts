@@ -5,11 +5,14 @@ import {
   listRowsFromAppsScript,
   monthSheetNames,
 } from "@/lib/server/apps-script";
+import { maskFreeText, maskSheetValues, maskTextRecord } from "@/lib/privacy-mask";
 import { parseSheetRow, type SheetSale } from "@/lib/sheet-record";
 
 /*
  * 무선장표 월 시트에 저장된 판매내역 조회 창구.
  * 검수관리·카드실적·예산관리·간편등록(중복 확인)이 모두 이 함수를 사용한다.
+ * 개인정보: 장표에 원본이 남아 있는 기존 판매도 여기서 마스킹한 값만 화면으로 보낸다
+ * (Apps Script list 도 마스킹해서 보내지만, 예전 코드가 원본을 보내도 화면에 나가지 않게 한 번 더).
  */
 
 export type SheetSalesResult =
@@ -33,11 +36,13 @@ export async function getSheetSales(sheet?: string): Promise<SheetSalesResult> {
   try {
     const result = await listRowsFromAppsScript(sheet);
     const sales = result.rows
-      .map(({ row, no, values, notes, spotNote, review }) => {
-        const sale: SheetSale = parseSheetRow(row, no, values);
-        if (notes) sale.notes = notes;
-        if (review) sale.review = review;
-        if (spotNote) sale.spotNote = spotNote;
+      .map(({ row, no, values, notes, spotNote, review, saleId, saleIdProblem }) => {
+        const sale: SheetSale = parseSheetRow(row, no, maskSheetValues(values));
+        if (notes) sale.notes = maskTextRecord(notes);
+        if (review) sale.review = review; // parseReview 가 글 속 전화번호를 마스킹
+        if (spotNote) sale.spotNote = maskFreeText(spotNote);
+        if (saleId) sale.saleId = saleId;
+        if (saleIdProblem) sale.saleIdProblem = saleIdProblem;
         return sale;
       })
       .sort((a, b) => b.row - a.row);

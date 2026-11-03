@@ -1,10 +1,10 @@
-import { formatCtn } from "@/lib/format";
+import { maskName, maskPhone } from "@/lib/privacy-mask";
 import { dateText } from "@/lib/sale-display";
 import type { SheetSale } from "@/lib/sheet-record";
 
 /*
  * 카드실적 미검수 안내 — 직원에게 카카오톡으로 보낼 글.
- * CTN 은 전체 번호(010-1234-5678)를 쓴다 (카드실적 화면에서만).
+ * 개인정보: 고객명·CTN 은 마스킹 값만 쓴다 (김수*, 010-12**-*678). 서버가 이미 마스킹해서 보내지만 한 번 더 마스킹.
  */
 
 /**
@@ -24,7 +24,7 @@ const TITLE = "[카드실적 미검수 안내]";
 const CLOSING = "카드실적 검수 확인 부탁드립니다.";
 
 function ctnText(sale: SheetSale): string {
-  return sale.ctn ? formatCtn(sale.ctn) : "-";
+  return sale.ctn ? maskPhone(sale.ctn) : "-";
 }
 
 /** 1명 상세보기용 */
@@ -33,7 +33,7 @@ export function cardPendingMessage(sale: SheetSale): string {
     TITLE,
     "",
     `직원 : ${sale.staff || "-"}`,
-    `고객 : ${sale.customer || "-"}`,
+    `고객 : ${maskName(sale.customer) || "-"}`,
     `개통일 : ${dateText(sale.activatedAt)}`,
     `CTN : ${ctnText(sale)}`,
     `카드 : ${cardName(sale)}`,
@@ -57,7 +57,7 @@ export function cardPendingListMessage(sales: readonly SheetSale[]): string {
       "",
       ...list.map(
         (sale, i) =>
-          `${i + 1}. ${sale.customer || "-"} / ${dateText(sale.activatedAt)} / ${cardName(sale)} / ${ctnText(sale)}`,
+          `${i + 1}. ${maskName(sale.customer) || "-"} / ${dateText(sale.activatedAt)} / ${cardName(sale)} / ${ctnText(sale)}`,
       ),
     ].join("\n");
   });

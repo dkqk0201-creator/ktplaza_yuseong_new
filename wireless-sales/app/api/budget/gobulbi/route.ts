@@ -1,3 +1,4 @@
+import { maskFreeText } from "@/lib/privacy-mask";
 import { activeStaffNames } from "@/lib/data/staff-list";
 import { todayInKorea } from "@/lib/format";
 import {
@@ -129,7 +130,8 @@ export async function POST(request: Request) {
 
   let fields: { content: string; amount: number; seller: string } | null = null;
   if (op !== "delete") {
-    const content = typeof input.content === "string" ? input.content.trim() : "";
+    // 개인정보: 글 속 전화번호는 마스킹해서 보낸다 (Apps Script 도 한 번 더 강제)
+    const content = typeof input.content === "string" ? maskFreeText(input.content.trim()) : "";
     const seller = typeof input.seller === "string" ? input.seller.trim() : "";
     const problem =
       gobulbiContentError(content) ??

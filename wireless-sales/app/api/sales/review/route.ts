@@ -1,3 +1,4 @@
+import { maskFreeText } from "@/lib/privacy-mask";
 import { REVIEW_MAX, reviewContentError } from "@/lib/inspection-review";
 import type { ReviewResponse } from "@/lib/review-api";
 import { parseSaleTarget } from "@/lib/sale-target";
@@ -39,9 +40,10 @@ export async function POST(request: Request) {
   const op = input.op === "save" || input.op === "cancel" ? input.op : null;
   const before =
     typeof input.before === "string" && input.before.length <= REVIEW_MAX + 100
-      ? input.before.trim()
+      ? maskFreeText(input.before.trim())
       : null;
-  const content = typeof input.content === "string" ? input.content : op === "cancel" ? "" : null;
+  // 개인정보: 미비내용 글 속 전화번호는 마스킹해서 보낸다 (Apps Script 도 한 번 더 강제)
+  const content = typeof input.content === "string" ? maskFreeText(input.content) : op === "cancel" ? "" : null;
   if (!target || !op || before === null || content === null || content.length > REVIEW_MAX + 100) {
     return reply({ ok: false, message: "보완 요청 정보가 올바르지 않습니다." }, 400);
   }

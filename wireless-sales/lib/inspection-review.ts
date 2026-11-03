@@ -1,4 +1,4 @@
-import { formatCtn } from "@/lib/format";
+import { maskFreeText, maskName, maskPhone } from "@/lib/privacy-mask";
 import { isO, type SheetSale } from "@/lib/sheet-record";
 
 /*
@@ -42,7 +42,8 @@ export function parseReview(value: unknown): SaleReview | undefined {
   let active: ReviewActive | null = null;
   if (typeof raw.active === "object" && raw.active !== null) {
     const a = raw.active as Record<string, unknown>;
-    const content = str(a.content, REVIEW_MAX + 100).trim();
+    // 개인정보: 글 속 전화번호는 화면에 마스킹해서 (예전 기록 포함)
+    const content = maskFreeText(str(a.content, REVIEW_MAX + 100).trim());
     if (content) {
       active = {
         content,
@@ -58,7 +59,7 @@ export function parseReview(value: unknown): SaleReview | undefined {
         .slice(0, 20)
         .map((h) => ({
           status: str(h.status, 20),
-          content: str(h.content, REVIEW_MAX + 100),
+          content: maskFreeText(str(h.content, REVIEW_MAX + 100)),
           staff: str(h.staff, 50),
           requestedAt: str(h.requestedAt, 30),
           closedAt: str(h.closedAt, 30),
@@ -80,12 +81,12 @@ export function reviewMessage(
 ): string {
   return [
     "[검수 보완 요청]",
-    `고객명 : ${sale.customer || "-"}`,
-    `CTN : ${sale.ctn ? formatCtn(sale.ctn) : "-"}`,
+    `고객명 : ${maskName(sale.customer) || "-"}`,
+    `CTN : ${sale.ctn ? maskPhone(sale.ctn) : "-"}`,
     `판매자 : ${sale.staff || "-"}`,
     "",
     "미비내용",
-    content.trim() || "-",
+    maskFreeText(content.trim()) || "-",
     "",
     "보완 후 회신 부탁드립니다.",
   ].join("\n");

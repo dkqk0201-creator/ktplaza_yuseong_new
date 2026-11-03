@@ -12,6 +12,7 @@ import { diffSale } from "@/lib/sale-edit";
 import { diffNotes } from "@/lib/sale-form-layout";
 import { planVSplit } from "@/lib/v-split";
 import type { SheetSale } from "@/lib/sheet-record";
+import { tMaskName } from "./fake-people.ts";
 import { POST as quickPOST } from "@/app/api/sales/quick/route";
 import { POST as updatePOST } from "@/app/api/sales/update/route";
 import { POST as deletePOST } from "@/app/api/sales/delete/route";
@@ -80,12 +81,20 @@ export async function list(sheet = "10월"): Promise<SheetSale[]> {
   if (!r.ok) throw new Error("조회 실패: " + (r as { message?: string }).message);
   return [...r.sales].sort((a, b) => a.row - b.row);
 }
+/**
+ * 고객명으로 판매 찾기. 화면에는 마스킹 이름(가나*)만 오므로 원본·마스킹 어느 쪽으로 불러도 찾는다
+ * (수정 전 코드 = 원본 그대로 오는 경우도 같은 테스트로 비교할 수 있게).
+ */
 export const byName = (sales: SheetSale[], customer: string) => {
-  const found = sales.filter((s) => s.customer === customer);
-  if (found.length !== 1) throw new Error(`판매 ${customer} ${found.length}건`);
+  const found = sales.filter((s) => s.customer === customer || s.customer === tMaskName(customer));
+  if (found.length !== 1) throw new Error(`판매 ${tMaskName(customer)} ${found.length}건`);
   return found[0];
 };
-export const target = (s: SheetSale, sheet = "10월") => ({ sheet, row: s.row, no: s.no, activatedAt: s.activatedAt, customer: s.customer, ctn: s.ctn });
+/** 화면이 보내는 판매 식별값 (판매 ID 가 있으면 함께 — components 의 saleTargetOf 와 같은 모양) */
+export const target = (s: SheetSale, sheet = "10월") => {
+  const id = (s as { saleId?: string }).saleId;
+  return { sheet, row: s.row, no: s.no, activatedAt: s.activatedAt, customer: s.customer, ctn: s.ctn, ...(id ? { saleId: id } : {}) };
+};
 
 /** 판매 수정 (판매 상세 화면과 같은 방식으로 바뀐 칸·참고 항목만 보냄) */
 export async function edit(s: SheetSale, edited: Record<string, string>, notes: Record<string, string> = {}, v: { plan?: string; installment?: string } = {}) {

@@ -4,7 +4,10 @@
  * 검수관리 판매 상세에서 점장이 적은 "미비내용"과 보완 요청 상태·이력을
  * 같은 스프레드시트의 숨김 보조 시트 "검수보완" 에 보관한다.
  *   - 무선장표 월 시트·양식 시트의 열 구조·금액·수식·메모·No. 는 바꾸지 않는다 (이 파일은 월 시트에 쓰지 않음).
- *   - 판매 건 연결 키 = notes.gs 의 wsNoteKey_ (월 시트 | 개통일 | CTN 숫자 | 고객명).
+ *   - 판매 건 연결 키 = notes.gs 의 wsNoteKey_: 판매 ID(B열 메모)가 있으면 "월 시트|id:판매ID",
+ *     없는 기존 판매는 (월 시트 | 개통일 | CTN 숫자 | 고객명).
+ *   - 개인정보: 새 기록의 고객·CTN 칸은 마스킹 값만, 미비내용 글 속 전화번호도 마스킹해서 보관한다.
+ *     판매 확인은 common.gs 의 wsSaleTargetMismatches_ (판매 ID 또는 마스킹 값 + 후보 1건).
  *     행 번호·No. 를 쓰지 않으므로 날짜순 정렬·No. 다시 매기기에도 다른 고객에 붙지 않는다.
  *   - 같은 키 판매가 월 시트에 2건 이상이면 붙이지도, 저장하지도 않는다 (다른 판매에 붙는 것 방지).
  *   - 상태: 요청중 → 검수완료(G열 O 저장 시 자동) / 취소. 끝난 기록은 지우지 않고 이력으로 남긴다.
@@ -18,6 +21,7 @@
  * 응답: { ok, handler: "ws-inspection-review", review: { active, history }, message }
  * 보조 시트는 처음 저장할 때 자동으로 만들고 숨긴다. 직접 고치지 마세요.
  */
+var WS_REVIEW_PRIVACY = 1; // 개인정보 마스킹·판매 ID 지원 표시 (common.gs 의 privacy-status 가 확인)
 var WS_REVIEW_HANDLER = "ws-inspection-review";
 var WS_REVIEW_SHEET = "검수보완";
 var WS_REVIEW_HEADER = [
@@ -242,7 +246,7 @@ function wsHandleInspectionReview_(body) {
   if (op !== "save" && op !== "cancel") {
     return reply({ ok: false, message: "요청 형식이 올바르지 않습니다." });
   }
-  var content = typeof body.content === "string" ? body.content.trim() : "";
+  var content = typeof body.content === "string" ? wsMaskFreeText_(body.content.trim()) : "";
   if (op === "save" && (!content || content.length > WS_REVIEW_MAX)) {
     return reply({
       ok: false,
@@ -252,7 +256,7 @@ function wsHandleInspectionReview_(body) {
   if (typeof body.before !== "string") {
     return reply({ ok: false, message: "요청 형식이 올바르지 않습니다." });
   }
-  var before = body.before.trim();
+  var before = wsMaskFreeText_(body.before.trim());
 
   var target = body.target || {};
   var sheetName = String(target.sheet || "").replace(/\s/g, "");
@@ -281,18 +285,14 @@ function wsHandleInspectionReview_(body) {
       return reply({ ok: false, message: "해당 행이 장표에 없습니다." });
     }
     // 판매 확인: 같은 행 + No.·개통일·고객·CTN 이 화면에서 본 값과 모두 같을 때만 (월 시트는 읽기만)
-    var current = sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT).getValues()[0];
+    var current = wsWithSaleId_(sheet, rowNumber, sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT).getValues()[0]);
     var text = function (v) {
       return wsText_(v, tz);
     };
     if (wsIsEmptySale_(current)) {
       return reply({ ok: false, message: "판매 내용이 없는 행입니다. 화면을 새로고침해 주세요." });
     }
-    var mismatches = [];
-    if (text(current[WS_B_INDEX]) !== text(target.no)) mismatches.push("No.");
-    if (text(current[2]) !== text(target.activatedAt)) mismatches.push("개통일");
-    if (text(current[3]) !== text(target.customer)) mismatches.push("고객");
-    if (text(current[4]).replace(/\D/g, "") !== text(target.ctn).replace(/\D/g, "")) mismatches.push("CTN");
+    var mismatches = wsSaleTargetMismatches_(sheet, rowNumber, current, target, tz);
     if (mismatches.length > 0) {
       return reply({
         ok: false,
@@ -324,7 +324,7 @@ function wsHandleInspectionReview_(body) {
       if (records[i].status === WS_REVIEW_ACTIVE) active = records[i];
     }
     // 그사이 다른 사람이 저장·수정·완료했으면 덮어쓰지 않는다
-    if ((active ? active.content.trim() : "") !== before) {
+    if ((active ? wsMaskFreeText_(active.content.trim()) : "") !== before) {
       return reply({
         ok: false,
         message: "저장된 보완 요청이 화면과 달라 저장하지 않았습니다. 화면을 새로고침한 뒤 다시 확인해 주세요.",
@@ -371,7 +371,7 @@ function wsHandleInspectionReview_(body) {
     }
     SpreadsheetApp.flush();
     var saved = wsReviewsForKey_(wsReadReviews_(wsReviewSheet_(ss, false)), info.key);
-    return reply({ ok: true, review: wsReviewView_(saved), message: message });
+    return reply({ ok: true, review: wsMaskReviewView_(wsReviewView_(saved)), message: message });
   } finally {
     lock.releaseLock();
   }

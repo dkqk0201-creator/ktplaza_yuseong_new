@@ -9,8 +9,12 @@ export interface DeleteSaleRequest {
   row: number;
   no: string;
   activatedAt: string;
+  /** 화면에 보이는 마스킹 고객명 */
   customer: string;
+  /** 화면에 보이는 마스킹 CTN */
   ctn: string;
+  /** 웹앱 판매 ID (신규 판매 B열 메모, 기존 판매는 없음) */
+  saleId?: string;
 }
 
 export type DeleteSaleResponse =

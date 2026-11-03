@@ -1,15 +1,17 @@
 /*
- * 참고내용(웹앱참고)·정책명 연결 키 = 월|개통일|CTN 숫자|고객명 — 같은 키 판매가 있을 때.
- * "[현재 동작]"은 지금 코드 기록 (마스킹 후 키가 겹치면 같은 일이 생긴다 → 09-privacy-spec todo).
+ * 참고내용(웹앱참고)·정책명 연결 — 같은 고객으로 보이는 판매가 있을 때.
+ * [판매 ID 구현 후 기대값 변경] 신규 판매의 연결 키는 월|id:판매ID.
+ *   1·2번: 시트에서 값만 복사한 행(B열 ID 메모 없음 = ID 분실)에는 참고내용이 붙지 않고 수정도 거부, 원래 판매는 그대로 동작.
+ *   3번: 수정 전에는 같은 키로 다시 등록하면 기존 참고내용을 덮어썼다(위험) → 이제 판매마다 따로 보관.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { setup, register, report, list, edit } from "../harness/web.ts";
-import { PEOPLE } from "../harness/fake-people.ts";
+import { PEOPLE, tMaskName as MN } from "../harness/fake-people.ts";
 
 const [A, B] = PEOPLE;
 
-test("1) 같은 키 판매가 2건이면 조회 시 참고내용을 어느 쪽에도 붙이지 않음", async () => {
+test("1) 값만 복사한 행(판매 ID 없음)에는 참고내용이 붙지 않음 — 원래 판매에만", async () => {
   const { ss } = setup();
   await register(report(A.name, A.ctn, { extra: "중고폰&현물 판매 : 리본\n" }));
   // 시트에서 직접 같은 개통일·고객·CTN 판매를 하나 더 만든 상황 (2회선 등)
@@ -18,34 +20,43 @@ test("1) 같은 키 판매가 2건이면 조회 시 참고내용을 어느 쪽�
   for (let c = 1; c <= 38; c++) { const a = m.cell(src, c); const b = m.cell(src + 1, c); b.value = c === 2 ? 2 : a.value; b.formula = a.formula.replace(new RegExp(String(src), "g"), String(src + 1)); }
   const sales = await list();
   assert.equal(sales.length, 2);
-  assert.ok(sales.every((s) => !s.notes?.usedPhone), JSON.stringify(sales.map((s) => s.notes)));
+  assert.deepEqual(sales.map((s) => [s.notes?.usedPhone ?? null, s.saleIdProblem ?? null]), [["리본", null], [null, "missing"]]);
 });
 
-test("2) 같은 키 판매가 2건이면 참고내용 수정은 거부 (다른 판매에 붙지 않게)", async () => {
+test("2) 판매 ID 없는 복사 행의 참고내용·판매 수정은 거부, 원래 판매 수정은 복사 행에 영향 없음", async () => {
   const { ss } = setup();
   await register(report(A.name, A.ctn));
   const m = ss.month();
   const src = (await list())[0].row;
   for (let c = 1; c <= 38; c++) { const a = m.cell(src, c); const b = m.cell(src + 1, c); b.value = c === 2 ? 2 : a.value; b.formula = a.formula.replace(new RegExp(String(src), "g"), String(src + 1)); }
-  const s = (await list())[0];
-  const r = await edit(s, {}, { usedPhone: "새 메모" } as Record<string, string>);
+  const [orig, copy] = await list();
+  const copyRow = JSON.stringify(m.rows[copy.row - 1]);
+  const r = await edit(copy, {}, { usedPhone: "새 메모" } as Record<string, string>);
   assert.equal(r.ok, false);
-  assert.match(r.message, /2건 이상/);
+  assert.match(r.message, /판매 ID 없음/);
+  assert.equal((await edit(copy, { customerBenefit: "1" })).ok, false);
+  const ok = await edit(orig, {}, { usedPhone: "원래 판매 메모" } as Record<string, string>);
+  assert.equal(ok.ok, true, ok.message);
+  assert.equal(JSON.stringify(m.rows[copy.row - 1]), copyRow);
+  const after = await list();
+  assert.deepEqual(after.map((s) => s.notes?.usedPhone ?? null), ["원래 판매 메모", null]);
 });
 
-test("3) [현재 동작·위험] 같은 키로 새 판매를 등록하면 웹앱참고의 기존 참고내용을 덮어씀 (저장 때 중복 확인 없음)", async () => {
+test("3) 같은 개통일·고객·CTN 으로 또 등록해도 기존 참고내용을 덮어쓰지 않음 (판매마다 따로)", async () => {
   const { ss } = setup();
   await register(report(A.name, A.ctn, { extra: "중고폰&현물 판매 : 첫판매메모\n" }));
   await register(report(A.name, A.ctn, { extra: "중고폰&현물 판매 : 둘째판매메모\n" })); // 같은 개통일·고객·CTN
   const rows = ss.getSheetByName("웹앱참고")!.rows.slice(1).filter((r) => r[0]?.value);
-  assert.equal(rows.length, 1);
-  assert.match(String(rows[0][5].value), /둘째판매메모/);
-  assert.doesNotMatch(String(rows[0][5].value), /첫판매메모/);
+  assert.equal(rows.length, 2);
+  assert.match(String(rows[0][5].value), /첫판매메모/);
+  assert.match(String(rows[1][5].value), /둘째판매메모/);
+  const sales = await list();
+  assert.deepEqual(sales.map((s) => s.notes?.usedPhone).sort(), ["둘째판매메모", "첫판매메모"]);
 });
 
 test("4) 다른 사람(키가 다름)의 참고내용은 섞이지 않음", async () => {
   setup();
   await register(report(A.name, A.ctn, { extra: "중고폰&현물 판매 : A메모\n" }), report(B.name, B.ctn, { extra: "중고폰&현물 판매 : B메모\n" }));
   const sales = await list();
-  assert.deepEqual(sales.map((s) => [s.customer, s.notes?.usedPhone]), [[A.name, "A메모"], [B.name, "B메모"]]);
+  assert.deepEqual(sales.map((s) => [s.customer, s.notes?.usedPhone]), [[MN(A.name), "A메모"], [MN(B.name), "B메모"]]);
 });

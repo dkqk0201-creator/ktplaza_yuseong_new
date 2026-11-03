@@ -4,7 +4,12 @@
  * 직원 판매보고 중 장표(A~AL)에 저장하지 않는 참고 항목(예: 중고폰&현물 판매, 어디에)을
  * 같은 스프레드시트의 숨김 보조 시트 "웹앱참고" 에 판매 건별로 보관한다.
  *   - 무선장표 월 시트·양식 시트의 열 구조는 바꾸지 않는다.
- *   - 판매 건 연결 키 = 월 시트 | 개통일(C) | CTN 숫자(E) | 고객명(D)  (행 번호는 쓰지 않음 → 재정렬해도 안전)
+ *   - 판매 건 연결 키 (행 번호는 쓰지 않음 → 재정렬해도 안전)
+ *       신규 판매(판매 ID 있음): 월 시트 | id:판매ID   (B열 메모, common.gs)
+ *       기존 판매(원본, ID 없음): 월 시트 | 개통일(C) | CTN 숫자(E) | 고객명(D)  (예전과 같음)
+ *       마스킹된 신규 판매인데 ID 가 없으면(분실) 키 없음 → 붙이지도 저장하지도 않는다
+ *   - 고객·CTN 열과 참고 항목 글 속 전화번호는 마스킹해서 쓴다 (신규 원본을 보조 시트에 남기지 않음)
+ *   - 저장 전, 같은 키를 가진 판매가 월 시트에 정확히 1건인지 확인한다 (2건 이상이면 쓰지 않음 → 덮어쓰기 방지)
  *   - 저장(save-handler): 새 판매의 키로 덮어쓰기 (참고내용이 없으면 그 키의 기록을 지움)
  *   - 조회(list-handler): 키가 정확히 한 판매에만 맞을 때만 그 판매에 붙인다 (같은 키 판매가 2건이면 붙이지 않음)
  *   - 수정(update-handler): 고객명(D)·CTN(E)을 바꾸면 키를 새 값으로 옮긴다
@@ -15,12 +20,15 @@
  *     같은 키(개통일·CTN·고객)를 가진 판매가 장표에 2건 이상이면 다른 판매에 붙을 수 있으므로 저장하지 않는다.
  * 보조 시트는 처음 저장할 때 자동으로 만들고 숨긴다. 직접 고치지 마세요.
  */
+var WS_NOTES_PRIVACY = 1; // 개인정보 마스킹·판매 ID 지원 표시 (common.gs 의 privacy-status 가 확인)
 var WS_NOTES_SHEET = "웹앱참고";
 var WS_NOTES_HEADER = ["키", "월 시트", "개통일", "고객", "CTN", "참고내용(JSON)", "저장 시각"];
 var WS_NOTES_COLS = WS_NOTES_HEADER.length;
 
-/** 판매 행(38칸 값) → 연결 키. 개통일·CTN 이 없으면 "" */
+/** 판매 행(38칸 값, .saleId = B열 메모의 판매 ID) → 연결 키. 키를 만들 수 없으면 "" */
 function wsNoteKey_(sheetName, rowValues, tz) {
+  if (rowValues && rowValues.saleId) return sheetName + "|id:" + rowValues.saleId;
+  if (rowValues && wsLooksMasked_(rowValues)) return ""; // 마스킹된 신규 판매인데 판매 ID 없음(분실·미확인)
   var date = wsText_(rowValues[2], tz);
   var ctn = wsText_(rowValues[4], tz).replace(/\D/g, "");
   var customer = wsText_(rowValues[3], tz).replace(/^'/, "");
@@ -70,7 +78,7 @@ function wsCleanNotes_(notes) {
     if (!/^[A-Za-z]{1,40}$/.test(k)) continue;
     var v = notes[k];
     if (typeof v !== "string") continue;
-    v = v.trim().slice(0, 500);
+    v = wsMaskFreeText_(v.trim()).slice(0, 500); // 글 속 전화번호 마스킹
     if (!v) continue;
     out[k] = v;
     count++;
@@ -111,21 +119,29 @@ function wsNoteInfo_(sheetName, rowValues, tz) {
     key: wsNoteKey_(sheetName, rowValues, tz),
     sheet: sheetName,
     date: wsText_(rowValues[2], tz),
-    customer: wsText_(rowValues[3], tz).replace(/^'/, ""),
-    ctn: wsText_(rowValues[4], tz),
+    customer: wsMaskName_(wsText_(rowValues[3], tz)),
+    ctn: wsMaskPhone_(wsText_(rowValues[4], tz)),
   };
 }
 
 /** 판매 저장 후: 저장된 행들의 실제 값으로 키를 만들어 참고내용 덮어쓰기 */
 function wsSaveNotesForRows_(ss, sheet, tz, results, notesList) {
   if (!Array.isArray(notesList)) return false;
+  var allSaved = true;
   for (var k = 0; k < results.length; k++) {
     if (!results[k] || !results[k].ok) continue;
-    var values = sheet.getRange(results[k].row, 1, 1, WS_COLUMN_COUNT).getValues()[0];
+    if (!wsCleanNotes_(notesList[k])) continue;
+    var values = wsWithSaleId_(sheet, results[k].row, sheet.getRange(results[k].row, 1, 1, WS_COLUMN_COUNT).getValues()[0]);
     var info = wsNoteInfo_(sheet.getName(), values, tz);
+    // 키가 없거나 같은 키 판매가 2건 이상이면 쓰지 않는다 (다른 판매의 참고내용 덮어쓰기 방지)
+    if (!info.key || wsCountNoteKey_(sheet, tz, info.key) !== 1) {
+      results[k].notesSkipped = true;
+      allSaved = false;
+      continue;
+    }
     wsWriteNote_(ss, info.key, info, notesList[k]);
   }
-  return true;
+  return allSaved;
 }
 
 /** 판매 삭제 전 값으로 그 판매의 참고내용 지우기 */
@@ -183,9 +199,9 @@ function wsCountNoteKey_(sheet, tz, key) {
   if (!key) return 0;
   var last = sheet.getLastRow();
   if (last < WS_FIRST_ROW) return 0;
-  var values = sheet
+  var values = wsAttachSaleIds_(sheet, sheet
     .getRange(WS_FIRST_ROW, 1, last - WS_FIRST_ROW + 1, WS_COLUMN_COUNT)
-    .getValues();
+    .getValues());
   var name = sheet.getName();
   var n = 0;
   for (var i = 0; i < values.length; i++) {

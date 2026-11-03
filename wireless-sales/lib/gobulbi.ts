@@ -1,3 +1,4 @@
+import { maskFreeText } from "@/lib/privacy-mask";
 import type { Budget } from "@/lib/budget";
 
 /*
@@ -115,7 +116,7 @@ export function parseGobulbiItem(v: unknown): GobulbiItem | null {
   return {
     id,
     payDate,
-    content: str(o.content, GOBULBI_CONTENT_MAX + 50),
+    content: maskFreeText(str(o.content, GOBULBI_CONTENT_MAX + 50)), // 글 속 전화번호 마스킹
     amount,
     seller: str(o.seller, GOBULBI_SELLER_MAX + 10),
     createdAt: str(o.createdAt, 30),

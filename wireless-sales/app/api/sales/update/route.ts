@@ -1,3 +1,5 @@
+import { maskFreeText, maskName, maskPhone, maskTextRecord } from "@/lib/privacy-mask";
+import { parseSaleIdField } from "@/lib/sale-target";
 import {
   EDITABLE_KEYS,
   columnIndexOf,
@@ -96,7 +98,10 @@ function parseTarget(input: unknown): UpdateSaleTarget | null {
   ) {
     return null;
   }
-  return { sheet, row, no, activatedAt, customer, ctn };
+  // 판매 ID (신규 판매만, B열 메모). 형식이 틀리면 거부
+  const saleId = parseSaleIdField(raw.saleId);
+  if (saleId === null) return null;
+  return { sheet, row, no, activatedAt, customer, ctn, ...(saleId ? { saleId } : {}) };
 }
 
 interface ParsedChanges {
@@ -145,7 +150,7 @@ function parseNoteChanges(notesInput: unknown, policyInput: unknown): NoteChange
     const problem = noteError(field, after);
     if (problem) return problem;
     const b = cleanNote(field, before);
-    const a = cleanNote(field, after);
+    const a = maskFreeText(cleanNote(field, after));
     if (a !== b) out.push({ field, before: b, after: a });
   }
   return out;
@@ -184,8 +189,18 @@ function parseChanges(input: unknown): ParsedChanges | string {
         return `금액 칸(${key})은 숫자만 입력할 수 있습니다.`;
       value = amount === null ? "" : amount;
     } else {
+      // 개인정보: 새로 쓰는 고객명·CTN 은 마스킹 값만, 글 칸은 글 속 전화번호를 마스킹 (Apps Script 도 한 번 더 강제)
+      const masked =
+        columnKey === "customer"
+          ? maskName(text)
+          : columnKey === "ctn"
+            ? maskPhone(text)
+            : maskFreeText(text);
       // 앞의 ' 는 구글 시트가 글자를 숫자·날짜·계산식으로 바꾸지 않게 한다
-      value = text === "" ? "" : `'${text}`;
+      value = masked === "" ? "" : `'${masked}`;
+      cells.push({ col: columnIndexOf(columnKey), before, value });
+      list.push({ key: columnKey, before, after: masked });
+      continue;
     }
     cells.push({ col: columnIndexOf(columnKey), before, value });
     list.push({ key: columnKey, before, after: text });
@@ -265,7 +280,8 @@ export async function POST(request: Request) {
         row: result.row,
         no: result.no,
         values: result.values,
-        ...(noteChanges.length > 0 && result.notes ? { notes: result.notes } : {}),
+        ...(result.saleId ? { saleId: result.saleId } : {}),
+        ...(noteChanges.length > 0 && result.notes ? { notes: maskTextRecord(result.notes) } : {}),
         ...(notesNotSaved
           ? {
               warning:

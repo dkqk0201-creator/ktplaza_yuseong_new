@@ -1,4 +1,5 @@
-import { formatCtn, formatDate, formatNumber } from "@/lib/format";
+import { maskPhone } from "@/lib/privacy-mask";
+import { formatDate, formatNumber } from "@/lib/format";
 
 /* 장표 판매내역을 화면에 보여줄 때 함께 쓰는 표시 규칙 (검수관리·카드실적·상세 공용) */
 
@@ -18,11 +19,7 @@ export function monthDayText(value: string): string {
   return m ? `${m[1]}.${m[2]}` : value || "-";
 }
 
-/** 목록에서는 가운데 4자리를 가린다: 010-****-5678 */
+/** 목록 표시: 개인정보 마스킹 규칙과 같은 모양 (010-12**-*678). 이미 마스킹된 값은 그대로 */
 export function maskedCtn(ctn: string): string {
-  const formatted = formatCtn(ctn);
-  const parts = formatted.split("-");
-  return parts.length === 3
-    ? `${parts[0]}-${"*".repeat(parts[1].length)}-${parts[2]}`
-    : formatted;
+  return maskPhone(ctn);
 }

@@ -19,3 +19,14 @@ export const TWINS: [FakePerson, FakePerson] = [
   { name: "가나라", ctn: "010-1299-9678" },
 ];
 export const digits = (s: string) => s.replace(/\D/g, "");
+
+/*
+ * 테스트 쪽 마스킹 기대값 (요구사항 그대로, 웹앱 코드와 따로 적음 — 같은 코드를 자기 자신과 비교하지 않게).
+ *   김수현 → 김수*,  010-1234-5678 → 010-12**-*678
+ */
+export const tMaskName = (n: string) => (n.includes("*") ? n : n.length <= 1 ? "*" : /[A-Za-z]/.test(n) ? n.slice(0, 2) + "*".repeat(Math.max(n.length - 2, 1)) : n.slice(0, -1) + "*");
+export const tMaskPhone = (p: string) => {
+  if (p.includes("*")) return p;
+  const d = digits(p);
+  return d.length === 11 ? `${d.slice(0, 3)}-${d.slice(3, 5)}**-*${d.slice(8)}` : p;
+};

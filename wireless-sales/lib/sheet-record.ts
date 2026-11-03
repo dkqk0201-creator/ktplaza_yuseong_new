@@ -46,6 +46,10 @@ export type SheetSale = {
     spotNote?: string;
     /** 검수 보완 요청 (보조 시트 "검수보완", 이 판매에 정확히 연결된 경우만) */
     review?: SaleReview;
+    /** 웹앱 판매 ID (신규 판매의 B열 메모). 기존 판매는 없음 */
+    saleId?: string;
+    /** 판매 ID 이상: duplicate(같은 ID 2행 이상) · missing(마스킹된 판매인데 ID 없음) → 수정·삭제 불가 */
+    saleIdProblem?: "duplicate" | "missing";
   };
 
 /** 글자로 읽기. 시트가 계산식 방지용으로 붙인 ' 는 떼어 낸다. */

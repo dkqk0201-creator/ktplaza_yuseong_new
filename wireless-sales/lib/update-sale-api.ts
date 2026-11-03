@@ -33,6 +33,8 @@ export type UpdateSaleResponse =
       row: number;
       no: string;
       values: unknown[];
+      /** 수정 후 판매 ID (B열 메모) */
+      saleId?: string;
       /** 정책명을 보냈을 때: 저장 후 이 판매의 참고내용 */
       notes?: Record<string, string>;
       /** 장표 칸은 수정됐지만 정책명은 저장하지 못한 경우 등 */

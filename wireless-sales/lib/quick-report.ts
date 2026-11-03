@@ -1,3 +1,4 @@
+import { maskPhone } from "@/lib/privacy-mask";
 import type { ColumnKey, SheetRowValues } from "@/lib/sheet-columns";
 import { formatCtn } from "@/lib/format";
 import { cleanPolicyName, policyNameError } from "@/lib/model-policy";
@@ -583,7 +584,8 @@ export function normalizeQuick(
     } else {
       issues.push({
         field: "ctn",
-        message: `CTN "${v("ctn")}" 형식을 확인해 주세요.`,
+        // 개인정보: 입력한 번호를 안내 문구에 되풀이하지 않는다 (응답·화면·로그 어디에도 원본이 남지 않게)
+        message: "CTN 형식을 확인해 주세요. (휴대폰 번호 10~11자리)",
       });
     }
   }
@@ -792,8 +794,10 @@ export function normalizeQuick(
     row: applyQuickColumnRules(row),
     issues,
     display,
+    // 장표 조회 결과는 마스킹 CTN 이므로 중복 키도 마스킹 CTN 으로 비교한다
+    // (마스킹이 같은 다른 번호도 "중복 의심" 으로 보일 수 있음 → 화면에서 확인 후 그대로 등록 가능)
     duplicateKey:
-      activatedAt && ctnDigits ? `${activatedAt}|${ctnDigits}` : null,
+      activatedAt && ctnDigits ? `${activatedAt}|${maskPhone(ctnDigits)}` : null,
     notes: { ...quickNotes(fields), ...vNotes },
   };
 }
@@ -865,5 +869,5 @@ export function applyQuickColumnRules(input: SheetRowValues): SheetRowValues {
 
 /** 장표 판매 1건의 중복 확인 키 */
 export function saleDuplicateKey(activatedAt: string, ctn: string): string {
-  return `${activatedAt}|${ctn.replace(/\D/g, "")}`;
+  return `${activatedAt}|${maskPhone(ctn)}`;
 }

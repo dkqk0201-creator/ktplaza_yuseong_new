@@ -7,7 +7,9 @@
  *     단 N·U·AB·AC열의 행별 수식(save-handler.gs 의 판매 행 수식)은 지우고 빈 행 모양으로 되돌린다.
  *   - "무선장표 양식" 시트의 같은 행에서 "-" 인 칸은 "-" 를 다시 넣어 처음 빈 행 모양으로 되돌린다.
  *     (양식 시트가 없으면 가장 가까운 빈 판매 행을 참고한다)
- *   - 행 번호만 믿지 않고 No.(B)·개통일(C)·고객(D)·CTN(E) 이 화면에서 본 값과 모두 같을 때만 지운다.
+ *   - 행 번호만 믿지 않는다. 판매 ID(B열 메모)가 있는 판매는 ID·No.·개통일이, 기존 판매(ID 없음)는
+ *     No.·개통일·마스킹 고객명·마스킹 CTN 이 화면에서 본 값과 같고 같은 고객으로 보이는 판매가 1건일 때만 지운다
+ *     (common.gs 의 wsSaleTargetMismatches_). 지운 행의 셀 메모(B열 판매 ID 포함)는 모두 비운다.
  *   - 열 구조(6·7행 제목)가 웹앱과 다르면 아무것도 하지 않는다.
  *   - LockService 로 한 번에 하나의 저장·삭제만 처리한다.
  *   - 그 판매의 판매보고 참고내용(notes.gs 보조 시트)도 함께 지운다.
@@ -16,6 +18,7 @@
  *   - 지운 뒤 B열 판매 No. 를 다시 매긴다 (UMNP 를 지우면 그 자리는 빈 행으로 다시 번호를 받음, save-handler.gs 의
  *     wsRenumberSaleRows_). UMNP 행은 No. 가 빈칸이라 화면에서 본 No. 도 빈칸이어야 한다.
  */
+var WS_DELETE_PRIVACY = 1; // 개인정보 마스킹·판매 ID 지원 표시 (common.gs 의 privacy-status 가 확인)
 function handleDeleteRequest_(e) {
   var body = wsBody_(e);
   if (!body || body.action !== "delete") return null;
@@ -60,13 +63,10 @@ function handleDeleteRequest_(e) {
       .getRange(WS_FIRST_ROW, 1, lastRow - WS_FIRST_ROW + 1, WS_COLUMN_COUNT)
       .getValues();
     var index = rowNumber - WS_FIRST_ROW;
-    var current = all[index];
+    var current = wsWithSaleId_(sheet, rowNumber, all[index]);
     var formulas = sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT).getFormulas()[0];
     var text = function (v) {
       return wsText_(v, tz);
-    };
-    var digits = function (v) {
-      return text(v).replace(/\D/g, "");
     };
 
     // 1) 이미 비어 있는 행이면 지우지 않는다
@@ -78,11 +78,8 @@ function handleDeleteRequest_(e) {
     }
 
     // 2) 화면에서 본 값과 지금 장표 값이 모두 같을 때만 지운다
-    var mismatches = [];
-    if (text(current[WS_B_INDEX]) !== text(target.no)) mismatches.push("No.");
-    if (text(current[2]) !== text(target.activatedAt)) mismatches.push("개통일");
-    if (text(current[3]) !== text(target.customer)) mismatches.push("고객");
-    if (digits(current[4]) !== digits(target.ctn)) mismatches.push("CTN");
+    //    판매 ID(있으면) 또는 행·No.·개통일·마스킹 고객명·마스킹 CTN + 후보 1건 (common.gs)
+    var mismatches = wsSaleTargetMismatches_(sheet, rowNumber, current, target, tz);
     if (mismatches.length > 0) {
       return wsJson_({
         ok: false,
@@ -148,6 +145,8 @@ function handleDeleteRequest_(e) {
       }
       sheet.getRange(rowNumber, start + 1, 1, segment.length).setValues([segment]);
     }
+    // 지운 판매의 셀 메모(B열 판매 ID 포함)를 모두 비운다 — 나중에 이 자리에 들어오는 판매가 물려받지 않게
+    sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT).clearNote();
     SpreadsheetApp.flush();
     // B열 판매 No. 다시 매기기 (지운 행은 빈 판매 자리로). 실패해도 삭제는 그대로 (다음 저장 때 다시 매김)
     try {

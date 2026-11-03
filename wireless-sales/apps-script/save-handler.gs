@@ -34,6 +34,7 @@
  * 여러 건 저장은 잠금·열 구조 확인·장표 읽기를 한 번만 해서 1건씩 여러 번 부르는 것보다 훨씬 빠르다.
  * 응답: 1건 → { ok, sheet, row, no } / 여러 건 → { ok: true, sheet, results: [{ ok, row, no } | { ok: false, message }], notesSaved }
  */
+var WS_SAVE_PRIVACY = 1; // 개인정보 마스킹·판매 ID 지원 표시 (common.gs 의 privacy-status 가 확인)
 var WS_SAVE_BATCH_MAX = 30;
 
 /* 판매 행의 행별 수식 칸 N·U·AB·AC (update-handler.gs·delete-handler.gs 도 함께 사용) */
@@ -161,6 +162,29 @@ function handleSaveRequest_(e) {
     }
   }
 
+  // 개인정보: 웹앱이 보낸 값과 상관없이 Apps Script 에서도 마스킹을 강제한다 (원본은 장표에 쓰지 않음)
+  //   D 고객명 → 김수*, E CTN → 010-12**-*678, A 고객약속사항 글 속 전화번호 → 마스킹
+  //   (그 밖의 글 칸도 글 속 전화번호는 마스킹)
+  //   원본 고객명이 왔으면(예전 웹앱) 같은 판매의 글 칸·참고내용에 그 이름이 있을 때도 마스킹 이름으로 바꾼다
+  for (var mr = 0; mr < rows.length; mr++) {
+    var origName = String(rows[mr][3] === null || rows[mr][3] === undefined ? "" : rows[mr][3]).replace(/^'/, "").trim();
+    var maskedName = wsMaskName_(origName);
+    var swapName = function (t) {
+      return origName.length >= 2 && origName !== maskedName ? String(t).split(origName).join(maskedName) : t;
+    };
+    for (var mc = 0; mc < rows[mr].length; mc++) {
+      var cv = rows[mr][mc];
+      if (typeof cv === "string" && mc !== 3) cv = swapName(cv);
+      rows[mr][mc] = wsMaskCellForSave_(mc, cv);
+    }
+    var nn = Array.isArray(body.notes) ? body.notes[mr] : null;
+    if (nn && typeof nn === "object") {
+      for (var nk in nn) {
+        if (Object.prototype.hasOwnProperty.call(nn, nk) && typeof nn[nk] === "string") nn[nk] = wsMaskFreeText_(swapName(nn[nk]));
+      }
+    }
+  }
+
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) {
     return wsJson_({
@@ -201,9 +225,26 @@ function handleSaveRequest_(e) {
       allNotes = null;
     }
 
+    // 신규 판매마다 판매 ID (B열 메모). 시트에 이미 있는 ID 와 겹치지 않게 만든다
+    var usedIds = {};
+    for (var un = 0; allNotes && un < allNotes.length; un++) {
+      var oldId = wsSaleIdOfNote_(allNotes[un][WS_B_INDEX]);
+      if (oldId) usedIds[oldId] = true;
+    }
+    var newIds = [];
+    for (var ni = 0; ni < rows.length; ni++) {
+      var nid = wsNewSaleId_();
+      for (var tries = 0; usedIds[nid] && tries < 20; tries++) nid = wsNewSaleId_();
+      if (usedIds[nid]) {
+        return wsJson_({ ok: false, message: "판매 ID 를 만들지 못했습니다. 다시 시도해 주세요." });
+      }
+      usedIds[nid] = true;
+      newIds.push(nid);
+    }
+
     // 개통일 순서 위치에 저장 (정렬할 수 없으면 null → 아래 예전 방식)
     var lastSlot = wsLastSlotIndex_(all, tz);
-    var plan = allNotes ? wsPlanSortedSave_(all, allFormulas, rows, tz, allNotes) : null;
+    var plan = allNotes ? wsPlanSortedSave_(all, allFormulas, rows, tz, allNotes, newIds) : null;
     if (plan) {
       wsWriteSortedBlock_(sheet, plan);
       wsFormatDateColumn_(sheet, lastRow);
@@ -233,8 +274,9 @@ function handleSaveRequest_(e) {
         continue;
       }
       next = index + 1;
-      // 새 판매가 들어갈 이 한 행에 남아 있던 메모(이전·삭제된 판매)를 비운다 (값·서식은 그대로)
+      // 새 판매가 들어갈 이 한 행에 남아 있던 메모(이전·삭제된 판매, B열 포함)를 비우고 판매 ID 메모를 단다
       wsClearSaleRowNotes_(sheet, WS_FIRST_ROW + index);
+      sheet.getRange(WS_FIRST_ROW + index, 2).setNote(wsSaleIdNote_(newIds[k]));
       wsWriteSaleRow_(
         sheet,
         WS_FIRST_ROW + index,
@@ -245,6 +287,7 @@ function handleSaveRequest_(e) {
         ok: true,
         row: WS_FIRST_ROW + index,
         no: wsText_(all[index][WS_B_INDEX], tz),
+        saleId: newIds[k],
       });
     }
     wsFormatDateColumn_(sheet, lastRow);
@@ -258,10 +301,9 @@ function handleSaveRequest_(e) {
   }
 }
 
-/** 판매 한 행의 A열·C~AL열 메모만 비운다 (B열 No. 메모·값·서식은 그대로) */
+/** 판매 한 행의 A~AL열 메모를 모두 비운다 (B열 판매 ID 메모 포함, 값·서식은 그대로) */
 function wsClearSaleRowNotes_(sheet, rowNumber) {
-  sheet.getRange(rowNumber, 1).clearNote();
-  sheet.getRange(rowNumber, 3, 1, WS_COLUMN_COUNT - 2).clearNote();
+  sheet.getRange(rowNumber, 1, 1, WS_COLUMN_COUNT).clearNote();
 }
 
 /** C열 개통일 표시 형식만 mm.dd 로 (9행~마지막 행, 값은 그대로). 실패해도 저장은 그대로 */
@@ -281,9 +323,9 @@ function wsFormatDateColumn_(sheet, lastRow) {
 function wsSaveNotesSafely_(ss, sheet, tz, results, notesList) {
   if (!Array.isArray(notesList)) return false;
   try {
-    wsSaveNotesForRows_(ss, sheet, tz, results, notesList);
+    var saved = wsSaveNotesForRows_(ss, sheet, tz, results, notesList);
     SpreadsheetApp.flush();
-    return true;
+    return saved;
   } catch (err) {
     return false;
   }
@@ -297,7 +339,9 @@ function wsSaveReply_(batch, sheetName, results, sorted, notesSaved) {
       sheet: sheetName,
       row: results[0].row,
       no: results[0].no,
+      saleId: results[0].saleId,
       sorted: sorted,
+      privacy: WS_PRIVACY_VERSION,
       message: "saved",
     });
   }
@@ -307,6 +351,7 @@ function wsSaveReply_(batch, sheetName, results, sorted, notesSaved) {
     results: results,
     sorted: sorted,
     notesSaved: !!notesSaved,
+    privacy: WS_PRIVACY_VERSION,
     message: "saved",
   });
 }
@@ -333,7 +378,7 @@ function wsSheetCells_(row) {
  * 반환: { first, last, cells: { 행index: 38칸 }, notes: { 행index: 38칸 메모 }, results: [...] }
  *   메모는 값과 같이 판매를 따라 옮기고, 새 판매 자리는 빈 메모.
  */
-function wsPlanSortedSave_(all, formulas, newRows, tz, notes) {
+function wsPlanSortedSave_(all, formulas, newRows, tz, notes, newIds) {
   var blankNotes = [];
   for (var bn = 0; bn < WS_COLUMN_COUNT; bn++) blankNotes.push("");
   var slots = []; // 판매 자리 (9행부터 이어진 구간, UMNP 행처럼 No. 가 빈 판매 행 포함)
@@ -373,8 +418,10 @@ function wsPlanSortedSave_(all, formulas, newRows, tz, notes) {
     for (var c = 0; c < WS_COLUMN_COUNT; c++) {
       if (c !== WS_B_INDEX && newRows[k][c] !== null) cells[c] = newRows[k][c];
     }
-    // 새 판매는 메모 없음 (그 자리에 남아 있던 이전 메모는 지워진다)
-    items.push({ key: newKey, order: filled.length + k, source: -1, cells: cells, notes: blankNotes, result: results.length });
+    // 새 판매는 메모 없음 (그 자리에 남아 있던 이전 메모는 지워진다) + B열에 판매 ID 메모
+    var newNotes = blankNotes.slice();
+    if (newIds && newIds[k]) newNotes[WS_B_INDEX] = wsSaleIdNote_(newIds[k]);
+    items.push({ key: newKey, order: filled.length + k, source: -1, cells: cells, notes: newNotes, result: results.length, saleId: newIds ? newIds[k] : "" });
     results.push(null);
     used++;
   }
@@ -411,6 +458,7 @@ function wsPlanSortedSave_(all, formulas, newRows, tz, notes) {
         ok: true,
         row: WS_FIRST_ROW + slot,
         no: wsText_(all[slot][WS_B_INDEX], tz),
+        saleId: item.saleId,
       };
     }
     if (item.source !== slot) {
@@ -425,12 +473,16 @@ function wsPlanSortedSave_(all, formulas, newRows, tz, notes) {
   return { first: first, last: last, cells: byIndex, notes: notesByIndex, results: results };
 }
 
-/** 계획대로 first~last 행의 A열과 C~AL열 값·메모를 한 번에 쓴다 (B열·8행 이하 위는 건드리지 않음) */
+/**
+ * 계획대로 first~last 행의 A열과 C~AL열 값, A~AL열 메모를 한 번에 쓴다.
+ * B열은 값(No.)은 건드리지 않고 메모(판매 ID)만 판매를 따라 옮긴다.
+ */
 function wsWriteSortedBlock_(sheet, plan) {
   if (plan.first < 0) return; // 바뀌는 행 없음
   var colA = [];
   var colCtoAL = [];
   var notesA = [];
+  var notesB = [];
   var notesCtoAL = [];
   for (var r = plan.first; r <= plan.last; r++) {
     var cells = plan.cells[r];
@@ -438,6 +490,7 @@ function wsWriteSortedBlock_(sheet, plan) {
     colA.push([cells[0]]);
     colCtoAL.push(cells.slice(2, WS_COLUMN_COUNT));
     notesA.push([notes[0]]);
+    notesB.push([notes[WS_B_INDEX] || ""]);
     notesCtoAL.push(notes.slice(2, WS_COLUMN_COUNT));
   }
   var top = WS_FIRST_ROW + plan.first;
@@ -446,6 +499,7 @@ function wsWriteSortedBlock_(sheet, plan) {
   sheet.getRange(top, 3, count, WS_COLUMN_COUNT - 2).setValues(colCtoAL);
   // 메모도 판매를 따라 같은 자리로 (예: O열 SPOT 메모가 밀려난 판매와 함께 이동)
   sheet.getRange(top, 1, count, 1).setNotes(notesA);
+  sheet.getRange(top, 2, count, 1).setNotes(notesB);
   sheet.getRange(top, 3, count, WS_COLUMN_COUNT - 2).setNotes(notesCtoAL);
 }
 

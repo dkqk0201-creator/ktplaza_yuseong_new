@@ -1,5 +1,6 @@
 "use client";
 
+import { saleTargetOf } from "@/lib/sale-target";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { postDeleteSale } from "@/lib/delete-sale-api";
 import { formatCtn, formatNumber } from "@/lib/format";
@@ -288,14 +289,7 @@ export function SaleDetail({
     setMarkError(null);
     setMarkNotice(null);
     const result = await postMarkDone({
-      target: {
-        sheet,
-        row: sale.row,
-        no: sale.no,
-        activatedAt: sale.activatedAt,
-        customer: sale.customer,
-        ctn: sale.ctn,
-      },
+      target: saleTargetOf(sheet, sale),
       field,
       before: sale[field],
     });
@@ -306,7 +300,11 @@ export function SaleDetail({
       return;
     }
     // 장표가 돌려준 저장 후 값으로 바로 표시 (참고내용은 장표 값이 아니므로 보던 것 유지)
-    const next = parseSheetRow(result.row, result.no, result.values);
+    // 판매 ID 는 장표 값이 아니라 B열 메모라 응답 values 에 없다 → 보던 판매의 ID 를 그대로 유지
+    const next: SheetSale = {
+      ...parseSheetRow(result.row, result.no, result.values),
+      ...(sale.saleId ? { saleId: sale.saleId } : {}),
+    };
     // 보완 요청이 함께 닫혔으면 진행 중 → 이력으로 옮겨 바로 표시 (장표에서 다시 읽으면 서버 값으로 바뀜)
     const review: SaleReview | undefined =
       result.reviewClosed && sale.review?.active
@@ -341,14 +339,7 @@ export function SaleDetail({
     deletingRef.current = true;
     setDeleting(true);
     setDeleteError(null);
-    const result = await postDeleteSale({
-      sheet,
-      row: sale.row,
-      no: sale.no,
-      activatedAt: sale.activatedAt,
-      customer: sale.customer,
-      ctn: sale.ctn,
-    });
+    const result = await postDeleteSale(saleTargetOf(sheet, sale));
     deletingRef.current = false;
     setDeleting(false);
     if (result.ok) onDeleted?.(result.message);
@@ -374,14 +365,7 @@ export function SaleDetail({
     setSaving(true);
     setUpdateError(null);
     const result = await postUpdateSale({
-      target: {
-        sheet,
-        row: sale.row,
-        no: sale.no,
-        activatedAt: sale.activatedAt,
-        customer: sale.customer,
-        ctn: sale.ctn,
-      },
+      target: saleTargetOf(sheet, sale),
       changes: list,
       ...(notes.length > 0 ? { notes } : {}),
     });
@@ -391,7 +375,12 @@ export function SaleDetail({
       // 참고내용은 장표 값이 아니므로 수정 응답에 없다 → 보던 참고내용을 그대로 유지
       // (고객명·CTN 을 바꾸면 Apps Script 가 참고내용 연결 키도 함께 옮긴다)
       // 정책명을 바꿨으면 Apps Script 가 돌려준 저장 후 참고내용으로 바꾼다
-      const next = parseSheetRow(result.row, result.no, result.values);
+      // 판매 ID: 기존 판매의 고객명·CTN 을 바꾸면 Apps Script 가 새로 달아 준다 (없으면 보던 ID 유지)
+      const saleId = result.saleId || sale.saleId;
+      const next: SheetSale = {
+        ...parseSheetRow(result.row, result.no, result.values),
+        ...(saleId ? { saleId } : {}),
+      };
       const savedNotes = result.notes ?? sale.notes;
       const shown: SheetSale = {
         ...next,
@@ -475,6 +464,16 @@ export function SaleDetail({
         </header>
 
         <div className="flex-1 space-y-4 overflow-y-auto px-5 py-5">
+          {sale.saleIdProblem && (
+            <p
+              role="alert"
+              className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800"
+            >
+              {sale.saleIdProblem === "duplicate"
+                ? "장표에 같은 판매 ID 가 2행 이상 있습니다 (행 복사 등). 다른 판매가 바뀌지 않도록 수정·삭제·완료 처리를 막았습니다. 관리자에게 알려 주세요."
+                : "이 판매의 웹앱 판매 ID(B열 메모)가 없습니다. 다른 판매가 바뀌지 않도록 수정·삭제·완료 처리를 막았습니다. 관리자에게 알려 주세요."}
+            </p>
+          )}
           {updateNotice && mode === "view" && (
             <p
               role="status"

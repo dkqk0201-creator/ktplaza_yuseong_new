@@ -1,6 +1,7 @@
 import "server-only";
 import { COLUMN_COUNT, type SheetRowArray } from "@/lib/sheet-columns";
 import { parseReview, type SaleReview } from "@/lib/inspection-review";
+import { maskSheetValues } from "@/lib/privacy-mask";
 import {
   GOBULBI_HANDLER,
   parseGobulbiItem,
@@ -136,29 +137,6 @@ async function postToAppsScript(
   return data;
 }
 
-export async function saveRowToAppsScript(
-  row: SheetRowArray,
-): Promise<AppsScriptSaveResult> {
-  checkRow(row);
-  const data = await postToAppsScript(
-    { action: "save", row },
-    "Apps Script가 저장을 거부했습니다.",
-  );
-
-  const sheet = shortText(data.sheet, 50);
-  const no = data.no === undefined || data.no === null ? "" : String(data.no);
-  const rowNumber = Number(data.row);
-  // UMNP 판매는 No. 가 빈칸 (B열 판매 No. 없음)
-  if (!sheet || !Number.isInteger(rowNumber)) {
-    throw new AppsScriptError(
-      "bad_response",
-      "Apps Script 응답에 저장 위치(sheet, row, no)가 없습니다.",
-    );
-  }
-
-  return { sheet, row: rowNumber, no, message: shortText(data.message) };
-}
-
 function checkRow(row: SheetRowArray) {
   if (row.length !== COLUMN_COUNT) {
     throw new AppsScriptError(
@@ -179,6 +157,10 @@ export type AppsScriptBatchItem =
       no: string;
       /** 참고내용을 보조 시트에 보관했는지 (Apps Script 가 예전 버전이면 false) */
       notesSaved: boolean;
+      /** 웹앱 판매 ID (B열 메모) */
+      saleId?: string;
+      /** 참고내용을 건너뛴 경우 (같은 연결 키 판매가 있어 다른 판매에 붙을 수 있을 때) */
+      notesSkipped?: boolean;
     }
   | { ok: false; error: AppsScriptError };
 
@@ -210,25 +192,13 @@ export async function saveRowsToAppsScript(
     );
   } catch (error) {
     // 예전 save-handler 는 row 가 없으면 저장 전에 "38칸(A~AL)이 아닙니다" 로 거부한다
+    // → 마스킹·판매 ID 를 지원하지 않는 예전 코드이므로 1건씩 다시 보내지 않는다 (아무것도 쓰지 않은 채 거부)
     if (
       error instanceof AppsScriptError &&
       error.code === "rejected" &&
       error.message.includes("칸(A~AL)이 아닙니다")
     ) {
-      const fallback: AppsScriptBatchItem[] = [];
-      for (const row of rows) {
-        try {
-          fallback.push({
-            ok: true,
-            notesSaved: false,
-            ...(await saveRowToAppsScript(row)),
-          });
-        } catch (e) {
-          if (!(e instanceof AppsScriptError)) throw e;
-          fallback.push({ ok: false, error: e });
-        }
-      }
-      return fallback;
+      throw new AppsScriptError("rejected", PRIVACY_NOT_DEPLOYED);
     }
     throw error;
   }
@@ -248,7 +218,16 @@ export async function saveRowsToAppsScript(
     const no = r.no === undefined || r.no === null ? "" : String(r.no);
     // UMNP 판매는 No. 가 빈칸
     if (r.ok === true && Number.isInteger(rowNumber)) {
-      return { ok: true, sheet, row: rowNumber, no, notesSaved };
+      const saleId = typeof r.saleId === "string" && /^S-[A-Za-z0-9]{12,40}$/.test(r.saleId) ? r.saleId : undefined;
+      return {
+        ok: true,
+        sheet,
+        row: rowNumber,
+        no,
+        notesSaved: notesSaved && r.notesSkipped !== true,
+        ...(saleId ? { saleId } : {}),
+        ...(r.notesSkipped === true ? { notesSkipped: true } : {}),
+      };
     }
     if (r.ok === true) {
       return {
@@ -282,6 +261,9 @@ export interface AppsScriptListRow {
   spotNote?: string;
   /** 검수 보완 요청 (보조 시트 "검수보완", 이 판매에 정확히 연결된 경우만) */
   review?: SaleReview;
+  /** 웹앱 판매 ID (B열 메모) */
+  saleId?: string;
+  saleIdProblem?: "duplicate" | "missing";
 }
 
 export interface AppsScriptListResult {
@@ -311,6 +293,50 @@ function parseSpotNoteText(value: unknown): string | undefined {
   const text = value.trim().slice(0, 2000);
   return text || undefined;
 }
+
+/** 조회 응답의 판매 ID·이상 표시 */
+function parseSaleIdInfo(
+  item: Record<string, unknown>,
+): Pick<AppsScriptListRow, "saleId" | "saleIdProblem"> {
+  const out: Pick<AppsScriptListRow, "saleId" | "saleIdProblem"> = {};
+  if (typeof item.saleId === "string" && /^S-[A-Za-z0-9]{12,40}$/.test(item.saleId)) {
+    out.saleId = item.saleId;
+  }
+  if (item.saleIdProblem === "duplicate" || item.saleIdProblem === "missing") {
+    out.saleIdProblem = item.saleIdProblem;
+  }
+  return out;
+}
+
+/** privacy-status 응답 표시 (common.gs 의 WS_PRIVACY_HANDLER) */
+export const PRIVACY_HANDLER = "ws-privacy";
+export const PRIVACY_VERSION = 1;
+
+/**
+ * 신규 등록 전 확인: 배포된 Apps Script 가 마스킹 강제·판매 ID 를 지원하는지.
+ * 확인하지 못하면(예전 코드·통신 실패) 예외 → 간편등록은 아무것도 저장하지 않는다.
+ * 마스킹을 건너뛰거나 원본 저장을 허용하는 설정은 없다.
+ */
+export async function checkPrivacySupport(): Promise<void> {
+  let data: Record<string, unknown>;
+  try {
+    data = await postToAppsScript(
+      { action: "privacy-status" },
+      "Apps Script가 개인정보 보호 확인을 거부했습니다.",
+    );
+  } catch (error) {
+    if (error instanceof AppsScriptError && error.code === "rejected") {
+      throw new AppsScriptError("rejected", PRIVACY_NOT_DEPLOYED);
+    }
+    throw error;
+  }
+  if (data.handler !== PRIVACY_HANDLER || Number(data.version) < PRIVACY_VERSION) {
+    throw new AppsScriptError("rejected", PRIVACY_NOT_DEPLOYED);
+  }
+}
+
+export const PRIVACY_NOT_DEPLOYED =
+  "Apps Script에 고객명·번호 마스킹과 판매 ID를 지원하는 최신 코드가 배포되어 있지 않아 등록하지 않았습니다. 관리자에게 문의해 주세요.";
 
 export function monthSheetNames(value: unknown): string[] {
   return Array.isArray(value)
@@ -348,6 +374,7 @@ export async function listRowsFromAppsScript(
       notes: parseNotes((item as Record<string, unknown>).notes),
       spotNote: parseSpotNoteText((item as Record<string, unknown>).spotNote),
       review: parseReview((item as Record<string, unknown>).review),
+      ...parseSaleIdInfo(item as Record<string, unknown>),
     });
   }
   return { sheet: sheetName, rows, sheets: monthSheetNames(data.sheets) };
@@ -361,6 +388,7 @@ export interface DeleteTarget {
   activatedAt: string;
   customer: string;
   ctn: string;
+  saleId?: string;
 }
 
 /**
@@ -477,6 +505,8 @@ export async function updateRowInAppsScript(
   row: number;
   no: string;
   values: unknown[];
+  /** 수정 후 판매 ID (기존 판매의 고객명·CTN 을 바꾸면 새로 생김) */
+  saleId?: string;
   /** notePatch 를 보냈을 때만: 저장 후 이 판매의 참고내용 */
   notes?: Record<string, string>;
   /** notePatch 를 보냈을 때만: 참고내용 저장 성공 여부 */
@@ -588,7 +618,8 @@ export async function updateRowInAppsScript(
     sheet,
     row: rowNumber,
     no: data.no === undefined || data.no === null ? "" : String(data.no),
-    values: data.values.slice(0, COLUMN_COUNT),
+    values: maskSheetValues(data.values.slice(0, COLUMN_COUNT)),
+    ...(typeof data.saleId === "string" && data.saleId ? { saleId: data.saleId } : {}),
     ...(data.reviewClosed === true ? { reviewClosed: true } : {}),
     ...(notePatch
       ? {

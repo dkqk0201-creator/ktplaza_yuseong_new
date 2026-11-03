@@ -1,3 +1,4 @@
+import { parseSaleIdField } from "@/lib/sale-target";
 import type {
   DeleteSaleRequest,
   DeleteSaleResponse,
@@ -78,7 +79,10 @@ function parseTarget(input: unknown): DeleteSaleRequest | null {
   ) {
     return null;
   }
-  return { sheet, row, no, activatedAt, customer, ctn };
+  // 판매 ID (신규 판매만, B열 메모). 형식이 틀리면 거부
+  const saleId = parseSaleIdField(raw.saleId);
+  if (saleId === null) return null;
+  return { sheet, row, no, activatedAt, customer, ctn, ...(saleId ? { saleId } : {}) };
 }
 
 export async function POST(request: Request) {
