@@ -316,3 +316,67 @@ test("15) 설정값 도구(tools/auth-setup.html)가 만든 값을 서버가 그
   assert.ok(made.sessionSecret.length >= 32);
   void createHmac;
 });
+
+test("16) 저장 등이 스크립트 잠금을 잡고 있어도 세션 확인(auth-check)은 기다리지 않음 — 로그아웃 즉시 무효화·OTP 재사용 방지·시도 제한은 그대로", async () => {
+  const { gas } = setup();
+  const props = () => (gas.ctx.PropertiesService as { getScriptProperties: () => { getProperty: (k: string) => string | null } }).getScriptProperties();
+  const realLock = gas.ctx.LockService;
+  let lockCalls = 0;
+  const held = { getScriptLock: () => ({ tryLock: () => { lockCalls++; return false; }, waitLock: () => { lockCalls++; throw new Error("잠금 대기 시간 초과"); }, releaseLock: () => {} }) };
+  const use = (cookie: string) => listGET(req("/api/sales/list?sheet=10월", "GET", undefined, { cookie })).then((r) => r.status);
+
+  // 1) 다른 작업이 잠금을 잡고 있는 동안: 세션 확인은 잠금 없이 통과, 상태도 쓰지 않음
+  const c1 = code();
+  const pc = cookieOf((await login(TEST_PASSWORD, c1)).cookie);
+  const before = props().getProperty("WS_AUTH_STATE");
+  gas.ctx.LockService = held;
+  lockCalls = 0;
+  gas.calls.length = 0;
+  const r = await authCheckOnly(pc);
+  assert.equal(r, true, "잠금이 잡혀 있어도 살아 있는 세션은 확인됨");
+  assert.equal(lockCalls, 0, "auth-check 는 잠금을 요청하지 않음");
+  assert.equal(props().getProperty("WS_AUTH_STATE"), before, "auth-check 는 상태를 쓰지 않음");
+
+  // 2) 잠금이 잡혀 있으면 로그인·로그아웃은 처리하지 않고 막는다 (기록 없이 통과시키지 않음)
+  const busyLogin = await login(TEST_PASSWORD, code(Date.now() + 30000));
+  assert.equal(busyLogin.status, 503);
+  assert.equal(busyLogin.cookie, "");
+  const busyLogout = await logoutPOST(req("/api/auth/logout", "POST", {}, { origin: ORIGIN, cookie: pc }));
+  assert.equal(busyLogout.status, 503, "서버 세션을 못 지웠으면 성공이라 하지 않음");
+  assert.equal(props().getProperty("WS_AUTH_STATE"), before);
+  gas.ctx.LockService = realLock;
+
+  // 3) 로그아웃 직후: 같은 쿠키로 다음 요청은 바로 401 (잠금 없는 확인도 바뀐 상태를 읽음)
+  assert.equal(await use(pc), 200);
+  assert.equal((await logoutPOST(req("/api/auth/logout", "POST", {}, { origin: ORIGIN, cookie: pc }))).status, 200);
+  assert.equal(await use(pc), 401);
+  assert.equal(await authCheckOnly(pc), false);
+
+  // 4) OTP 재사용 방지: 이미 쓴 코드(c1)는 다시 안 됨
+  assert.equal((await login(TEST_PASSWORD, c1)).status, 401);
+
+  // 5) 시도 제한: 위 실패 1회 + 4회 더 → 잠김, 잠긴 뒤에는 맞는 값도 429. 그동안 세션 확인은 잠금 없이 계속 동작
+  const phone = cookieOf((await login(TEST_PASSWORD, code(Date.now() + 30000))).cookie);
+  assert.equal(await use(phone), 200);
+  for (let i = 0; i < 5; i++) await login("wrong", code());
+  assert.equal((await login(TEST_PASSWORD, code())).status, 429);
+  assert.equal(await use(phone), 200, "잠금(로그인 시도 제한)은 이미 로그인한 기기의 세션 확인에 영향 없음");
+  assert.ok(JSON.parse(props().getProperty("WS_AUTH_STATE")!).lockUntil > Date.now());
+
+  async function authCheckOnly(cookie: string): Promise<boolean> {
+    const sid = cookie.split(".")[1];
+    const reply = gas.doPost({ action: "auth-check", session: sessionIdHash(sid) });
+    return reply.ok === true;
+  }
+});
+
+test("17) 만료된 세션은 잠금 없는 세션 확인에서도 거부 (Apps Script 시계 기준)", async () => {
+  let shift = 0;
+  const gas = makeGas(new FakeSpreadsheet(), { now: () => Date.now() + shift });
+  connect(gas);
+  const cookie = cookieOf((await login(TEST_PASSWORD, code())).cookie);
+  const sid = cookie.split(".")[1];
+  assert.equal(gas.doPost({ action: "auth-check", session: sessionIdHash(sid) }).ok, true);
+  shift = 13 * 3600 * 1000;
+  assert.equal(gas.doPost({ action: "auth-check", session: sessionIdHash(sid) }).ok, false);
+});

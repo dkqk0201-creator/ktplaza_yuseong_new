@@ -5,6 +5,7 @@
  *   { sessions: [{ h: 세션ID의 SHA-256, exp: 만료(초) }], lastStep: 마지막으로 쓴 OTP 칸,
  *     fails: 연속 실패 수, lockUntil: 잠금 끝(ms), lockCount: 잠긴 횟수 }
  * Vercel 서버가 여러 개여도 이 한 곳을 잠금(LockService) 안에서 읽고 쓰므로 횟수·잠금·로그아웃이 모두 공통이다.
+ * 단, auth-check(세션 확인)는 읽기만 하므로 잠금을 잡지 않는다 — 장표 저장 등이 잠금을 잡고 있어도 기다리지 않는다.
  *
  * 요청 (웹앱 서버만 보냄, API_SECRET 필요):
  *   auth-login  { result: "ok"|"fail", session, exp, step }  → 잠겨 있으면 결과와 상관없이 거부
@@ -53,6 +54,17 @@ function wsAuthReply_(obj) {
 function wsHandleAuth_(body) {
   if (!wsAuthorized_(body)) return wsAuthReply_({ ok: false, code: "unauthorized", message: "인증에 실패했습니다." });
   var session = typeof body.session === "string" && /^[0-9a-f]{64}$/.test(body.session) ? body.session : "";
+
+  // 세션 확인은 읽기만 하므로 잠금 없이 처리한다 (저장·수정이 잠금을 잡고 있어도 기다리지 않음).
+  // 로그아웃·로그인은 잠금 안에서 스크립트 속성을 다 쓴 뒤에 끝나므로, 그 뒤의 확인은 항상 바뀐 상태를 읽는다.
+  if (body.action === "auth-check") {
+    var nowCheck = Math.floor(Date.now() / 1000);
+    var alive = !!session && wsAuthReadState_().sessions.some(function (x) {
+      return x && x.h === session && Number(x.exp) > nowCheck;
+    });
+    return wsAuthReply_({ ok: alive, code: alive ? "ok" : "invalid" });
+  }
+
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return wsAuthReply_({ ok: false, code: "busy", message: "잠시 후 다시 시도해 주세요." });
   try {
@@ -63,11 +75,6 @@ function wsHandleAuth_(body) {
     state.sessions = state.sessions.filter(function (x) {
       return x && typeof x.h === "string" && Number(x.exp) > nowSec;
     });
-
-    if (body.action === "auth-check") {
-      var alive = !!session && state.sessions.some(function (x) { return x.h === session; });
-      return wsAuthReply_({ ok: alive, code: alive ? "ok" : "invalid" });
-    }
 
     if (body.action === "auth-logout") {
       state.sessions = body.all === true ? [] : state.sessions.filter(function (x) { return x.h !== session; });

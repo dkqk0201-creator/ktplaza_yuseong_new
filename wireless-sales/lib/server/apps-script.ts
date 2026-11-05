@@ -205,7 +205,11 @@ export async function authCheckInAppsScript(sessionHash: string): Promise<boolea
 
 /** 로그아웃 (all=true 면 모든 기기) */
 export async function authLogoutInAppsScript(sessionHash: string, all: boolean): Promise<void> {
-  await postAuth({ action: "auth-logout", session: sessionHash, all });
+  const data = await postAuth({ action: "auth-logout", session: sessionHash, all });
+  // 지웠다는 확인이 없으면(잠금 대기 초과 등) 실패로 본다 — 쿠키만 지우고 성공이라 하지 않음
+  if (data.ok !== true) {
+    throw new AppsScriptError("rejected", "Apps Script가 로그아웃을 처리하지 못했습니다.", data);
+  }
 }
 
 export async function saveRowToAppsScript(
