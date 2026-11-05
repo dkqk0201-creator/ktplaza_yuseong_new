@@ -1,3 +1,4 @@
+import { requireAuth } from "@/lib/server/auth";
 import { getSheetSales } from "@/lib/data/sheet-sales";
 
 /*
@@ -6,6 +7,10 @@ import { getSheetSales } from "@/lib/data/sheet-sales";
  * 응답: 성공 { ok: true, sheet, sales, sheets } / 실패 { ok: false, message, sheets }
  */
 export async function GET(request: Request) {
+  // 로그인 확인이 가장 먼저 (통과 전에는 Apps Script 로 아무것도 보내지 않음)
+  const denied = await requireAuth(request);
+  if (denied) return denied;
+
   const param = new URL(request.url).searchParams.get("sheet") ?? "";
   if (param && !/^(1[0-2]|[1-9])월$/.test(param)) {
     return Response.json(

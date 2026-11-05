@@ -1,3 +1,4 @@
+import { requireAuth } from "@/lib/server/auth";
 import {
   EDITABLE_KEYS,
   columnIndexOf,
@@ -194,6 +195,10 @@ function parseChanges(input: unknown): ParsedChanges | string {
 }
 
 export async function POST(request: Request) {
+  // 로그인 확인이 가장 먼저 (통과 전에는 Apps Script 로 아무것도 보내지 않음)
+  const denied = await requireAuth(request);
+  if (denied) return denied;
+
   let input: unknown;
   try {
     input = await request.json();

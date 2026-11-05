@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { NAV_ITEMS, findActiveHref } from "./nav-items";
+import { LogoutButton } from "./logout-button";
 
 function BrandMark() {
   return (
@@ -16,6 +17,10 @@ function BrandMark() {
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const activeHref = findActiveHref(pathname);
+  // 로그인 화면에는 메뉴를 보이지 않는다
+  if (pathname === "/login") {
+    return <main className="flex-1 px-4 py-8">{children}</main>;
+  }
 
   return (
     <div className="flex min-h-full flex-1">
@@ -45,8 +50,9 @@ export function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-        <div className="mt-auto border-t border-line px-5 py-4 text-xs text-ink-muted">
+        <div className="mt-auto flex items-center justify-between border-t border-line px-5 py-4 text-xs text-ink-muted">
           KT플라자 유성점
+          <LogoutButton />
         </div>
       </aside>
 
@@ -55,6 +61,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         <header className="sticky top-0 z-20 flex h-14 items-center gap-2.5 border-b border-line bg-white/95 px-4 backdrop-blur md:hidden">
           <BrandMark />
           <span className="text-base font-bold text-ink">무선 판매 관리</span>
+          <span className="ml-auto">
+            <LogoutButton />
+          </span>
         </header>
 
         <main className="flex-1 px-4 pt-5 pb-24 sm:px-6 md:px-8 md:py-8">

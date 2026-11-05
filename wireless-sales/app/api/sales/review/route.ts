@@ -1,3 +1,4 @@
+import { requireAuth } from "@/lib/server/auth";
 import { REVIEW_MAX, reviewContentError } from "@/lib/inspection-review";
 import type { ReviewResponse } from "@/lib/review-api";
 import { parseSaleTarget } from "@/lib/sale-target";
@@ -29,6 +30,10 @@ const FAILURE: Record<AppsScriptError["code"], { status: number; message: string
 };
 
 export async function POST(request: Request) {
+  // 로그인 확인이 가장 먼저 (통과 전에는 Apps Script 로 아무것도 보내지 않음)
+  const denied = await requireAuth(request);
+  if (denied) return denied;
+
   let input: Record<string, unknown>;
   try {
     input = ((await request.json()) ?? {}) as Record<string, unknown>;

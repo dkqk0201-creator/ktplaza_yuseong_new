@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'">
+<title>관리자 로그인 설정값 만들기</title>
+<style>
+  :root { color-scheme: light; }
+  body { font-family: system-ui, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; color: #1d1d22; background: #fff; line-height: 1.6; }
+  h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 28px; }
+  .warn { background: #fff1f3; border: 1px solid #f5c2cb; border-radius: 8px; padding: 10px 14px; font-size: 14px; }
+  label { display: block; font-weight: 600; margin-top: 12px; font-size: 14px; }
+  input { width: 100%; box-sizing: border-box; padding: 8px 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 6px; }
+  button { margin-top: 14px; padding: 10px 16px; font-size: 15px; font-weight: 700; color: #fff; background: #e4002b; border: 0; border-radius: 8px; cursor: pointer; }
+  button:disabled { opacity: .6; }
+  .out { margin-top: 10px; }
+  .row { margin-top: 12px; }
+  .row b { display: block; font-size: 13px; }
+  code { display: block; word-break: break-all; background: #f4f4f6; border-radius: 6px; padding: 8px 10px; font-size: 13px; user-select: all; }
+  .code { font-size: 28px; letter-spacing: 6px; font-weight: 800; }
+  .muted { color: #6b6b73; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>관리자 로그인 설정값 만들기 (인터넷 연결 없이 동작)</h1>
+<p class="warn">
+  이 파일은 <b>내 PC에 저장한 뒤 브라우저로 직접 여는</b> 도구입니다. 인터넷으로 아무것도 보내지 않습니다(이 페이지는 외부 연결이 막혀 있음).<br>
+  여기서 만든 값은 <b>Vercel 환경변수(Sensitive)에만</b> 붙여 넣고, 채팅·메신저·메모·사진으로 남기지 마세요. 다 쓰면 이 창을 닫으세요.
+</p>
+
+<h2>1. 비밀번호 정하기</h2>
+<label>새 비밀번호 (16자 이상, 다른 곳에서 쓰지 않는 것)
+  <input id="pw" type="password" autocomplete="new-password"></label>
+<label>비밀번호 한 번 더
+  <input id="pw2" type="password" autocomplete="new-password"></label>
+<button id="make">설정값 만들기</button>
+<p id="msg" class="muted"></p>
+
+<div id="result" hidden>
+  <h2>2. Vercel 환경변수에 붙여 넣을 값 3개</h2>
+  <div class="row"><b>AUTH_PASSWORD_HASH</b><code id="outHash"></code></div>
+  <div class="row"><b>AUTH_TOTP_SECRET</b><code id="outTotp"></code></div>
+  <div class="row"><b>AUTH_SESSION_SECRET</b><code id="outSession"></code></div>
+
+  <h2>3. OTP 앱에 등록</h2>
+  <p class="muted">Google Authenticator 등 OTP 앱 → ＋ → <b>설정 키 입력</b> → 계정 이름 아무거나(예: 무선판매), 키에 아래 값, 유형 <b>시간 기준</b>.</p>
+  <code id="outKey"></code>
+  <p class="muted">앱에 보이는 6자리가 아래 숫자와 같으면 등록이 맞습니다 (30초마다 바뀜).</p>
+  <p class="code" id="nowCode">------</p>
+</div>
+
+<script id="core">
+// ── 핵심 계산 (웹앱 서버 lib/server/auth.ts 와 같은 형식) ──
+var PBKDF2_ITERATIONS = 600000;
+function toB64url(bytes) {
+  var s = "";
+  for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+  return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function base32(bytes) {
+  var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", bits = 0, value = 0, out = "";
+  for (var i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i]; bits += 8;
+    while (bits >= 5) { out += alphabet[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+  return out;
+}
+function base32Decode(text) {
+  var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", bits = 0, value = 0, out = [];
+  text = text.replace(/[\s=-]/g, "").toUpperCase();
+  for (var i = 0; i < text.length; i++) {
+    value = (value << 5) | alphabet.indexOf(text[i]); bits += 5;
+    if (bits >= 8) { out.push((value >>> (bits - 8)) & 255); bits -= 8; }
+  }
+  return new Uint8Array(out);
+}
+function randomBytes(n) { var b = new Uint8Array(n); crypto.getRandomValues(b); return b; }
+async function passwordHash(password, salt, iterations) {
+  var key = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, ["deriveBits"]);
+  var bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt: salt, iterations: iterations }, key, 256);
+  return "pbkdf2-sha256$" + iterations + "$" + toB64url(salt) + "$" + toB64url(new Uint8Array(bits));
+}
+async function totpCode(secretBase32, nowMs) {
+  var step = Math.floor(nowMs / 1000 / 30);
+  var counter = new Uint8Array(8);
+  for (var i = 7, s = step; i >= 0; i--) { counter[i] = s & 255; s = Math.floor(s / 256); }
+  var key = await crypto.subtle.importKey("raw", base32Decode(secretBase32), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]);
+  var mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, counter));
+  var o = mac[mac.length - 1] & 15;
+  var bin = ((mac[o] & 127) << 24) | (mac[o + 1] << 16) | (mac[o + 2] << 8) | mac[o + 3];
+  return String(bin % 1000000).padStart(6, "0");
+}
+async function makeSettings(password) {
+  return {
+    passwordHash: await passwordHash(password, randomBytes(16), PBKDF2_ITERATIONS),
+    totpSecret: base32(randomBytes(20)),
+    sessionSecret: toB64url(randomBytes(32)),
+  };
+}
+</script>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var timer = null;
+  $("make").addEventListener("click", async function () {
+    var pw = $("pw").value, pw2 = $("pw2").value;
+    if (pw.length < 16) { $("msg").textContent = "비밀번호는 16자 이상으로 정해 주세요."; return; }
+    if (pw !== pw2) { $("msg").textContent = "두 비밀번호가 다릅니다."; return; }
+    $("make").disabled = true;
+    $("msg").textContent = "만드는 중… (몇 초 걸립니다)";
+    var s = await makeSettings(pw);
+    $("pw").value = ""; $("pw2").value = "";
+    $("outHash").textContent = s.passwordHash;
+    $("outTotp").textContent = s.totpSecret;
+    $("outSession").textContent = s.sessionSecret;
+    $("outKey").textContent = s.totpSecret.replace(/(.{4})/g, "$1 ").trim();
+    $("result").hidden = false;
+    $("msg").textContent = "완료. 비밀번호는 이 화면에 남기지 않았습니다 (직접 기억해 두세요).";
+    var tick = async function () { $("nowCode").textContent = await totpCode(s.totpSecret, Date.now()); };
+    tick(); clearInterval(timer); timer = setInterval(tick, 1000);
+  });
+})();
+</script>
+</body>
+</html>

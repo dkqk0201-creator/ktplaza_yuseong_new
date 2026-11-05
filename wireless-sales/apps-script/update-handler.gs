@@ -43,6 +43,7 @@
  *   (기록은 이력으로 남김, 응답 reviewClosed: true). 고객명·CTN 을 바꾸면 보완 기록 키도 옮긴다.
  * - action = "inspection-review" 요청은 inspection-review.gs 의 wsHandleInspectionReview_ 로 넘긴다.
  * - action = "gobulbi" 요청(예산관리 고불비사용)은 gobulbi.gs 의 wsHandleGobulbi_ 로 넘긴다.
+ * - action = "auth-login" · "auth-check" · "auth-logout"(웹앱 관리자 로그인)은 auth-handler.gs 의 wsHandleAuth_ 로 넘긴다.
  * 시트 이름은 실제 월 시트 이름 "1월"~"12월" 형식 (예: "10월"). "2026년 10월" 같은 화면 표시용 글자는 받지 않는다.
  * 응답: { ok, handler, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
  */
@@ -53,6 +54,10 @@ function wsHandleSaleUpdate_(e) {
   // 검수 보완 요청(inspection-review.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
   if (body && body.action === "inspection-review" && typeof wsHandleInspectionReview_ === "function") {
     return wsHandleInspectionReview_(body);
+  }
+  // 관리자 로그인 상태 (auth-handler.gs) — 장표에는 접근하지 않는다
+  if (body && typeof body.action === "string" && body.action.indexOf("auth-") === 0 && typeof wsHandleAuth_ === "function") {
+    return wsHandleAuth_(body);
   }
   // 예산관리 고불비사용(gobulbi.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
   if (body && body.action === "gobulbi" && typeof wsHandleGobulbi_ === "function") {

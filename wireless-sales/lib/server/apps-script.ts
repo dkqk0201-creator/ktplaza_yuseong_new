@@ -136,6 +136,78 @@ async function postToAppsScript(
   return data;
 }
 
+/*
+ * 로그인 상태 (Apps Script auth-handler.gs, 스크립트 속성만 쓰고 장표에는 접근하지 않음).
+ * 세션ID 는 보내지 않고 SHA-256 값만 보낸다.
+ */
+const AUTH_HANDLER = "ws-auth";
+
+function checkAuthHandler(data: Record<string, unknown>) {
+  if (data.handler !== AUTH_HANDLER) {
+    throw new AppsScriptError(
+      "bad_response",
+      "Apps Script에 로그인 처리(auth-handler.gs)가 배포되어 있지 않습니다.",
+    );
+  }
+}
+
+/** 응답을 그대로 받는다 (ok:false 도 정상 응답 — 잠김·실패를 구분하려고) */
+async function postAuth(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  try {
+    const data = await postToAppsScript(payload, "Apps Script가 로그인 요청을 거부했습니다.");
+    checkAuthHandler(data);
+    return data;
+  } catch (error) {
+    if (error instanceof AppsScriptError && error.code === "rejected") {
+      checkAuthHandler(error.details);
+      return error.details;
+    }
+    throw error;
+  }
+}
+
+export type AuthLoginOutcome =
+  | { ok: true }
+  | { ok: false; reason: "locked"; retryAfterSec: number }
+  | { ok: false; reason: "invalid" };
+
+/**
+ * 로그인 시도 1건 기록. 맞았으면 세션을 등록하고, 틀렸으면 실패 횟수를 올린다.
+ * 잠겨 있으면 맞았어도 거부한다 (Apps Script 가 잠금 안에서 한 번에 판단).
+ */
+export async function authLoginInAppsScript(input: {
+  passed: boolean;
+  sessionHash: string;
+  exp: number;
+  step: number | null;
+}): Promise<AuthLoginOutcome> {
+  const data = await postAuth({
+    action: "auth-login",
+    result: input.passed ? "ok" : "fail",
+    session: input.sessionHash,
+    exp: input.exp,
+    step: input.step,
+  });
+  if (data.ok === true) return { ok: true };
+  if (data.code === "locked") {
+    const retry = Number(data.retryAfterSec);
+    return { ok: false, reason: "locked", retryAfterSec: Number.isFinite(retry) && retry > 0 ? Math.ceil(retry) : 60 };
+  }
+  if (data.code === "invalid") return { ok: false, reason: "invalid" };
+  throw new AppsScriptError("bad_response", "Apps Script 로그인 응답을 이해하지 못했습니다.");
+}
+
+/** 이 세션이 아직 살아 있는지 */
+export async function authCheckInAppsScript(sessionHash: string): Promise<boolean> {
+  const data = await postAuth({ action: "auth-check", session: sessionHash });
+  return data.ok === true;
+}
+
+/** 로그아웃 (all=true 면 모든 기기) */
+export async function authLogoutInAppsScript(sessionHash: string, all: boolean): Promise<void> {
+  await postAuth({ action: "auth-logout", session: sessionHash, all });
+}
+
 export async function saveRowToAppsScript(
   row: SheetRowArray,
 ): Promise<AppsScriptSaveResult> {

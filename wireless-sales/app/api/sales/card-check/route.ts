@@ -1,3 +1,4 @@
+import { requireAuth } from "@/lib/server/auth";
 import type { CardCheckResponse } from "@/lib/card-check-api";
 import { parseSaleTarget } from "@/lib/sale-target";
 import { markCellDone } from "@/lib/server/mark-done";
@@ -15,6 +16,10 @@ function reply(body: CardCheckResponse, status: number) {
 }
 
 export async function POST(request: Request) {
+  // 로그인 확인이 가장 먼저 (통과 전에는 Apps Script 로 아무것도 보내지 않음)
+  const denied = await requireAuth(request);
+  if (denied) return denied;
+
   let input: Record<string, unknown>;
   try {
     input = ((await request.json()) ?? {}) as Record<string, unknown>;

@@ -1,3 +1,4 @@
+import { requireAuth } from "@/lib/server/auth";
 import { activeStaffNames } from "@/lib/data/staff-list";
 import { todayInKorea } from "@/lib/format";
 import {
@@ -70,6 +71,10 @@ function failure(error: unknown, what: string) {
 }
 
 export async function GET(request: Request) {
+  // 로그인 확인이 가장 먼저 (통과 전에는 Apps Script 로 아무것도 보내지 않음)
+  const denied = await requireAuth(request);
+  if (denied) return denied;
+
   const month = new URL(request.url).searchParams.get("month") ?? "";
   if (!MONTH_RE.test(month)) return reply({ ok: false, message: "월 형식이 올바르지 않습니다." }, 400);
   try {
@@ -115,6 +120,10 @@ function parseBefore(v: unknown): GobulbiBefore | null {
 }
 
 export async function POST(request: Request) {
+  // 로그인 확인이 가장 먼저 (통과 전에는 Apps Script 로 아무것도 보내지 않음)
+  const denied = await requireAuth(request);
+  if (denied) return denied;
+
   let input: Record<string, unknown>;
   try {
     input = ((await request.json()) ?? {}) as Record<string, unknown>;
