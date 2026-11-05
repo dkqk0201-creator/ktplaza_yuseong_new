@@ -145,15 +145,24 @@ export function makeMonthSheet(name: string, slots = 15): FakeSheet {
   return s;
 }
 
+/** 가짜 시트 ID (테스트 전용 진입 파일 test-entry.gs 의 WS_TEST_CONFIG 와 같은 값 — 실제 시트에 연결하지 않음) */
+export const TEST_SHEET_ID = "1qM57jAfArHW1CGTfpKYJWeFQZ01EEL5CM1L7BWatti4";
+
 export class FakeSpreadsheet {
   sheets = new Map<string, FakeSheet>();
   inserts: string[] = [];
+  id = TEST_SHEET_ID;
+  name = "무선장표 테스트전용";
+  /** 시트(탭)에 접근한 기록 — "보호 장치가 데이터 접근보다 먼저" 확인용 */
+  sheetAccess = 0;
   constructor(monthNames: string[] = ["10월"], slots = 15) {
     for (const m of [...monthNames, "무선장표 양식"]) this.sheets.set(m, makeMonthSheet(m, slots));
   }
+  getId() { return this.id; }
+  getName() { return this.name; }
   getSpreadsheetTimeZone() { return "Asia/Seoul"; }
-  getSheetByName(n: string) { return this.sheets.get(n) ?? null; }
-  getSheets() { return [...this.sheets.values()]; }
+  getSheetByName(n: string) { this.sheetAccess++; return this.sheets.get(n) ?? null; }
+  getSheets() { this.sheetAccess++; return [...this.sheets.values()]; }
   insertSheet(n: string) {
     if (this.sheets.has(n)) throw new Error("같은 이름의 시트가 이미 있습니다: " + n);
     const s = new FakeSheet(n, 26);
