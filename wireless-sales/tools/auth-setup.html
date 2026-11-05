@@ -30,7 +30,7 @@
 </p>
 
 <h2>1. 비밀번호 정하기</h2>
-<label>새 비밀번호 (16자 이상, 다른 곳에서 쓰지 않는 것)
+<label>새 비밀번호 (12자 이상, 다른 곳에서 쓰지 않는 것)
   <input id="pw" type="password" autocomplete="new-password"></label>
 <label>비밀번호 한 번 더
   <input id="pw2" type="password" autocomplete="new-password"></label>
@@ -53,6 +53,13 @@
 <script id="core">
 // ── 핵심 계산 (웹앱 서버 lib/server/auth.ts 와 같은 형식) ──
 var PBKDF2_ITERATIONS = 600000;
+var MIN_PASSWORD_LENGTH = 12;
+/** 비밀번호 입력 확인: 문제가 있으면 안내 문구, 없으면 "" */
+function passwordProblem(pw, pw2) {
+  if (pw.length < MIN_PASSWORD_LENGTH) return "비밀번호는 " + MIN_PASSWORD_LENGTH + "자 이상으로 정해 주세요.";
+  if (pw !== pw2) return "두 비밀번호가 다릅니다.";
+  return "";
+}
 function toB64url(bytes) {
   var s = "";
   for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
@@ -106,8 +113,8 @@ async function makeSettings(password) {
   var timer = null;
   $("make").addEventListener("click", async function () {
     var pw = $("pw").value, pw2 = $("pw2").value;
-    if (pw.length < 16) { $("msg").textContent = "비밀번호는 16자 이상으로 정해 주세요."; return; }
-    if (pw !== pw2) { $("msg").textContent = "두 비밀번호가 다릅니다."; return; }
+    var problem = passwordProblem(pw, pw2);
+    if (problem) { $("msg").textContent = problem; return; }
     $("make").disabled = true;
     $("msg").textContent = "만드는 중… (몇 초 걸립니다)";
     var s = await makeSettings(pw);

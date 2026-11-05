@@ -314,6 +314,15 @@ test("15) 설정값 도구(tools/auth-setup.html)가 만든 값을 서버가 그
   const now = Date.now();
   assert.equal(await (ctx.totpCode as (s: string, n: number) => Promise<string>)(made.totpSecret, now), totpCode(key, step(now)));
   assert.ok(made.sessionSecret.length >= 32);
+  // 비밀번호 최소 길이 12자 (11자는 거부, 12자는 통과, 두 칸이 다르면 거부)
+  const problem = ctx.passwordProblem as (a: string, b: string) => string;
+  assert.equal(ctx.MIN_PASSWORD_LENGTH, 12);
+  assert.match(problem("a".repeat(11), "a".repeat(11)), /12자 이상/);
+  assert.equal(problem("a".repeat(12), "a".repeat(12)), "");
+  assert.match(problem("a".repeat(12), "b".repeat(12)), /다릅니다/);
+  // 12자 비밀번호도 서버가 같은 방식(PBKDF2 60만 회)으로 확인
+  const short = await (ctx.makeSettings as (p: string) => Promise<{ passwordHash: string }>)("abcdefgh1234");
+  assert.equal(await verifyPassword("abcdefgh1234", parsePasswordHash(short.passwordHash)!), true);
   void createHmac;
 });
 
