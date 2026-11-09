@@ -110,7 +110,7 @@ export function makeGas(ss: FakeSpreadsheet, opts: GasOptions = {}) {
   }
   if (opts.extraSource) src += "\n" + opts.extraSource;
   vm.runInContext(src, ctx, { filename: "apps-script.gs" });
-  const chain = ["wsHandleSaleUpdate_", "handleGoalRequest_", "handleSaveRequest_", "handleDeleteRequest_", "handleListRequest_"];
+  const chain = ["wsHandleSaleUpdate_", "handleListRequest_", "handleDeleteRequest_", "handleSaveRequest_", "handleGoalRequest_"]; // 운영 Code.gs doPost 순서 (2026-11-09 점장 확인)
   const calls: { body: Record<string, unknown>; reply: Record<string, unknown> }[] = [];
   function doPost(body: Record<string, unknown>) {
     const e = { postData: { contents: JSON.stringify({ secret: SECRET, ...body }) } };

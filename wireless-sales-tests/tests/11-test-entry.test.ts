@@ -158,13 +158,18 @@ test("9) 파일이 하나라도 빠지면 거부 (어느 파일이 빠졌는지 
 });
 
 test("10) 핸들러 호출 순서: 운영 흉내와 같은 순서로 한 번씩, 처음 응답한 곳에서 멈춤 (요청 종류별)", () => {
-  const chain = ["wsHandleSaleUpdate_", "handleGoalRequest_", "handleSaveRequest_", "handleDeleteRequest_", "handleListRequest_"];
+  // test-entry.gs 의 순서와 운영 Code.gs doPost 순서(2026-11-09 확인)는 다르지만, 핸들러마다 받는 action 이 겹치지 않아 결과는 같다
+  const chains = {
+    "test-entry": ["wsHandleSaleUpdate_", "handleGoalRequest_", "handleSaveRequest_", "handleDeleteRequest_", "handleListRequest_"],
+    emulated: ["wsHandleSaleUpdate_", "handleListRequest_", "handleDeleteRequest_", "handleSaveRequest_", "handleGoalRequest_"],
+  } as const;
   const expectStop: Record<string, string | null> = {
     list: "handleListRequest_", save: "handleSaveRequest_", update: "wsHandleSaleUpdate_", delete: "handleDeleteRequest_",
     review: "wsHandleSaleUpdate_", gobulbi: "wsHandleSaleUpdate_", goal: "handleGoalRequest_", authCheck: "wsHandleSaleUpdate_", authLogin: "wsHandleSaleUpdate_",
   };
   for (const [kind, body] of [...Object.entries(REQUESTS), ["unknown", { action: "nothing" }] as const]) {
     for (const entry of ["test-entry", "emulated"] as const) {
+      const chain = chains[entry];
       const gas = makeGas(new FakeSpreadsheet(), { entry });
       const seen: string[] = [];
       for (const name of chain) {
