@@ -1,12 +1,12 @@
-import { AppsScriptError, authLogoutInAppsScript } from "@/lib/server/apps-script";
+import { AppsScriptError, authCheckInAppsScript, authLogoutInAppsScript } from "@/lib/server/apps-script";
 import {
   SESSION_COOKIE,
   clearedSessionCookie,
   isSameOrigin,
   readAuthConfig,
   readCookie,
+  readSessionToken,
   sessionIdHash,
-  verifySessionToken,
 } from "@/lib/server/auth";
 
 /*
@@ -14,6 +14,9 @@ import {
  * - 서버 측 무효화: Apps Script 에 등록된 이 세션(all 이면 모든 기기 세션)을 지운다
  *   → 쿠키를 누가 복사해 두었더라도 그 즉시 모든 API 에서 거부된다.
  * - 브라우저 쿠키도 지운다. 서버 측 무효화에 실패하면 그렇게 알려 준다 (쿠키만 지우고 성공이라 하지 않음).
+ * - 이 기기 로그아웃은 미사용·최대 시간이 지난 세션이어도 서명이 맞으면 Apps Script 에서 지운다 (자동 로그아웃도 이 경로).
+ * - 모든 기기 로그아웃(all)은 지금 쓸 수 있는 세션 + Apps Script 에서 살아 있는 세션만 할 수 있다
+ *   (오래된 쿠키를 주운 사람이 다른 기기를 모두 끊는 일을 막음).
  */
 function reply(body: Record<string, unknown>, status: number) {
   return Response.json(body, {
@@ -28,7 +31,7 @@ export async function POST(request: Request) {
   }
   const config = readAuthConfig();
   const session = config
-    ? verifySessionToken(config.sessionKey, readCookie(request, SESSION_COOKIE), Math.floor(Date.now() / 1000))
+    ? readSessionToken(config.sessionKey, readCookie(request, SESSION_COOKIE), Math.floor(Date.now() / 1000))
     : null;
   if (!session) return reply({ ok: true }, 200); // 이미 로그인 상태가 아님
   let all = false;
@@ -38,6 +41,15 @@ export async function POST(request: Request) {
     all = false;
   }
   try {
+    if (all) {
+      const alive = session.state === "ok" && (await authCheckInAppsScript(sessionIdHash(session.sid)));
+      if (!alive) {
+        return Response.json(
+          { ok: false, code: "unauthenticated", message: "로그인 상태에서만 모든 기기 로그아웃을 할 수 있습니다." },
+          { status: 401, headers: { "Cache-Control": "no-store" } },
+        );
+      }
+    }
     await authLogoutInAppsScript(sessionIdHash(session.sid), all);
   } catch (error) {
     console.error(`[로그아웃] 서버 세션 삭제 실패 (${error instanceof AppsScriptError ? error.code : "error"})`);

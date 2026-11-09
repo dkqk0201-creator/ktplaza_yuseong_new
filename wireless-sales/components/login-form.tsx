@@ -2,13 +2,17 @@
 
 import { useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
+import { markSignedIn } from "@/components/auth-guard";
+import { safeNext } from "@/lib/session-policy";
 
 /* 관리자 로그인 (비밀번호 + OTP 앱 6자리). 입력값은 서버로만 보내고 브라우저에 저장하지 않는다. */
 
-/** 로그인 후 돌아갈 주소: 이 사이트 안의 경로만 (다른 사이트로 보내지 않음) */
-function safeNext(value: string | null): string {
-  return value && value.startsWith("/") && !value.startsWith("//") && !value.startsWith("/\\") ? value : "/";
-}
+/** 로그인 화면으로 오게 된 이유 (주소의 reason) */
+const REASON_MESSAGE: Record<string, string> = {
+  idle: "30분 동안 사용하지 않아 자동 로그아웃되었습니다. 다시 로그인해 주세요.",
+  expired: "30분 동안 사용하지 않아 자동 로그아웃되었습니다. 다시 로그인해 주세요.",
+  revoked: "로그인이 끝났습니다 (다른 기기에서 모든 기기 로그아웃 등). 다시 로그인해 주세요.",
+};
 
 export function LoginForm() {
   const params = useSearchParams();
@@ -33,6 +37,7 @@ export function LoginForm() {
       if (response.ok && data.ok === true) {
         setPassword("");
         setOtp("");
+        markSignedIn();
         window.location.replace(safeNext(params.get("next")));
         return;
       }
@@ -48,6 +53,11 @@ export function LoginForm() {
     <div className="mx-auto mt-10 w-full max-w-sm rounded-2xl border border-line bg-white p-6">
       <h1 className="text-lg font-bold text-ink">관리자 로그인</h1>
       <p className="mt-1 text-sm text-ink-muted">비밀번호와 OTP 앱의 6자리 코드를 입력해 주세요.</p>
+      {REASON_MESSAGE[params.get("reason") ?? ""] && !error && (
+        <p role="status" className="mt-3 rounded-lg bg-zinc-100 px-3 py-2 text-sm font-semibold text-ink">
+          {REASON_MESSAGE[params.get("reason") ?? ""]}
+        </p>
+      )}
       <form className="mt-5 space-y-4" onSubmit={submit}>
         <label className="block text-sm font-semibold text-ink">
           비밀번호

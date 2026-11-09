@@ -23,8 +23,14 @@ import {
  * 하나라도 없거나 형식이 틀리면 모든 화면·API 를 막는다 (설정 실수로 열리지 않게).
  *
  * 세션:
- *   - 쿠키 "__Host-ws_session" = v1.<세션ID>.<만료시각>.<HMAC 서명>  (HttpOnly · Secure · SameSite=Strict · Path=/)
- *   - 서명·만료는 웹 서버가 확인하고, "아직 살아 있는 세션인지"는 매 요청 Apps Script 스크립트 속성에서 확인한다
+ *   - 쿠키 "__Host-ws_session" = v2.<세션ID>.<최대 만료>.<미사용 만료>.<HMAC 서명>
+ *     (HttpOnly · Secure · SameSite=Strict · Path=/, Max-Age 없음 → 브라우저를 닫으면 사라지는 쿠키)
+ *   - 미사용 만료: 마지막 실제 사용자 활동 + 30분. 화면이 클릭·키 입력 등을 감지했을 때만 부르는
+ *     /api/auth/activity 가 새 쿠키로 늘려 준다. 업무 API·자동 조회는 늘리지 않는다.
+ *   - 최대 만료: 로그인(또는 재확인) 후 8시간. 활동이 있어도 늘어나지 않으며, 지나면 비밀번호+OTP 재확인이 필요하다
+ *     (화면은 그대로 둔 채 재확인 창을 띄움 — 입력 중인 내용은 남는다).
+ *   - 두 만료는 모두 서명 안에 들어 있어 바꿀 수 없고, 서버가 매 요청 확인한다 (브라우저 타이머만 믿지 않음).
+ *   - "아직 살아 있는 세션인지"는 매 요청 Apps Script 스크립트 속성에서 확인한다
  *     → 로그아웃하면 어느 서버 인스턴스에서도 그 즉시 거부된다 (서버 측 무효화).
  *   - Apps Script 에는 세션ID 의 SHA-256 값만 보낸다 (세션ID 자체는 쿠키에만).
  * 로그인 시도 제한·OTP 재사용 방지도 Apps Script 스크립트 속성 한 곳에서 잠금(LockService)으로 처리한다
@@ -32,7 +38,14 @@ import {
  */
 
 export const SESSION_COOKIE = "__Host-ws_session";
-export const SESSION_TTL_SEC = 12 * 60 * 60;
+/** 최대 로그인 시간: 이만큼 지나면 활동 중이어도 비밀번호+OTP 재확인 */
+export const SESSION_TTL_SEC = 8 * 60 * 60;
+/** 실제 사용자 활동이 이만큼 없으면 만료 */
+export const IDLE_TIMEOUT_SEC = 30 * 60;
+/** 활동 갱신으로 새 쿠키를 주는 최소 간격 (그보다 자주 와도 세션 확인만 하고 쿠키는 그대로) */
+export const ACTIVITY_MIN_INTERVAL_SEC = 30;
+/** 화면이 알려 주는 "마지막 활동 후 지난 초"의 최대값 (그 이상은 받아들이지 않음 — 미사용 만료를 앞당기는 쪽으로만 쓰임) */
+export const ACTIVITY_REPORT_MAX_SEC = 120;
 const MIN_PBKDF2_ITERATIONS = 100_000;
 export const TOTP_PERIOD_SEC = 30;
 /** 서버·휴대폰 시계 오차 허용: 앞뒤 1칸(±30초) */
@@ -132,27 +145,51 @@ export function sessionIdHash(sid: string): string {
 function sign(key: Buffer, data: string): string {
   return b64url(createHmac("sha256", key).update(data).digest());
 }
-export function signSession(key: Buffer, sid: string, exp: number): string {
-  const data = `v1.${sid}.${exp}`;
+export function signSession(key: Buffer, sid: string, exp: number, idleExp = Math.floor(Date.now() / 1000) + IDLE_TIMEOUT_SEC): string {
+  const data = `v2.${sid}.${exp}.${idleExp}`;
   return `${data}.${sign(key, data)}`;
 }
-/** 서명·만료 확인. 맞으면 { sid, exp } */
+
+/** ok: 사용 가능 / idle: 30분 미사용으로 만료 / absolute: 최대 시간이 지나 재확인 필요 */
+export type SessionState = "ok" | "idle" | "absolute";
+export interface SessionToken {
+  sid: string;
+  /** 최대 만료 (초) */
+  exp: number;
+  /** 미사용 만료 (초) */
+  idleExp: number;
+  state: SessionState;
+}
+
+/**
+ * 서명·형식 확인. 서명이 맞으면 상태와 함께 돌려주고, 위조·형식 오류·말이 안 되는 시각이면 null.
+ * 만료 판단: 미사용 만료가 먼저 (지났으면 idle), 그다음 최대 만료 (지났으면 absolute).
+ */
+export function readSessionToken(key: Buffer, token: string | null, nowSec: number): SessionToken | null {
+  if (!token || token.length > 200) return null;
+  const parts = token.split(".");
+  if (parts.length !== 5 || parts[0] !== "v2") return null;
+  const [, sid, expText, idleText, sig] = parts;
+  if (!/^[A-Za-z0-9_-]{32}$/.test(sid) || !/^\d{10}$/.test(expText) || !/^\d{10}$/.test(idleText)) return null;
+  const expected = Buffer.from(sign(key, `v2.${sid}.${expText}.${idleText}`));
+  const given = Buffer.from(sig);
+  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+  const exp = Number(expText);
+  const idleExp = Number(idleText);
+  // 서명이 맞아도 미래로 너무 먼 시각은 받지 않는다 (비밀키가 바뀌기 전 값·설정 실수 대비)
+  if (exp > nowSec + SESSION_TTL_SEC + 60 || idleExp > nowSec + IDLE_TIMEOUT_SEC + 60) return null;
+  const state: SessionState = idleExp <= nowSec ? "idle" : exp <= nowSec ? "absolute" : "ok";
+  return { sid, exp, idleExp, state };
+}
+
+/** 지금 쓸 수 있는 세션만 { sid, exp, idleExp } (미사용·최대 만료가 지났으면 null) */
 export function verifySessionToken(
   key: Buffer,
   token: string | null,
   nowSec: number,
-): { sid: string; exp: number } | null {
-  if (!token || token.length > 200) return null;
-  const parts = token.split(".");
-  if (parts.length !== 4 || parts[0] !== "v1") return null;
-  const [, sid, expText, sig] = parts;
-  if (!/^[A-Za-z0-9_-]{32}$/.test(sid) || !/^\d{10}$/.test(expText)) return null;
-  const expected = Buffer.from(sign(key, `v1.${sid}.${expText}`));
-  const given = Buffer.from(sig);
-  if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
-  const exp = Number(expText);
-  if (exp <= nowSec || exp > nowSec + SESSION_TTL_SEC + 60) return null;
-  return { sid, exp };
+): { sid: string; exp: number; idleExp: number } | null {
+  const t = readSessionToken(key, token, nowSec);
+  return t && t.state === "ok" ? { sid: t.sid, exp: t.exp, idleExp: t.idleExp } : null;
 }
 
 export function readCookie(request: Request, name: string): string | null {
@@ -165,8 +202,9 @@ export function readCookie(request: Request, name: string): string | null {
   return null;
 }
 
-export function sessionCookie(value: string, maxAgeSec: number): string {
-  return `${SESSION_COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAgeSec}`;
+/** 세션 쿠키: Max-Age·Expires 없음 → 브라우저를 닫으면 사라진다 (만료는 서명 안의 시각으로 서버가 판단) */
+export function sessionCookie(value: string): string {
+  return `${SESSION_COOKIE}=${value}; Path=/; HttpOnly; Secure; SameSite=Strict`;
 }
 export function clearedSessionCookie(): string {
   return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
@@ -189,33 +227,53 @@ export function isSameOrigin(request: Request): boolean {
   return request.headers.get("sec-fetch-site") === "same-origin";
 }
 
-function deny(status: number, code: string, message: string): Response {
+function deny(status: number, code: string, message: string, headers: Record<string, string> = {}): Response {
   return Response.json(
     { ok: false, code, message },
-    { status, headers: { "Cache-Control": "no-store" } },
+    { status, headers: { "Cache-Control": "no-store", ...headers } },
   );
 }
 export const UNAUTHENTICATED_MESSAGE = "로그인이 필요합니다.";
+export const IDLE_EXPIRED_MESSAGE = "30분 동안 사용하지 않아 로그아웃되었습니다. 다시 로그인해 주세요.";
+export const REAUTH_MESSAGE = "보안을 위해 비밀번호와 OTP를 다시 확인해 주세요.";
+
+/** 서명은 맞지만 쓸 수 없는 세션의 응답 (Apps Script 호출 없음). 쿠키는 그대로 둔다 (재확인 창이 이어서 씀) */
+export function denyForState(state: SessionState): Response {
+  if (state === "idle") return deny(401, "idle_expired", IDLE_EXPIRED_MESSAGE);
+  return deny(401, "reauth_required", REAUTH_MESSAGE);
+}
 
 /**
- * 모든 업무 API 맨 앞에서 부른다. 통과하면 null, 아니면 바로 돌려줄 응답.
- * 순서: 설정 확인 → 같은 사이트 요청 확인 → 쿠키 서명·만료 (여기까지 Apps Script 호출 없음)
+ * 인증 확인 (업무 API·활동 갱신·상태 확인 공통). 통과하면 { session }, 아니면 { denied: 바로 돌려줄 응답 }.
+ * 순서: 설정 확인 → 같은 사이트 요청 확인 → 쿠키 서명 → 미사용 만료 → 최대 만료 (여기까지 Apps Script 호출 없음)
  *       → Apps Script 에서 세션이 살아 있는지 (스크립트 속성만 읽음, 장표에는 접근하지 않음)
- * 이 함수가 null 을 돌려주기 전에는 업무 요청이 Apps Script 로 가지 않는다.
  */
-export async function requireAuth(request: Request): Promise<Response | null> {
+export async function authenticate(
+  request: Request,
+): Promise<{ denied: Response; session?: undefined; config?: undefined } | { denied?: undefined; session: SessionToken; config: AuthConfig }> {
   const config = readAuthConfig();
-  if (!config) return deny(503, "auth_not_configured", "로그인 설정이 완료되지 않아 사용할 수 없습니다.");
-  if (!isSameOrigin(request)) return deny(403, "bad_origin", "허용되지 않은 요청입니다.");
-  const session = verifySessionToken(config.sessionKey, readCookie(request, SESSION_COOKIE), Math.floor(Date.now() / 1000));
-  if (!session) return deny(401, "unauthenticated", UNAUTHENTICATED_MESSAGE);
+  if (!config) return { denied: deny(503, "auth_not_configured", "로그인 설정이 완료되지 않아 사용할 수 없습니다.") };
+  if (!isSameOrigin(request)) return { denied: deny(403, "bad_origin", "허용되지 않은 요청입니다.") };
+  const session = readSessionToken(config.sessionKey, readCookie(request, SESSION_COOKIE), Math.floor(Date.now() / 1000));
+  if (!session) return { denied: deny(401, "unauthenticated", UNAUTHENTICATED_MESSAGE) };
+  if (session.state !== "ok") return { denied: denyForState(session.state) };
   try {
     const alive = await authCheckInAppsScript(sessionIdHash(session.sid));
-    if (!alive) return deny(401, "unauthenticated", UNAUTHENTICATED_MESSAGE);
+    if (!alive) return { denied: deny(401, "unauthenticated", UNAUTHENTICATED_MESSAGE) };
   } catch (error) {
     // 확인하지 못하면 막는다 (fail closed)
     console.error(`[로그인] 세션 확인 실패 (${error instanceof AppsScriptError ? error.code : "error"})`);
-    return deny(503, "auth_unavailable", "로그인 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+    return { denied: deny(503, "auth_unavailable", "로그인 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.") };
   }
-  return null;
+  return { session, config };
+}
+
+/**
+ * 모든 업무 API 맨 앞에서 부른다. 통과하면 null, 아니면 바로 돌려줄 응답.
+ * 이 함수가 null 을 돌려주기 전에는 업무 요청이 Apps Script 로 가지 않는다.
+ * 업무 API 는 세션을 늘리지 않는다 (자동 조회·백그라운드 요청은 사용자 활동이 아님).
+ */
+export async function requireAuth(request: Request): Promise<Response | null> {
+  const result = await authenticate(request);
+  return result.denied ?? null;
 }
