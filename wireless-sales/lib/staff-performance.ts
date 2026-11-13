@@ -1,19 +1,21 @@
 import { BENEFIT_SECURED_KEYS, BENEFIT_USED_KEYS } from "@/lib/budget";
-import { normalizeCategory } from "@/lib/quick-report";
-import { isO, type SheetSale } from "@/lib/sheet-record";
+import { saleMetrics } from "@/lib/product-metrics";
+import type { SheetSale } from "@/lib/sheet-record";
 
 /*
  * 직원 실적관리 (조회·집계 전용 — 장표를 바꾸지 않는다).
  * 날짜 기준: C열 개통일 (웹앱 등록일 아님). 직원 기준: M열 직원명 (다른 화면의 직원 필터와 같은 값).
+ *   건수 지표는 공용 기준 lib/product-metrics.ts 를 그대로 쓴다 (목표관리·유입경로 분석과 같은 숫자):
  *   후불     = 개통구분이 신규·번이(번호이동)·기변(기기변경) 인 건수 (간편등록과 같은 정규화)
  *              UMNP 는 실제 후불 개통이 아니므로 후불에서 제외 (UMNP 칸에 따로 셈, 예산 금액은 포함)
  *   번이     = 개통구분 번호이동 건수
  *   UMNP     = 개통구분 UMNP 건수
- *   스초     = K열 요금제에 "스초" 가 들어 있는 건수
+ *   스초     = K열 요금제에 "스초" 또는 "초스" 가 들어 있는 건수 (2026-11-13 확정: "초스" 표기 포함)
  *   2ND      = AD열이 O 인 건수
  *   제카     = AE열이 O 인 건수
- *   동판     = AK열이 순동·신동·약동 인 건수
- *   신동     = AK열이 신동 인 건수
+ *   동판     = AK열이 순동·신동·약동 "으로 시작" 하는 건수 (2026-11-13 확정: "약동-18만원" 등 포함, "약돈" 오타는 제외·확인 필요)
+ *   신동     = AK열이 신동으로 시작하는 건수
+ *   디초     = 판매보고 "디초/삼초 : O" 건수 / 동판확인 = 동판 오타 의심 건수
  *   고혜확보 = 예산관리 "고객혜택 확보금액" 과 같은 P+Q+R+S+T 합계
  *   고혜사용 = 예산관리 "고객혜택 사용금액" 과 같은 V+W+X+Y 합계
  *   현금잔여 = AB열 합계 (예산관리 "현금예산" 과 같은 열, 음수 그대로)
@@ -31,6 +33,8 @@ export interface StaffPerformance {
   jeca: number;
   dongpan: number;
   shindong: number;
+  dicho: number;
+  dongpanCheck: number;
   benefitSecured: number;
   benefitUsed: number;
   cash: number;
@@ -38,8 +42,6 @@ export interface StaffPerformance {
 }
 
 export const NO_STAFF = "(직원명 없음)";
-const POSTPAID = new Set(["기기변경", "번호이동", "신규"]); // UMNP 제외
-const DONGPAN = new Set(["순동", "신동", "약동"]);
 
 function emptyRow(staff: string): StaffPerformance {
   return {
@@ -52,6 +54,8 @@ function emptyRow(staff: string): StaffPerformance {
     jeca: 0,
     dongpan: 0,
     shindong: 0,
+    dicho: 0,
+    dongpanCheck: 0,
     benefitSecured: 0,
     benefitUsed: 0,
     cash: 0,
@@ -60,16 +64,17 @@ function emptyRow(staff: string): StaffPerformance {
 }
 
 function add(row: StaffPerformance, sale: SheetSale) {
-  const category = normalizeCategory(sale.category);
-  if (category && POSTPAID.has(category)) row.postpaid += 1;
-  if (category === "번호이동") row.portIn += 1;
-  if (category === "UMNP") row.umnp += 1;
-  if (sale.plan.includes("스초")) row.scho += 1;
-  if (isO(sale.secondPerformance)) row.second += 1;
-  if (isO(sale.jeca)) row.jeca += 1;
-  const dongpan = sale.dongpan.trim();
-  if (DONGPAN.has(dongpan)) row.dongpan += 1;
-  if (dongpan === "신동") row.shindong += 1;
+  const m = saleMetrics(sale);
+  if (m.postpaid) row.postpaid += 1;
+  if (m.portIn) row.portIn += 1;
+  if (m.umnp) row.umnp += 1;
+  if (m.scho) row.scho += 1;
+  if (m.second) row.second += 1;
+  if (m.card) row.jeca += 1;
+  if (m.dongpan) row.dongpan += 1;
+  if (m.dongpan === "신동") row.shindong += 1;
+  if (m.dicho) row.dicho += 1;
+  if (m.dongpanCheck) row.dongpanCheck += 1;
   for (const key of BENEFIT_SECURED_KEYS) row.benefitSecured += sale[key] ?? 0;
   for (const key of BENEFIT_USED_KEYS) row.benefitUsed += sale[key] ?? 0;
   row.cash += sale.usedPhoneRemaining ?? 0;

@@ -71,9 +71,9 @@ export function AppShell({ children }: { children: ReactNode }) {
         </main>
       </div>
 
-      {/* 모바일: 하단 탭 메뉴 */}
+      {/* 모바일: 하단 탭 메뉴 (메뉴가 많으면 옆으로 밀어서 봄) */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-7 border-t border-line bg-white pb-[env(safe-area-inset-bottom)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-20 flex overflow-x-auto border-t border-line bg-white pb-[env(safe-area-inset-bottom)] md:hidden"
         aria-label="주 메뉴"
       >
         {NAV_ITEMS.map((item) => {
@@ -83,7 +83,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               key={item.href}
               href={item.href}
               aria-current={active ? "page" : undefined}
-              className={`flex h-16 flex-col items-center justify-center gap-1 px-0.5 text-center text-[11px] leading-tight font-medium ${
+              className={`flex h-16 min-w-[4.25rem] flex-1 shrink-0 flex-col items-center justify-center gap-1 px-0.5 text-center text-[11px] leading-tight font-medium ${
                 active ? "text-brand" : "text-ink-muted"
               }`}
             >

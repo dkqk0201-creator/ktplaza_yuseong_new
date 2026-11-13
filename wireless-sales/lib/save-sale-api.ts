@@ -11,6 +11,8 @@ export type SaveSaleResponse =
       row: number;
       /** 저장은 됐지만 알려야 할 점 (예: 참고내용 보관 실패) */
       warning?: string;
+      /** 새 판매 고유 ID (Apps Script sale-link.gs 가 있을 때) */
+      saleId?: string;
     }
   | { ok: false; message: string; errors?: string[] };
 

@@ -121,6 +121,12 @@ function handleDeleteRequest_(e) {
     } catch (err) {
       // 참고내용 정리에 실패해도 판매 삭제는 진행 (조회 시 키가 맞는 판매가 없으면 붙지 않음)
     }
+    // 판매 고유 ID(C열 메모 줄) 지우기 + 판매연결 기록에 삭제 시각 (sale-link.gs) — 빈 자리에 ID 가 남지 않게
+    try {
+      if (typeof wsClearSaleLinkForRow_ === "function") wsClearSaleLinkForRow_(ss, sheet, rowNumber);
+    } catch (err) {
+      // 정리에 실패해도 판매 삭제는 진행 (빈 행의 ID 는 조회에 쓰이지 않고, 새 판매가 들어오면 메모가 지워짐)
+    }
     // 검수 보완 기록은 지우지 않고 보관 상태로 (키를 바꿔 같은 키로 다시 등록한 판매에 붙지 않게)
     try {
       if (typeof wsArchiveReviewsForRow_ === "function") {

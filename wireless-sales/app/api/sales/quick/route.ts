@@ -1,5 +1,6 @@
 import { requireAuth } from "@/lib/server/auth";
 import { getStaffNames } from "@/lib/data/staff";
+import { staffIdForName } from "@/lib/data/staff-list";
 import { todayInKorea } from "@/lib/format";
 import {
   QUICK_FIELDS,
@@ -99,6 +100,8 @@ async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
     index: number;
     row: ReturnType<typeof toSheetRowArray>;
     notes: Record<string, string>;
+    /** 판매연결 (유입경로·캠페인·굿바이 + 판매 직원ID) — 판매 고유 ID 와 함께 "웹앱판매연결"에 저장 */
+    link: Record<string, string>;
   }[] = [];
   list.forEach((fields, index) => {
     const normalized = normalizeQuick(fields, context);
@@ -113,6 +116,10 @@ async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
         index,
         row: toSheetRowArray(normalized.row),
         notes: normalized.notes as Record<string, string>,
+        link: {
+          ...normalized.link,
+          staffId: staffIdForName(String(normalized.row.staff ?? "")) ?? "",
+        },
       });
     }
   });
@@ -122,24 +129,38 @@ async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
     const saved = await saveRowsToAppsScript(
       pending.map((p) => p.row),
       pending.map((p) => p.notes),
+      pending.map((p) => p.link),
     );
     saved.forEach((item, k) => {
       const index = pending[k].index;
+      if (!item.ok) {
+        results[index] = { ok: false, message: errorReply(item.error).message };
+        return;
+      }
       const hasNotes = Object.keys(pending[k].notes).length > 0;
-      results[index] = item.ok
-        ? {
-            ok: true,
-            sheet: item.sheet,
-            no: item.no,
-            row: item.row,
-            ...(hasNotes && !item.notesSaved
-              ? {
-                  warning:
-                    "장표 저장은 완료됐지만 판매보고 참고내용(장표에 없는 항목)은 보관하지 못했습니다. Apps Script 최신 버전 배포가 필요합니다.",
-                }
-              : {}),
-          }
-        : { ok: false, message: errorReply(item.error).message };
+      const { staffId: _staffId, ...entered } = pending[k].link;
+      const hasLink = Object.values(entered).some((v) => v.length > 0);
+      const warnings: string[] = [];
+      if (hasNotes && !item.notesSaved) {
+        warnings.push(
+          "장표 저장은 완료됐지만 판매보고 참고내용(장표에 없는 항목)은 보관하지 못했습니다. Apps Script 최신 버전 배포가 필요합니다.",
+        );
+      }
+      if (item.linksSaved === false || (hasLink && item.linksSaved === null)) {
+        warnings.push(
+          item.linksSaved === null
+            ? "장표 저장은 완료됐지만 유입경로·캠페인·굿바이는 저장하지 못했습니다. Apps Script 에 sale-link.gs 배포가 필요합니다."
+            : "장표 저장은 완료됐지만 유입경로·캠페인·굿바이(판매연결)는 저장하지 못했습니다. 판매 상세에서 다시 입력해 주세요.",
+        );
+      }
+      results[index] = {
+        ok: true,
+        sheet: item.sheet,
+        no: item.no,
+        row: item.row,
+        ...(warnings.length ? { warning: warnings.join(" ") } : {}),
+        ...(item.saleId ? { saleId: item.saleId } : {}),
+      };
     });
   } catch (error) {
     // 통신 실패 등: 보낸 건 모두 저장 여부를 확인해야 하는 실패로 돌려준다

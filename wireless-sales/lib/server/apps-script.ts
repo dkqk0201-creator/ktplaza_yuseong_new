@@ -1,6 +1,8 @@
 import "server-only";
 import { COLUMN_COUNT, type SheetRowArray } from "@/lib/sheet-columns";
 import { parseReview, type SaleReview } from "@/lib/inspection-review";
+import { emptyLink, type SaleIdState, type SaleLink, type SaleLinkField } from "@/lib/sale-link";
+import { parseGoalItem, type GoalChange, type GoalHistoryItem, type GoalItem } from "@/lib/goals";
 import {
   GOBULBI_HANDLER,
   parseGobulbiItem,
@@ -255,6 +257,10 @@ export type AppsScriptBatchItem =
       no: string;
       /** 참고내용을 보조 시트에 보관했는지 (Apps Script 가 예전 버전이면 false) */
       notesSaved: boolean;
+      /** 새 판매 고유 ID (sale-link.gs 가 없는 예전 Apps Script 면 없음) */
+      saleId?: string;
+      /** 판매연결(유입경로 등) 저장 결과: true / false(실패) / null(sale-link.gs 없음) */
+      linksSaved: boolean | null;
     }
   | { ok: false; error: AppsScriptError };
 
@@ -268,6 +274,8 @@ export async function saveRowsToAppsScript(
   rows: SheetRowArray[],
   /** rows 와 같은 순서의 판매보고 참고내용 (장표 A~AL 이 아닌 보조 시트에 보관) */
   notes?: (Record<string, string> | null)[],
+  /** rows 와 같은 순서의 판매연결 정보 (유입경로·캠페인·굿바이·판매 직원ID — 보조 시트 "웹앱판매연결") */
+  links?: (Partial<SaleLink> | null)[],
 ): Promise<AppsScriptBatchItem[]> {
   if (rows.length === 0 || rows.length > SAVE_BATCH_MAX) {
     throw new AppsScriptError(
@@ -280,7 +288,7 @@ export async function saveRowsToAppsScript(
   let data: Record<string, unknown>;
   try {
     data = await postToAppsScript(
-      notes ? { action: "save", rows, notes } : { action: "save", rows },
+      { action: "save", rows, ...(notes ? { notes } : {}), ...(links ? { links } : {}) },
       "Apps Script가 저장을 거부했습니다.",
       BATCH_TIMEOUT_MS,
     );
@@ -297,6 +305,7 @@ export async function saveRowsToAppsScript(
           fallback.push({
             ok: true,
             notesSaved: false,
+            linksSaved: null,
             ...(await saveRowToAppsScript(row)),
           });
         } catch (e) {
@@ -318,13 +327,15 @@ export async function saveRowsToAppsScript(
     );
   }
   const notesSaved = data.notesSaved === true;
+  const linksSaved = typeof data.linksSaved === "boolean" ? data.linksSaved : null;
   return results.map((item): AppsScriptBatchItem => {
     const r = (item ?? {}) as Record<string, unknown>;
     const rowNumber = Number(r.row);
     const no = r.no === undefined || r.no === null ? "" : String(r.no);
+    const saleId = parseSaleId(r.saleId);
     // UMNP 판매는 No. 가 빈칸
     if (r.ok === true && Number.isInteger(rowNumber)) {
-      return { ok: true, sheet, row: rowNumber, no, notesSaved };
+      return { ok: true, sheet, row: rowNumber, no, notesSaved, linksSaved, ...(saleId ? { saleId } : {}) };
     }
     if (r.ok === true) {
       return {
@@ -358,6 +369,29 @@ export interface AppsScriptListRow {
   spotNote?: string;
   /** 검수 보완 요청 (보조 시트 "검수보완", 이 판매에 정확히 연결된 경우만) */
   review?: SaleReview;
+  /** 판매 고유 ID·상태·판매연결 (sale-link.gs, 예전 Apps Script 면 없음) */
+  saleId?: string;
+  saleIdState?: SaleIdState;
+  link?: SaleLink;
+}
+
+const SALE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function parseSaleId(value: unknown): string | undefined {
+  return typeof value === "string" && SALE_ID.test(value) ? value : undefined;
+}
+function parseSaleIdState(value: unknown): SaleIdState | undefined {
+  return value === "ok" || value === "none" || value === "duplicate" ? value : undefined;
+}
+/** 판매연결: 알려진 항목의 글자만 (짧게) */
+export function parseLink(value: unknown): SaleLink | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  const link = emptyLink();
+  for (const key of Object.keys(link) as (keyof SaleLink)[]) {
+    const v = raw[key];
+    if (typeof v === "string") link[key] = v.trim().slice(0, 60);
+  }
+  return link;
 }
 
 export interface AppsScriptListResult {
@@ -424,6 +458,9 @@ export async function listRowsFromAppsScript(
       notes: parseNotes((item as Record<string, unknown>).notes),
       spotNote: parseSpotNoteText((item as Record<string, unknown>).spotNote),
       review: parseReview((item as Record<string, unknown>).review),
+      saleId: parseSaleId((item as Record<string, unknown>).saleId),
+      saleIdState: parseSaleIdState((item as Record<string, unknown>).saleIdState),
+      link: parseLink((item as Record<string, unknown>).link),
     });
   }
   return { sheet: sheetName, rows, sheets: monthSheetNames(data.sheets) };
@@ -823,4 +860,92 @@ export async function deleteGobulbiInAppsScript(
     throw new AppsScriptError("bad_response", "고불비사용 삭제 응답을 확인하지 못했습니다. 새로고침해 확인해 주세요.");
   }
   return { message: shortText(data.message) };
+}
+
+/* ---------- 판매연결 (sale-link.gs) ---------- */
+
+export const SALE_LINK_HANDLER = "ws-sale-link";
+
+export interface SaleLinkPatch {
+  field: SaleLinkField;
+  /** 화면에서 본 값 (저장된 현재 값과 대조) */
+  before: string;
+  /** 새 값 ("" = 지우기) */
+  value: string;
+}
+
+/**
+ * 판매 1건의 판매연결 정보 저장. Apps Script 가 행·No.·개통일·고객·CTN·판매 ID 와 각 항목의 현재 값을 확인한 뒤 저장한다.
+ * 예전 판매(ID 없음, saleId "")는 확인이 끝난 그 행에만 새 ID 를 만든다. ID 가 중복된 판매는 거부(확인 필요).
+ */
+export async function saveSaleLinkInAppsScript(input: {
+  target: { sheet: string; row: number; no: string; activatedAt: string; customer: string; ctn: string };
+  saleId: string;
+  staffId: string;
+  patches: SaleLinkPatch[];
+}): Promise<{ saleId: string; link: SaleLink }> {
+  let data: Record<string, unknown>;
+  try {
+    data = await postToAppsScript({ action: "sale-link-set", ...input }, "Apps Script가 판매연결 저장을 거부했습니다.");
+  } catch (error) {
+    // 예전 Apps Script(sale-link.gs 없음)는 이 요청을 다른 처리기로 넘겨 handler 표시 없이 거부한다
+    if (error instanceof AppsScriptError && error.code === "rejected") {
+      const details = error.details as Record<string, unknown> | undefined;
+      if (details?.handler !== SALE_LINK_HANDLER) {
+        throw new AppsScriptError("bad_response", "Apps Script에 판매연결 처리(sale-link.gs)가 배포되어 있지 않습니다.");
+      }
+    }
+    throw error;
+  }
+  const saleId = parseSaleId(data.saleId);
+  const link = parseLink(data.link);
+  if (data.handler !== SALE_LINK_HANDLER || !saleId || !link) {
+    throw new AppsScriptError("bad_response", "Apps Script에 판매연결 처리(sale-link.gs)가 배포되어 있지 않습니다.");
+  }
+  return { saleId, link };
+}
+
+/* ---------- 목표관리 (goal-handler.gs: goal-board-*) ---------- */
+
+export const GOAL_HANDLER = "ws-goal";
+
+async function postGoalBoard(payload: Record<string, unknown>, fallback: string): Promise<Record<string, unknown>> {
+  const data = await postToAppsScript(payload, fallback);
+  if (data.handler !== GOAL_HANDLER) {
+    throw new AppsScriptError("bad_response", "Apps Script에 목표관리(goal-handler.gs 최신)가 배포되어 있지 않습니다.");
+  }
+  return data;
+}
+
+export async function getGoalBoardFromAppsScript(month: string): Promise<GoalItem[]> {
+  const data = await postGoalBoard({ action: "goal-board-get", month }, "Apps Script가 목표 조회를 거부했습니다.");
+  return Array.isArray(data.goals) ? data.goals.map(parseGoalItem).filter((g): g is GoalItem => g !== null) : [];
+}
+
+export async function setGoalBoardInAppsScript(month: string, items: GoalChange[]): Promise<GoalItem[]> {
+  const data = await postGoalBoard(
+    { action: "goal-board-set", month, by: "점장(웹앱)", items },
+    "Apps Script가 목표 저장을 거부했습니다.",
+  );
+  return Array.isArray(data.goals) ? data.goals.map(parseGoalItem).filter((g): g is GoalItem => g !== null) : [];
+}
+
+export async function getGoalHistoryFromAppsScript(month: string): Promise<GoalHistoryItem[]> {
+  const data = await postGoalBoard({ action: "goal-history-get", month }, "Apps Script가 목표 이력 조회를 거부했습니다.");
+  if (!Array.isArray(data.history)) return [];
+  const out: GoalHistoryItem[] = [];
+  for (const raw of data.history.slice(0, 200)) {
+    const r = (raw ?? {}) as Record<string, unknown>;
+    const num = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number.isFinite(Number(v)) ? Number(v) : null);
+    out.push({
+      at: shortText(r.at, 20),
+      scope: r.scope === "staff" ? "staff" : "store",
+      staffId: shortText(r.staffId, 10),
+      metric: shortText(r.metric, 20),
+      before: num(r.before),
+      after: num(r.after),
+      by: shortText(r.by, 20),
+    });
+  }
+  return out;
 }

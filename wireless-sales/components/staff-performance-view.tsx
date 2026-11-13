@@ -45,11 +45,13 @@ const COLUMNS: {
   { key: "postpaid", label: "후불", hint: "개통구분 신규·번이·기변 (UMNP 제외)" },
   { key: "portIn", label: "번이", hint: "개통구분 번이" },
   { key: "umnp", label: "UMNP", hint: "개통구분 UMNP" },
-  { key: "scho", label: "스초", hint: "요금제에 '스초' 포함" },
+  { key: "scho", label: "스초", hint: "요금제에 '스초' 또는 '초스' 포함" },
   { key: "second", label: "2ND", hint: "AD열 O" },
   { key: "jeca", label: "제카", hint: "AE열 O" },
-  { key: "dongpan", label: "동판", hint: "AK열 순동·신동·약동" },
-  { key: "shindong", label: "신동", hint: "AK열 신동" },
+  { key: "dongpan", label: "동판", hint: "AK열 순동·신동·약동으로 시작" },
+  { key: "shindong", label: "신동", hint: "AK열 신동으로 시작" },
+  { key: "dicho", label: "디초", hint: "판매보고 디초/삼초 : O" },
+  { key: "dongpanCheck", label: "동판확인", hint: "동판 오타 의심 (집계 제외, 장표 확인 필요)" },
   { key: "benefitSecured", label: "고혜확보", money: true, hint: "P+Q+R+S+T" },
   { key: "benefitUsed", label: "고혜사용", money: true, hint: "V+W+X+Y" },
   { key: "cash", label: "현금잔여", money: true, hint: "AB열" },
@@ -187,8 +189,9 @@ function StaffPerformanceBody({
       )}
 
       <p className="text-xs leading-relaxed text-ink-muted">
-        후불 = 신규·번이·기변 (UMNP 는 후불 실적이 아니라 제외, UMNP 칸에 따로) · 스초 = 요금제에 &lsquo;스초&rsquo; 포함 ·
-        2ND = AD열 O · 제카 = AE열 O · 동판 = AK열 순동·신동·약동 · 고혜확보 =
+        후불 = 신규·번이·기변 (UMNP 는 후불 실적이 아니라 제외, UMNP 칸에 따로) · 스초 = 요금제에 &lsquo;스초&rsquo; 또는 &lsquo;초스&rsquo; 포함 ·
+        2ND = AD열 O · 제카 = AE열 O · 동판 = AK열 순동·신동·약동으로 시작 (뒤에 금액·메모가 붙어도 포함, &lsquo;약돈&rsquo; 같은 오타는 동판확인) ·
+        디초 = 판매보고 &lsquo;디초/삼초 : O&rsquo; · 고혜확보 =
         P+Q+R+S+T · 고혜사용 = V+W+X+Y (예산관리와 같은 기준) · 현금잔여 =
         AB열 (음수 포함) · 합계금액 = 고혜확보 − 고혜사용 + 현금잔여
       </p>

@@ -35,6 +35,10 @@ export interface FieldView {
   info?: ReactNode;
   /** 이 칸 바로 아래에 함께 보여줄 칸 (예: S열 금액 아래 정책명) */
   children?: FieldView[];
+  /** 있으면 목록에서 고르는 칸 (첫 줄 "선택 안 함" = "") */
+  options?: readonly string[];
+  /** 자유 입력 + 예전에 쓴 값 추천 목록 */
+  suggestions?: readonly string[];
 }
 
 export interface FieldGroup {
@@ -79,7 +83,25 @@ function FieldInput({ field }: { field: FieldView }) {
           <span className="ml-auto font-semibold text-brand">변경됨</span>
         )}
       </label>
-      {field.multiline ? (
+      {field.options ? (
+        <select
+          id={field.id}
+          value={field.value}
+          disabled={field.disabled || locked}
+          aria-invalid={bad ? true : undefined}
+          onChange={(e) => field.onChange?.(e.target.value)}
+          className={`mt-1 h-10 w-full rounded-lg border bg-white px-3 text-base outline-none focus:border-brand disabled:bg-zinc-50 ${border}`}
+        >
+          <option value="">{field.placeholder ?? "선택 안 함"}</option>
+          {/* 목록에 없는 값(예전 값·잘못 적은 값)도 그대로 보이게 */}
+          {field.value && !field.options.includes(field.value) && <option value={field.value}>{field.value}</option>}
+          {field.options.map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+      ) : field.multiline ? (
         <textarea
           {...common}
           rows={2}
@@ -88,11 +110,19 @@ function FieldInput({ field }: { field: FieldView }) {
       ) : (
         <input
           {...common}
+          list={field.suggestions && field.suggestions.length > 0 ? `${field.id}-list` : undefined}
           inputMode={field.numeric ? "numeric" : undefined}
           className={`mt-1 h-10 w-full rounded-lg border px-3 text-base outline-none focus:border-brand disabled:bg-zinc-50 ${border} ${
             field.numeric ? "tabular-nums" : ""
           }`}
         />
+      )}
+      {field.suggestions && field.suggestions.length > 0 && (
+        <datalist id={`${field.id}-list`}>
+          {field.suggestions.map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
       )}
       {field.info && <div className="mt-0.5 text-xs text-ink-muted">{field.info}</div>}
       {field.problems?.map((p) => (

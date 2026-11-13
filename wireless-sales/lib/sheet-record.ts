@@ -1,4 +1,5 @@
 import type { SaleReview } from "@/lib/inspection-review";
+import type { SaleIdState, SaleLink } from "@/lib/sale-link";
 import { COLUMN_INDEX, type ColumnKey } from "@/lib/sheet-columns";
 
 /*
@@ -46,6 +47,12 @@ export type SheetSale = {
     spotNote?: string;
     /** 검수 보완 요청 (보조 시트 "검수보완", 이 판매에 정확히 연결된 경우만) */
     review?: SaleReview;
+    /** 판매 고유 ID (C열 셀 메모 "웹앱판매ID: …"). 예전 판매는 없음 */
+    saleId?: string;
+    /** saleId 상태 (ok / none / duplicate — 중복이면 연결 정보를 붙이지 않음) */
+    saleIdState?: SaleIdState;
+    /** 판매연결 정보 (보조 시트 "웹앱판매연결", saleId 가 이 판매에만 있을 때만) */
+    link?: SaleLink;
   };
 
 /** 글자로 읽기. 시트가 계산식 방지용으로 붙인 ' 는 떼어 낸다. */

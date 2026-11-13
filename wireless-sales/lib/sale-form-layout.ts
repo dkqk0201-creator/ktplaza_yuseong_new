@@ -1,5 +1,5 @@
 import { POLICY_NAME_FIELD, cleanPolicyName, policyNameError } from "@/lib/model-policy";
-import { NOTE_FIELDS, QUICK_FIELDS, type QuickFieldId } from "@/lib/quick-report";
+import { NOTE_FIELDS, QUICK_FIELDS, isLinkQuickField, type QuickFieldId } from "@/lib/quick-report";
 import { EDITABLE_KEYS, ROW_FORMULA_KEYS } from "@/lib/sale-edit";
 import { COLUMN_LABEL, COLUMN_LETTER, SHEET_COLUMNS, type ColumnKey } from "@/lib/sheet-columns";
 import type { SheetSale } from "@/lib/sheet-record";
@@ -78,6 +78,8 @@ export const QUICK_GROUPS: QuickGroup[] = [
       { id: "availableDate" },
     ],
   },
+  // 판매연결 (보조 시트 "웹앱판매연결"). 판매 수정에서는 아래 판매연결 칸이 아니라 따로 저장하는 "판매연결" 칸에서 고친다
+  { title: "유입경로 · 굿바이", items: [{ id: "inflow" }, { id: "campaign" }, { id: "goodbye" }] },
   { title: "고객약속사항", items: [{ id: "customerPromise" }] },
 ];
 
@@ -96,6 +98,7 @@ export function columnHint(key: ColumnKey): string {
   return `→ ${COLUMN_LETTER[key]}열 ${COLUMN_LABEL[key]}`;
 }
 export const NOTE_HINT = "장표 저장 안 함 (참고)";
+export const LINK_HINT = "장표 저장 안 함 (판매연결)";
 
 /* ---------- 판매 수정: 항목 → 장표 열 / 참고내용 ---------- */
 
@@ -134,6 +137,8 @@ export const V_HINT = "→ V열 (고혜(요금) + 고혜(기존할부금) 합계
 export function editSpecsFor(id: QuickFieldId): EditSpec[] {
   const field = FIELD_BY_ID.get(id);
   if (!field) return [];
+  // 판매연결 항목은 판매 수정 저장(장표·참고내용)에 넣지 않는다 — 판매 상세의 "판매연결" 칸에서 따로 저장
+  if (isLinkQuickField(id)) return [];
   const label = fieldLabel(id);
   if (id === "second") {
     return [

@@ -22,7 +22,7 @@ export const TEST_ENTRY_PATH = path.resolve(WS_DIR, "apps-script-test", "test-en
  */
 export const DEFAULT_ENTRY: "emulated" | "test-entry" = process.env.GAS_ENTRY === "test-entry" ? "test-entry" : "emulated";
 /** 테스트 프로젝트에 넣는 파일 (total-row.gs 제외 — 편집기 실행용 공개 함수가 있어 테스트 프로젝트에는 넣지 않음) */
-export const TEST_PROJECT_FILES = ["common", "notes", "save-handler", "update-handler", "delete-handler", "list-handler", "inspection-review", "gobulbi", "goal-handler", "auth-handler"];
+export const TEST_PROJECT_FILES = ["common", "notes", "save-handler", "update-handler", "delete-handler", "list-handler", "inspection-review", "gobulbi", "goal-handler", "auth-handler", "sale-link"];
 
 const pad = (n: number) => String(n).padStart(2, "0");
 function formatDate(v: Date, _tz: string, f: string) {
@@ -56,7 +56,7 @@ export interface GasOptions {
   /** 추가로 넣을 .gs 소스 (예: 기존 Code.gs 흉내) */
   extraSource?: string;
 }
-export const DEFAULT_FILES = ["common", "save-handler", "update-handler", "delete-handler", "list-handler", "notes", "inspection-review", "goal-handler", "gobulbi", "total-row", "auth-handler"];
+export const DEFAULT_FILES = ["common", "save-handler", "update-handler", "delete-handler", "list-handler", "notes", "inspection-review", "goal-handler", "gobulbi", "total-row", "auth-handler", "sale-link"];
 
 export function makeGas(ss: FakeSpreadsheet, opts: GasOptions = {}) {
   const now = opts.now ?? (() => Date.now());
@@ -84,7 +84,7 @@ export function makeGas(ss: FakeSpreadsheet, opts: GasOptions = {}) {
     console: { log: (...a: unknown[]) => logs.push(a.join(" ")), error: (...a: unknown[]) => logs.push(a.join(" ")), warn: (...a: unknown[]) => logs.push(a.join(" ")) },
     Logger: { log: (...a: unknown[]) => logs.push(a.join(" ")) },
     ContentService: { MimeType: { JSON: "json" }, createTextOutput: (t: string) => ({ setMimeType: () => ({ text: t }) }) },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: (k: string) => props.get(k) ?? null, setProperty: (k: string, v: string) => props.set(k, v) }) },
+    PropertiesService: { getScriptProperties: () => ({ getProperty: (k: string) => props.get(k) ?? null, setProperty: (k: string, v: string) => props.set(k, v), deleteProperty: (k: string) => props.delete(k) }) },
     SpreadsheetApp: entry === "test-entry"
       ? { getActiveSpreadsheet: () => (opts.bound ? ss : null), openById, flush: () => {} }
       : { getActiveSpreadsheet: () => ss, openById: () => ss, flush: () => {} },

@@ -2,6 +2,7 @@ import type { ColumnKey, SheetRowValues } from "@/lib/sheet-columns";
 import { formatCtn } from "@/lib/format";
 import { cleanPolicyName, policyNameError } from "@/lib/model-policy";
 import { quickVSplit, type VPartKey } from "@/lib/v-split";
+import { CAMPAIGN_MAX, parseInflow } from "@/lib/sale-link";
 
 /*
  * 간편등록: 직원 카톡 판매보고 → 분석 → 검수 → 장표 한 행.
@@ -51,6 +52,10 @@ export const STAFF_REPORT_TEMPLATE = [
   "동판 : ",
   "ㄴ가능일 : ",
   "",
+  "굿바이 : ",
+  "유입경로 : ",
+  "캠페인 : ",
+  "",
   "고객약속사항 :",
 ].join("\n");
 
@@ -98,6 +103,11 @@ export const QUICK_FIELDS = [
   { id: "dongpan", label: "동판", column: "dongpan" },
   { id: "availableDate", label: "동판 → 가능일", column: "wiredAvailableDate" },
   { id: "customerPromise", label: "고객약속사항", column: "customerPromise" },
+  // 판매연결 항목 (장표·웹앱참고가 아니라 보조 시트 "웹앱판매연결"에 판매 고유 ID 로 저장, lib/sale-link.ts)
+  // 카톡 보고에 이 줄이 없어도 등록에는 문제 없다 (선택 항목)
+  { id: "goodbye", label: "굿바이", column: null },
+  { id: "inflow", label: "유입경로", column: null },
+  { id: "campaign", label: "캠페인", column: null },
 ] as const satisfies readonly {
   id: string;
   label: string;
@@ -195,7 +205,19 @@ const TOP_LEVEL: {
   { key: "부가", id: "addon" },
   { key: "동판", id: "dongpan", children: { 가능일: "availableDate" } },
   { key: "고객약속사항", id: "customerPromise" },
+  { key: "굿바이", id: "goodbye" },
+  { key: "유입경로", id: "inflow" },
+  { key: "캠페인", id: "campaign" },
+  { key: "캠페인명", id: "campaign" },
 ];
+
+/** 판매연결 항목 (참고내용·장표가 아닌 "웹앱판매연결" 에 저장) */
+export const LINK_QUICK_FIELDS = ["goodbye", "inflow", "campaign"] as const;
+export type LinkQuickFieldId = (typeof LINK_QUICK_FIELDS)[number];
+const LINK_FIELD_SET = new Set<string>(LINK_QUICK_FIELDS);
+export function isLinkQuickField(id: string): id is LinkQuickFieldId {
+  return LINK_FIELD_SET.has(id);
+}
 
 /** "ㄴ" 없이 쓰지만 바로 위 2ND / 디초/삼초 묶음에 속하는 줄 */
 const GROUP_SIBLING_KEYS = new Set(["사은품판매or수령"]);
@@ -363,6 +385,8 @@ export interface QuickNormalized {
    * 장표 A~AL 이 아니라 Apps Script 의 숨김 보조 시트 "웹앱참고" 에 판매 건별로 보관한다.
    */
   notes: SaleNotes;
+  /** 판매연결 (유입경로·캠페인·굿바이). 적지 않은 항목은 "" */
+  link: { inflow: string; campaign: string; goodbye: string };
 }
 
 /** 참고 항목 id → 직원이 적은 원문 (+ V열 세부 금액 vPlan·vInstallment) */
@@ -373,7 +397,7 @@ export type SaleNotes = Partial<Record<QuickFieldId | VPartKey, string>>;
  * (2ND 는 장표 AD 에 O/X 만 저장되므로, 직원이 적은 글자는 참고내용으로 따로 남긴다)
  */
 export const NOTE_FIELDS = QUICK_FIELDS.filter(
-  (f) => f.column === null || f.id === "second",
+  (f) => (f.column === null && !isLinkQuickField(f.id)) || f.id === "second",
 );
 
 export function quickNotes(fields: QuickFields): SaleNotes {
@@ -788,6 +812,35 @@ export function normalizeQuick(
     }
   }
 
+  // 판매연결: 유입경로(목록 값만, 모르는 표현은 추정하지 않고 확인 필요), 캠페인(짧은 자유 입력), 굿바이(O/X)
+  const link = { inflow: "", campaign: "", goodbye: "" };
+  if (v("inflow")) {
+    const inflow = parseInflow(v("inflow"));
+    if (inflow) {
+      link.inflow = inflow;
+      display.inflow = inflow;
+    } else {
+      issues.push({ field: "inflow", message: `유입경로 "${v("inflow")}" 를 목록에서 골라 주세요.` });
+    }
+  }
+  if (v("campaign")) {
+    if (v("campaign").length > CAMPAIGN_MAX) {
+      issues.push({ field: "campaign", message: `캠페인명은 ${CAMPAIGN_MAX}자 이내로 입력해 주세요.` });
+    } else {
+      link.campaign = v("campaign");
+      display.campaign = v("campaign");
+    }
+  }
+  if (v("goodbye")) {
+    const value = ox(v("goodbye"));
+    if (value) {
+      link.goodbye = value;
+      display.goodbye = value;
+    } else {
+      issues.push({ field: "goodbye", message: `굿바이는 O 또는 X 로 입력해 주세요. (받은 값: ${v("goodbye")})` });
+    }
+  }
+
   return {
     row: applyQuickColumnRules(row),
     issues,
@@ -795,6 +848,7 @@ export function normalizeQuick(
     duplicateKey:
       activatedAt && ctnDigits ? `${activatedAt}|${ctnDigits}` : null,
     notes: { ...quickNotes(fields), ...vNotes },
+    link,
   };
 }
 

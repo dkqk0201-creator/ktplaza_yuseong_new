@@ -16,7 +16,8 @@ import {
 } from "@/lib/quick-report";
 import { POLICY_NAME_MAX } from "@/lib/model-policy";
 import { SaleFieldGroups, type FieldView } from "@/components/sale-fields";
-import { NOTE_HINT, QUICK_GROUPS, V_HINT, columnHint, fieldLabel } from "@/lib/sale-form-layout";
+import { INFLOW_SOURCES, usedCampaigns } from "@/lib/sale-link";
+import { LINK_HINT, NOTE_HINT, QUICK_GROUPS, V_HINT, columnHint, fieldLabel } from "@/lib/sale-form-layout";
 import type { QuickBatchResponse, SaveSaleResponse } from "@/lib/save-sale-api";
 
 /*
@@ -126,6 +127,8 @@ export function QuickRegister({
     else ensureFresh();
   }, [selectedSheet, currentSheet, selectSheet, ensureFresh]);
   const sheetReady = data?.sheet === currentSheet;
+  // 예전에 쓴 캠페인명 (입력칸 추천 목록)
+  const campaigns = useMemo(() => usedCampaigns(data?.sales ?? []), [data]);
 
   const existingKeys = useMemo(
     () =>
@@ -475,6 +478,7 @@ export function QuickRegister({
                 )}
                 running={running}
                 canRegister={sheetReady}
+                campaigns={campaigns}
                 onChange={(id, value) =>
                   updateItem(item.id, (i) => ({
                     ...i,
@@ -506,6 +510,7 @@ function QuickItemCard({
   duplicateReason,
   running,
   canRegister,
+  campaigns,
   onChange,
   onAllowDuplicate,
   onRegister,
@@ -513,6 +518,7 @@ function QuickItemCard({
 }: {
   index: number;
   item: Item;
+  campaigns: readonly string[];
   status: Status;
   normalized: QuickNormalized;
   duplicateReason: string | null;
@@ -545,6 +551,32 @@ function QuickItemCard({
     const shown = normalized.display[id];
     // 동판에 X 이외의 글자가 있으면 가능일은 입력 불가 (AL열 X 저장)
     const dateBlocked = id === "availableDate" && !availableDateAllowed(item.fields.dongpan);
+    // 판매연결 항목 (유입경로·캠페인·굿바이): 장표가 아닌 "웹앱판매연결"에 판매 고유 ID 로 저장
+    if (id === "inflow" || id === "campaign" || id === "goodbye") {
+      const value = item.fields[id];
+      const parsed = id === "inflow" ? normalized.display.inflow : undefined;
+      return {
+        id: `quick-${item.id}-${id}`,
+        label: fieldLabel(id),
+        hint: LINK_HINT,
+        note: true,
+        // 카톡에 "블로그" 처럼 적었으면 목록 값으로 바꿔 보여 준다 (모르는 표현은 그대로 → 확인 필요)
+        value: parsed ?? value,
+        onChange: (v) => onChange(id, v),
+        disabled: locked,
+        options: id === "inflow" ? INFLOW_SOURCES : id === "goodbye" ? ["O", "X"] : undefined,
+        suggestions: id === "campaign" ? campaigns : undefined,
+        placeholder: id === "campaign" ? "선택 입력 (예: 주말특가)" : id === "goodbye" ? "미입력" : "선택하세요",
+        maxLength: id === "campaign" ? 60 : undefined,
+        problems: issuesByField.get(id),
+        info:
+          id === "inflow" && !value.trim()
+            ? "선택하지 않으면 '미입력'으로 저장됩니다. 고객이 모르면 '미확인'을 고르세요."
+            : id === "goodbye"
+              ? "중고폰 보상판매 실적 표시 (인정 기준 확정 전 — O 만 실적)"
+              : undefined,
+      };
+    }
     return {
       id: `quick-${item.id}-${id}`,
       label: fieldLabel(id),

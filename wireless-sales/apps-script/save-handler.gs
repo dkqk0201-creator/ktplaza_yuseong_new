@@ -211,7 +211,9 @@ function handleSaveRequest_(e) {
       wsApplyNumbers_(plan.results, wsRenumberSaleRows_(sheet, tz, lastSlot));
       SpreadsheetApp.flush();
       var sortedNotes = wsSaveNotesSafely_(ss, sheet, tz, plan.results, body.notes);
-      return wsSaveReply_(batch, sheetName, plan.results, true, sortedNotes);
+      // 판매 고유 ID·판매연결 정보 (sale-link.gs). 실패해도 판매 저장은 그대로
+      var sortedLinks = typeof wsSaveLinksSafely_ === "function" ? wsSaveLinksSafely_(ss, sheet, tz, plan.results, body.links) : null;
+      return wsSaveReply_(batch, sheetName, plan.results, true, sortedNotes, sortedLinks);
     }
 
     var results = [];
@@ -252,7 +254,8 @@ function handleSaveRequest_(e) {
     wsApplyNumbers_(results, wsRenumberSaleRows_(sheet, tz, lastSlot));
     SpreadsheetApp.flush();
     var notesSaved = wsSaveNotesSafely_(ss, sheet, tz, results, body.notes);
-    return wsSaveReply_(batch, sheetName, results, false, notesSaved);
+    var linksSaved = typeof wsSaveLinksSafely_ === "function" ? wsSaveLinksSafely_(ss, sheet, tz, results, body.links) : null;
+    return wsSaveReply_(batch, sheetName, results, false, notesSaved, linksSaved);
   } finally {
     lock.releaseLock();
   }
@@ -289,26 +292,32 @@ function wsSaveNotesSafely_(ss, sheet, tz, results, notesList) {
   }
 }
 
-function wsSaveReply_(batch, sheetName, results, sorted, notesSaved) {
+function wsSaveReply_(batch, sheetName, results, sorted, notesSaved, linksSaved) {
   if (!batch) {
     if (!results[0].ok) return wsJson_(results[0]);
-    return wsJson_({
+    var single = {
       ok: true,
       sheet: sheetName,
       row: results[0].row,
       no: results[0].no,
       sorted: sorted,
       message: "saved",
-    });
+    };
+    if (results[0].saleId) single.saleId = results[0].saleId;
+    if (linksSaved !== null && linksSaved !== undefined) single.linksSaved = !!linksSaved;
+    return wsJson_(single);
   }
-  return wsJson_({
+  var reply = {
     ok: true,
     sheet: sheetName,
     results: results,
     sorted: sorted,
     notesSaved: !!notesSaved,
     message: "saved",
-  });
+  };
+  // sale-link.gs 가 있을 때만 (없으면 예전 응답과 같음). 각 results[k].saleId 에 새 판매 ID
+  if (linksSaved !== null && linksSaved !== undefined) reply.linksSaved = !!linksSaved;
+  return wsJson_(reply);
 }
 
 /** C열 개통일 → "yyyy-MM-dd" (정렬 기준). 날짜가 아니면 "" */

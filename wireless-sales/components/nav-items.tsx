@@ -90,6 +90,26 @@ export const NAV_ITEMS: NavItem[] = [
       </svg>
     ),
   },
+  {
+    href: "/goals",
+    label: "목표관리",
+    icon: (
+      <svg {...iconProps}>
+        <circle cx="12" cy="12" r="9" />
+        <circle cx="12" cy="12" r="5" />
+        <circle cx="12" cy="12" r="1" />
+      </svg>
+    ),
+  },
+  {
+    href: "/analysis",
+    label: "유입경로 분석",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M3 4h18l-7 8v6l-4 2v-8z" />
+      </svg>
+    ),
+  },
 ];
 
 /** 현재 주소에 해당하는 메뉴인지 판단 (가장 길게 일치하는 메뉴만 활성) */

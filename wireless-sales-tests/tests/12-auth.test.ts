@@ -28,6 +28,8 @@ import { POST as cardPOST } from "@/app/api/sales/card-check/route";
 import { POST as reviewPOST } from "@/app/api/sales/review/route";
 import { GET as goalsGET, POST as goalsPOST } from "@/app/api/goals/route";
 import { GET as gobulbiGET, POST as gobulbiPOST } from "@/app/api/budget/gobulbi/route";
+import { POST as linkPOST } from "@/app/api/sales/link/route";
+import { GET as boardGET, POST as boardPOST } from "@/app/api/goals/board/route";
 
 const WS = path.resolve(import.meta.dirname, "../../wireless-sales");
 const [A] = PEOPLE;
@@ -49,6 +51,9 @@ const ROUTES: [string, "GET" | "POST", Handler, unknown][] = [
   ["/api/goals", "POST", goalsPOST, { month: "2026-10", goal: 5 }],
   ["/api/budget/gobulbi?month=2026-10", "GET", gobulbiGET, undefined],
   ["/api/budget/gobulbi", "POST", gobulbiPOST, { op: "create", month: "2026-10", id: "test-0000-0001", content: "x", amount: 1, seller: "x" }],
+  ["/api/sales/link", "POST", linkPOST, { target: {}, saleId: "", patches: [] }],
+  ["/api/goals/board?month=2026-10", "GET", boardGET, undefined],
+  ["/api/goals/board", "POST", boardPOST, { month: "2026-10", items: [] }],
 ];
 
 function req(url: string, method: string, body: unknown, headers: Record<string, string>) {
@@ -81,7 +86,7 @@ test("2) 모든 업무 API 파일: 내보낸 GET·POST 의 첫 동작이 require
   const walk = (d: string) => { for (const f of readdirSync(d)) { const p = path.join(d, f); if (statSync(p).isDirectory()) walk(p); else if (f === "route.ts") files.push(p); } };
   walk(path.join(WS, "app/api"));
   const business = files.filter((f) => !f.includes(`${path.sep}auth${path.sep}`));
-  assert.equal(business.length, 9);
+  assert.equal(business.length, 11);
   let handlers = 0;
   for (const f of business) {
     const src = readFileSync(f, "utf8");

@@ -208,7 +208,8 @@ test("12) doGet 은 시트에 접근하지 않음 / 공개 함수는 doPost·doG
   // 테스트 프로젝트 파일 전체에서 _ 로 끝나지 않는 함수(편집기·google.script.run 으로 부를 수 있는 함수)
   const sources = [...TEST_PROJECT_FILES.map((f) => readFileSync(`${APPS_SCRIPT_DIR}/${f}.gs`, "utf8")), readFileSync(TEST_ENTRY_PATH, "utf8")];
   const publicFns = sources.flatMap((s) => [...s.matchAll(/^function\s+([A-Za-z0-9_$]+)\s*\(/gm)].map((m) => m[1])).filter((n) => !n.endsWith("_"));
-  assert.deepEqual(publicFns.sort(), ["doGet", "doPost", "wsAuthReset", "wsTestSelfCheck"]);
+  // 편집기 실행 함수: wsAuthReset(로그인 잠금 해제), 판매 ID 일괄 부여 미리보기·적용(시트 이름을 직접 적어야 동작)
+  assert.deepEqual(publicFns.sort(), ["doGet", "doPost", "wsAuthReset", "wsSaleIdBackfillApply", "wsSaleIdBackfillPreview", "wsTestSelfCheck"]);
   // 트리거 이름 함수 없음
   assert.ok(sources.every((s) => !/function\s+(onOpen|onEdit|onInstall|onFormSubmit|onChange)\s*\(/.test(s)));
   // 같은 이름 함수가 두 파일에 있지 않음 (뒤 파일이 앞 파일을 덮어쓰는 일 없음)

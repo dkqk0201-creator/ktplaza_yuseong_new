@@ -1,5 +1,6 @@
 "use client";
 
+import { SaleLinkPanel } from "@/components/sale-link-panel";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { postDeleteSale } from "@/lib/delete-sale-api";
 import { formatCtn, formatNumber } from "@/lib/format";
@@ -500,6 +501,18 @@ export function SaleDetail({
             />
           )}
           {mode === "view" && <SaleView sale={sale} />}
+          {mode === "view" && (
+            <SaleLinkPanel
+              key={sale.row}
+              sheet={sheet}
+              sale={sale}
+              readOnly={readOnly}
+              onSaved={(next, message) => {
+                setUpdated(next);
+                onUpdated?.(message);
+              }}
+            />
+          )}
           {mode === "edit" && (
             <SaleEditForm
               sale={sale}
@@ -927,7 +940,7 @@ function SaleEditForm({
       const [first, ...rest] = main.map(view);
       return first ? [{ ...first, children: [...rest, ...children.map(view)] }] : [];
     }),
-  }));
+  })).filter((g) => g.fields.length > 0); // 판매연결 묶음(유입경로·굿바이)은 "판매연결" 칸에서 따로 고침
   groups.push({
     title: "장표 추가 항목 (간편등록 양식에 없는 칸)",
     fields: [

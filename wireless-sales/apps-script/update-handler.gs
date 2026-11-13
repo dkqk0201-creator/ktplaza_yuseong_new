@@ -44,6 +44,7 @@
  * - action = "inspection-review" 요청은 inspection-review.gs 의 wsHandleInspectionReview_ 로 넘긴다.
  * - action = "gobulbi" 요청(예산관리 고불비사용)은 gobulbi.gs 의 wsHandleGobulbi_ 로 넘긴다.
  * - action = "auth-login" · "auth-check" · "auth-logout"(웹앱 관리자 로그인)은 auth-handler.gs 의 wsHandleAuth_ 로 넘긴다.
+ * - action = "sale-link-set"(판매연결: 유입경로·캠페인·굿바이 등)은 sale-link.gs 의 wsHandleSaleLink_ 로 넘긴다.
  * 시트 이름은 실제 월 시트 이름 "1월"~"12월" 형식 (예: "10월"). "2026년 10월" 같은 화면 표시용 글자는 받지 않는다.
  * 응답: { ok, handler, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
  */
@@ -58,6 +59,10 @@ function wsHandleSaleUpdate_(e) {
   // 관리자 로그인 상태 (auth-handler.gs) — 장표에는 접근하지 않는다
   if (body && typeof body.action === "string" && body.action.indexOf("auth-") === 0 && typeof wsHandleAuth_ === "function") {
     return wsHandleAuth_(body);
+  }
+  // 판매연결 정보 저장(sale-link.gs) — 유입경로·캠페인·굿바이·연동 ID
+  if (body && body.action === "sale-link-set" && typeof wsHandleSaleLink_ === "function") {
+    return wsHandleSaleLink_(body);
   }
   // 예산관리 고불비사용(gobulbi.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
   if (body && body.action === "gobulbi" && typeof wsHandleGobulbi_ === "function") {
