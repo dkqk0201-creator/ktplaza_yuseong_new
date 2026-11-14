@@ -1,10 +1,15 @@
 import {
   AppsScriptError,
   authLoginInAppsScript,
+  authLogoutInAppsScript,
 } from "@/lib/server/apps-script";
 import {
+  IDLE_TIMEOUT_SEC,
+  SESSION_COOKIE,
   SESSION_TTL_SEC,
   isSameOrigin,
+  readCookie,
+  readSessionToken,
   newSessionId,
   readAuthConfig,
   sessionCookie,
@@ -20,6 +25,9 @@ import {
  * - 결과는 Apps Script(auth-handler.gs)에 기록한다: 실패 횟수·잠금·OTP 재사용 방지가 모든 서버 인스턴스에 공통.
  *   잠겨 있으면 맞는 비밀번호·OTP 여도 거부한다. Apps Script 에 기록하지 못하면 로그인시키지 않는다.
  * - 성공하면 HttpOnly·Secure·SameSite=Strict 세션 쿠키를 준다 (브라우저 스크립트·저장소에는 남지 않음).
+ *   최대 8시간, 미사용 30분 (lib/server/auth.ts). 브라우저를 닫으면 사라지는 쿠키.
+ * - 재확인(8시간이 지나 화면의 재확인 창에서 다시 로그인)도 이 API 를 쓴다. 이때 이 브라우저의 이전 세션은
+ *   Apps Script 에서 지운다 → 기기 3대 제한 칸을 차지하지 않고, 예전 쿠키를 복사해 둔 사람도 쓸 수 없다.
  * - 비밀번호·OTP·세션 값은 로그에 남기지 않는다.
  */
 
@@ -66,7 +74,20 @@ export async function POST(request: Request) {
     return reply({ ok: false, code: "auth_unavailable", message: "로그인을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요." }, 503);
   }
   if (outcome.ok && passed) {
-    return reply({ ok: true }, 200, { "Set-Cookie": sessionCookie(signSession(config.sessionKey, sid, exp), SESSION_TTL_SEC) });
+    const nowSec = Math.floor(Date.now() / 1000);
+    const idleExp = nowSec + IDLE_TIMEOUT_SEC;
+    // 이 브라우저의 이전 세션(서명이 맞는 것만)은 지운다. 실패해도 새 로그인은 그대로 (이전 세션은 만료되면 사라짐)
+    const previous = readSessionToken(config.sessionKey, readCookie(request, SESSION_COOKIE), nowSec);
+    if (previous && previous.sid !== sid) {
+      try {
+        await authLogoutInAppsScript(sessionIdHash(previous.sid), false);
+      } catch (error) {
+        console.error(`[로그인] 이전 세션 정리 실패 (${error instanceof AppsScriptError ? error.code : "error"})`);
+      }
+    }
+    return reply({ ok: true, now: nowSec, exp, idleExp }, 200, {
+      "Set-Cookie": sessionCookie(signSession(config.sessionKey, sid, exp, idleExp)),
+    });
   }
   if (!outcome.ok && outcome.reason === "locked") {
     const minutes = Math.max(1, Math.ceil(outcome.retryAfterSec / 60));

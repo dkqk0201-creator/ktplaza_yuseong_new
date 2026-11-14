@@ -47,7 +47,7 @@ export function signIn(gas: Gas): string {
   loginStep += 1;
   const r = gas.doPost({ action: "auth-login", result: "ok", session: createHash("sha256").update(sid).digest("hex"), exp, step: loginStep });
   if (!r.ok) throw new Error("테스트 로그인 실패: " + JSON.stringify(r));
-  const data = `v1.${sid}.${exp}`;
+  const data = `v2.${sid}.${exp}.${Math.floor(Date.now() / 1000) + 1800}`;
   authCookie = `__Host-ws_session=${data}.${createHmac("sha256", key).update(data).digest("base64url")}`;
   return authCookie;
 }

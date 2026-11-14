@@ -242,7 +242,7 @@ test("8) 판매 삭제: ID 줄 삭제·판매연결 기록은 삭제 시각만 /
 
 test("9) 예전 Apps Script(sale-link.gs 없음)와도 동작: 판매 저장은 그대로, 판매연결은 저장 못 했다고 알림 / 판매연결 저장 API 는 배포 필요 안내", async () => {
   const files = ["common", "save-handler", "update-handler", "delete-handler", "list-handler", "notes", "inspection-review", "goal-handler", "gobulbi", "total-row", "auth-handler"];
-  setup({ files });
+  setup({ files, entry: "emulated" }); // 운영 Code.gs 순서 (예전 운영 버전 흉내)
   const r = await register(report(A.name, A.ctn, { extra: "유입경로 : TM" }), report(B.name, B.ctn));
   const [ra, rb] = r.results as { ok: boolean; warning?: string; saleId?: string }[];
   assert.equal(ra.ok, true);

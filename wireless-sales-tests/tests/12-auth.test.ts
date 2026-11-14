@@ -103,10 +103,10 @@ test("3) 로그인하지 않은 요청: 쿠키 없음·위조·만료·형식 �
   const { gas } = setup();
   const now = Math.floor(Date.now() / 1000);
   const sid = "A".repeat(32);
-  const forged = `v1.${sid}.${now + 3600}.${"x".repeat(43)}`;
+  const forged = `v2.${sid}.${now + 3600}.${now + 1800}.${"x".repeat(43)}`;
   const otherKey = signSession(Buffer.from("다른-키".repeat(8)), sid, now + 3600);
   const expired = signSession(sessionKey(), sid, now - 1);
-  const tooLong = signSession(sessionKey(), sid, now + 13 * 3600 + 120);
+  const tooLong = signSession(sessionKey(), sid, now + 8 * 3600 + 120);
   for (const cookie of ["", `__Host-ws_session=${forged}`, `__Host-ws_session=${otherKey}`, `__Host-ws_session=${expired}`, `__Host-ws_session=${tooLong}`, "__Host-ws_session=garbage", `ws_session=${signSession(sessionKey(), sid, now + 60)}`]) {
     for (const [url, method, fn, body] of ROUTES) {
       gas.calls.length = 0;
@@ -185,7 +185,7 @@ test("8) 로그인 성공: 쿠키 속성(HttpOnly·Secure·SameSite=Strict·Path
   const { gas } = setup();
   const r = await login(TEST_PASSWORD, code());
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.match(r.cookie, /^__Host-ws_session=v1\.[A-Za-z0-9_-]{32}\.\d{10}\.[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; Secure; SameSite=Strict; Max-Age=43200$/);
+  assert.match(r.cookie, /^__Host-ws_session=v2\.[A-Za-z0-9_-]{32}\.\d{10}\.\d{10}\.[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; Secure; SameSite=Strict$/);
   await register(report(A.name, A.ctn));
   const res = await listGET(req("/api/sales/list?sheet=10월", "GET", undefined, { cookie: cookieOf(r.cookie) }));
   assert.equal(res.status, 200);
@@ -271,7 +271,7 @@ test("12) 기기는 최대 3개: 4번째 로그인하면 가장 오래된 세션
   } finally {
     Date.now = realNow;
   }
-  assert.ok(cookies.every((c) => c.startsWith("__Host-ws_session=v1.")));
+  assert.ok(cookies.every((c) => c.startsWith("__Host-ws_session=v2.")));
   const status = await Promise.all(cookies.map((cookie) => listGET(req("/api/sales/list?sheet=10월", "GET", undefined, { cookie })).then((r) => r.status)));
   assert.deepEqual(status, [401, 200, 200, 200]);
 });

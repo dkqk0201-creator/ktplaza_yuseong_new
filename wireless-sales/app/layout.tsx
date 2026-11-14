@@ -25,11 +25,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="ko" className="h-full antialiased">
       <body className="flex min-h-full flex-col">
-        <AuthGuard />
-        {/* 대시보드·판매 현황이 함께 쓰는 판매 데이터 저장소 (화면 이동 시에도 유지) */}
-        <SalesDataProvider>
-          <AppShell>{children}</AppShell>
-        </SalesDataProvider>
+        {/* 로그인 유지·자동 로그아웃: 로그인이 끝나면 아래 화면(판매 데이터 저장소 포함)을 통째로 지운다 */}
+        <AuthGuard>
+          {/* 대시보드·판매 현황이 함께 쓰는 판매 데이터 저장소 (화면 이동 시에도 유지) */}
+          <SalesDataProvider>
+            <AppShell>{children}</AppShell>
+          </SalesDataProvider>
+        </AuthGuard>
       </body>
     </html>
   );

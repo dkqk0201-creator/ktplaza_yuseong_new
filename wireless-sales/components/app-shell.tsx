@@ -50,9 +50,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
-        <div className="mt-auto flex items-center justify-between border-t border-line px-5 py-4 text-xs text-ink-muted">
+        <div className="mt-auto border-t border-line px-5 py-4 text-xs text-ink-muted">
           KT플라자 유성점
-          <LogoutButton />
+          <div className="mt-2">
+            <LogoutButton />
+          </div>
         </div>
       </aside>
 

@@ -35,7 +35,8 @@ const ID_LINE = /웹앱판매ID: ([0-9a-f-]{36})/;
 
 /** 같은 가짜 스프레드시트에서 Apps Script 버전 바꾸기 (old = 지금 운영과 같은 main 0db45c4) */
 function useVersion(ss: FakeSpreadsheet, version: "old" | "new") {
-  const gas = makeGas(ss, version === "old" ? { dir: OLD_DIR } : {});
+  // 운영 Code.gs 순서로 흉내 (예전 버전 시험은 운영 상황이므로 test-entry 보호 장치를 거치지 않음)
+  const gas = makeGas(ss, version === "old" ? { dir: OLD_DIR, entry: "emulated" } : { entry: "emulated" });
   connect(gas);
   signIn(gas);
   return gas;
@@ -191,7 +192,7 @@ test("5) 장표에서 CTN·개통일을 직접 고치면 확인 필요 (웹앱 �
 });
 
 test("6) 예전 버전(운영과 같은 main)으로 되돌려 등록·정렬·수정·삭제 → 다시 새 버전: ID·유입경로가 다른 판매에 붙지 않음", async () => {
-  const { ss } = setup({ slots: 25 });
+  const { ss } = setup({ slots: 25, entry: "emulated" });
   // 새 버전에서 등록
   await register(
     report(A.name, A.ctn, { date: "10.06", extra: "유입경로 : 네이버 블로그" }),
@@ -236,7 +237,7 @@ test("6) 예전 버전(운영과 같은 main)으로 되돌려 등록·정렬·�
 });
 
 test("7) 예전 버전에서 CTN 을 고치면(확인값 갱신 안 됨) → 새 버전에서 확인 필요로 막힘 (잘못 연결되지 않는 쪽)", async () => {
-  const { ss } = setup({ slots: 20 });
+  const { ss } = setup({ slots: 20, entry: "emulated" });
   await register(report(A.name, A.ctn, { extra: "유입경로 : 인스타그램" }));
   useVersion(ss, "old");
   assert.equal((await edit(byName(await list(), A.name), { ctn: "010-0000-3434" })).ok, true);
