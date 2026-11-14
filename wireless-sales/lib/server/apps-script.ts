@@ -380,7 +380,7 @@ function parseSaleId(value: unknown): string | undefined {
   return typeof value === "string" && SALE_ID.test(value) ? value : undefined;
 }
 function parseSaleIdState(value: unknown): SaleIdState | undefined {
-  return value === "ok" || value === "none" || value === "duplicate" ? value : undefined;
+  return value === "ok" || value === "none" || value === "duplicate" || value === "mismatch" ? value : undefined;
 }
 /** 판매연결: 알려진 항목의 글자만 (짧게) */
 export function parseLink(value: unknown): SaleLink | undefined {
@@ -883,6 +883,8 @@ export async function saveSaleLinkInAppsScript(input: {
   saleId: string;
   staffId: string;
   patches: SaleLinkPatch[];
+  /** 확인 필요(mismatch) 판매를 새 ID 로 다시 연결 (예전 기록은 옮기지 않고 분리) */
+  relink?: boolean;
 }): Promise<{ saleId: string; link: SaleLink }> {
   let data: Record<string, unknown>;
   try {

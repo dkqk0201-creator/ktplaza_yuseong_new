@@ -10,6 +10,8 @@ import { AppsScriptError, saveSaleLinkInAppsScript, type SaleLinkPatch } from "@
  *   → { ok: true, saleId, link } / { ok: false, message }
  * Apps Script(sale-link.gs)가 행·No.·개통일·고객·CTN·판매 ID 와 저장된 값을 다시 확인한 뒤 저장한다.
  * 판매 ID 가 장표의 다른 행에도 있으면(복사 등) 저장하지 않고 "확인 필요"로 돌려준다.
+ * 판매연결 기록의 확인값(개통일+CTN)이 행과 다르면 거부하고, relink: true 일 때만 새 ID 로 다시 연결한다
+ * (예전 기록의 유입경로 등은 옮기지 않음).
  */
 
 export type SaleLinkResponse =
@@ -57,6 +59,7 @@ export async function POST(request: Request) {
       saleId,
       staffId: staffIdForName(staff) ?? "",
       patches,
+      ...(input.relink === true ? { relink: true } : {}),
     });
     return reply({ ok: true, saleId: saved.saleId, link: saved.link }, 200);
   } catch (error) {

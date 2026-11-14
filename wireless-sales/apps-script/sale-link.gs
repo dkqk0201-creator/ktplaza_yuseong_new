@@ -10,16 +10,22 @@
  *   - 월 시트 열은 추가하지 않는다. 고객명·CTN 조합에 기대지 않으므로 같은 날 같은 고객 판매 2건도 각각 구분된다.
  *   - 같은 ID 가 두 행 이상에 있으면(시트에서 행을 복사한 경우 등) 그 판매들은 "ID 중복"으로 표시하고
  *     판매연결 정보를 붙이지도, 저장하지도 않는다 (잘못된 판매에 연결되는 것을 막음 — 점장 확인 필요).
+ *   - 확인값: 판매연결 기록마다 그 판매의 "개통일 + CTN 숫자" 를 SHA-256 으로 줄인 값(16자)을 함께 둔다
+ *     (전화번호 자체는 저장하지 않음). 조회할 때 행의 값과 확인값이 다르면 — 예: 장표에서 값만 붙여넣어
+ *     메모(ID)와 판매 내용이 서로 다른 행이 된 경우 — "확인 필요(mismatch)" 로 표시하고 연결 정보를 붙이지 않는다.
+ *     웹앱의 판매 수정으로 CTN 을 고치면 확인값도 함께 바꾼다 (update-handler). 장표에서 직접 고치면 확인 필요가 된다.
+ *     확인 필요인 판매는 예전 기록을 그 판매로 옮기지 않고, 점장이 "새 판매 ID 로 다시 연결"할 때만
+ *     새 ID 를 만들고 예전 기록은 분리(삭제 시각 기록)한다 — 다른 판매의 유입경로가 넘어오지 않게.
  *   - 예전 판매(ID 없음)는 판매 수정 화면에서 판매연결을 처음 저장할 때, 그 행이 화면과 같은지
  *     (행·No.·개통일·고객·CTN) 확인한 뒤 그 행에만 ID 를 만든다. 일괄 부여는 아래 편집기 함수로 (별도 승인 후 실행).
  *
  * 판매연결 정보 — 숨김 보조 시트 "웹앱판매연결" (처음 저장할 때 자동 생성·숨김. 직접 고치지 마세요)
- *   판매ID | 월 시트 | 개통일 | 판매 직원ID | 유입경로 | 캠페인 | 굿바이 | 가망고객ID | TM발굴직원ID | 수정 시각 | 삭제 시각
+ *   판매ID | 월 시트 | 개통일 | 판매 직원ID | 유입경로 | 캠페인 | 굿바이 | 가망고객ID | TM발굴직원ID | 수정 시각 | 삭제 시각 | 확인값
  *   고객 이름·전화번호는 저장하지 않는다. 판매를 삭제하면 기록을 지우지 않고 삭제 시각만 남긴다 (향후 연동 이력).
  *
  * 요청 (웹앱 서버만, API_SECRET 필요):
  *   sale-link-set { target: { sheet, row, no, activatedAt, customer, ctn }, saleId: 화면에서 본 ID(없으면 ""),
- *                   staffId, patches: [{ field, before, value }] }
+ *                   staffId, patches: [{ field, before, value }], relink: true(확인 필요 판매를 새 ID 로 다시 연결할 때만) }
  *     → 화면에서 본 값(before)과 지금 저장된 값이 하나라도 다르면 아무것도 쓰지 않고 거부한다.
  *   응답 handler = "ws-sale-link"
  */
@@ -37,6 +43,7 @@ var WS_LINK_HEADER = [
   "TM발굴직원ID",
   "수정 시각",
   "삭제 시각",
+  "확인값",
 ];
 var WS_LINK_COLS = WS_LINK_HEADER.length;
 /** 저장할 수 있는 항목 → 열 번호(0부터) */
@@ -49,6 +56,20 @@ var WS_INFLOW_SOURCES = [
 var WS_SALE_ID_PREFIX = "웹앱판매ID: ";
 var WS_SALE_ID_RE = /(^|\n)웹앱판매ID: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=\n|$)/;
 var WS_DATE_COLUMN = 3; // C열
+
+/** 확인값: 개통일(글자) + CTN 숫자 → SHA-256 앞 16자 (전화번호를 저장하지 않고 같은 판매인지 확인) */
+function wsSaleCheck_(rowValues, tz) {
+  var date = wsText_(rowValues[2], tz);
+  var ctn = wsText_(rowValues[4], tz).replace(/\D/g, "");
+  if (!date || !ctn) return "";
+  var bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, date + "|" + ctn, Utilities.Charset.UTF_8);
+  var hex = "";
+  for (var i = 0; i < 8; i++) {
+    var b = (bytes[i] + 256) % 256;
+    hex += (b < 16 ? "0" : "") + b.toString(16);
+  }
+  return hex;
+}
 
 /** 셀 메모 글에서 판매 ID (없으면 "") */
 function wsSaleIdFromNote_(note) {
@@ -138,9 +159,11 @@ function wsLinkValueError_(field, value) {
 function wsWriteLink_(ss, saleId, info, fields) {
   var sheet = wsLinkSheet_(ss, true);
   var existing = wsReadLinks_(sheet)[saleId];
-  var values = existing ? existing.values.slice() : ["'" + saleId, "", "", "", "", "", "", "", "", "", ""];
+  var values = existing ? existing.values.slice() : ["'" + saleId, "", "", "", "", "", "", "", "", "", "", ""];
+  while (values.length < WS_LINK_COLS) values.push("");
   values[1] = "'" + info.sheet;
   values[2] = "'" + info.date;
+  if (info.check) values[11] = "'" + info.check;
   for (var f in fields) {
     if (!Object.prototype.hasOwnProperty.call(fields, f)) continue;
     if (!Object.prototype.hasOwnProperty.call(WS_LINK_FIELD_COL, f)) continue;
@@ -185,8 +208,8 @@ function wsSaveLinksSafely_(ss, sheet, tz, results, links) {
         }
       }
       if (any) {
-        var date = wsText_(sheet.getRange(results[k].row, WS_DATE_COLUMN, 1, 1).getValues()[0][0], tz);
-        wsWriteLink_(ss, id, { sheet: sheet.getName(), date: date }, fields);
+        var rowValues = sheet.getRange(results[k].row, 1, 1, WS_COLUMN_COUNT).getValues()[0];
+        wsWriteLink_(ss, id, { sheet: sheet.getName(), date: wsText_(rowValues[2], tz), check: wsSaleCheck_(rowValues, tz) }, fields);
       }
     }
     SpreadsheetApp.flush();
@@ -197,10 +220,11 @@ function wsSaveLinksSafely_(ss, sheet, tz, results, links) {
 }
 
 /**
- * 조회 (list-handler): 판매마다 saleId·saleIdState 를 붙이고, ID 가 그 행에만 있을 때만 link 를 붙인다.
+ * 조회 (list-handler): 판매마다 saleId·saleIdState 를 붙이고, ID 가 그 행에만 있고 확인값이 행과 맞을 때만 link 를 붙인다.
  * rows: [{ row, no, values }]
+ * saleIdState: none(ID 없음) / ok / duplicate(같은 ID 가 다른 행에도) / mismatch(확인값이 행과 다름 — 확인 필요)
  */
-function wsAttachLinks_(ss, sheet, rows) {
+function wsAttachLinks_(ss, sheet, rows, tz) {
   var ids = wsSaleIdsOfSheet_(sheet);
   var links = wsReadLinks_(wsLinkSheet_(ss, false));
   var name = sheet.getName();
@@ -215,13 +239,34 @@ function wsAttachLinks_(ss, sheet, rows) {
       rows[i].saleIdState = "duplicate";
       continue;
     }
-    rows[i].saleIdState = "ok";
     var rec = links[id];
-    // 다른 월 시트로 복사된 ID 의 기록은 붙이지 않는다 (복사본 확인 필요)
-    if (rec && !wsLinkText_(rec.values[10]) && wsLinkText_(rec.values[1]) === name) {
+    if (rec && !wsLinkText_(rec.values[10])) {
+      var check = wsLinkText_(rec.values[11]);
+      // 다른 월 시트로 복사된 ID, 또는 행의 개통일·CTN 이 기록과 다르면 붙이지 않는다 (확인 필요)
+      if (wsLinkText_(rec.values[1]) !== name || (check && check !== wsSaleCheck_(rows[i].values, tz))) {
+        rows[i].saleIdState = "mismatch";
+        continue;
+      }
       rows[i].link = wsLinkObject_(rec.values);
     }
+    rows[i].saleIdState = "ok";
   }
+}
+
+/**
+ * 판매 수정 직후 (update-handler): 웹앱으로 개통일·CTN 이 바뀌면 그 판매 기록의 확인값을 새 값으로.
+ * 수정 전 행과 기록의 확인값이 맞을 때만 바꾼다 (이미 확인 필요인 기록은 그대로 둔다).
+ */
+function wsRefreshLinkCheck_(ss, sheet, rowNumber, before, after, tz) {
+  var oldCheck = wsSaleCheck_(before, tz);
+  var newCheck = wsSaleCheck_(after, tz);
+  if (oldCheck === newCheck) return;
+  var id = wsSaleIdFromNote_(sheet.getRange(rowNumber, WS_DATE_COLUMN).getNote());
+  if (!id || wsSaleIdsOfSheet_(sheet).count[id] !== 1) return;
+  var linkSheet = wsLinkSheet_(ss, false);
+  var rec = wsReadLinks_(linkSheet)[id];
+  if (!rec || wsLinkText_(rec.values[11]) !== oldCheck) return;
+  linkSheet.getRange(rec.row, 12).setValue(newCheck ? "'" + newCheck : "");
 }
 
 /** 판매 삭제 (delete-handler): 그 행 C열 메모의 ID 줄을 지우고, 판매연결 기록에 삭제 시각을 남긴다 */
@@ -300,6 +345,7 @@ function wsHandleSaleLink_(body) {
     }
     var ids = wsSaleIdsOfSheet_(sheet);
     var id = ids.byRow[rowNumber] || "";
+    var relink = body.relink === true;
     if (id !== expectedId) {
       return reply({ ok: false, message: "판매 ID 가 화면과 다릅니다. 화면을 새로고침한 뒤 다시 확인해 주세요." });
     }
@@ -308,10 +354,30 @@ function wsHandleSaleLink_(body) {
     }
     var linkSheet = wsLinkSheet_(ss, false);
     var rec = id ? wsReadLinks_(linkSheet)[id] : null;
-    if (rec && wsLinkText_(rec.values[1]) !== sheetName) {
-      return reply({ ok: false, code: "duplicate_id", message: "이 판매 ID 의 기록이 다른 월 시트에 있어 저장하지 않았습니다. 점장 확인이 필요합니다." });
+    var rowCheck = wsSaleCheck_(current, tz);
+    var live = rec && !wsLinkText_(rec.values[10]);
+    var mismatch =
+      live && (wsLinkText_(rec.values[1]) !== sheetName || (wsLinkText_(rec.values[11]) && wsLinkText_(rec.values[11]) !== rowCheck));
+    if (mismatch && !relink) {
+      return reply({
+        ok: false,
+        code: "mismatch",
+        message: "이 판매의 개통일·CTN 이 판매연결 기록과 달라 저장하지 않았습니다 (장표에서 값만 옮긴 경우 등). 점장 확인 후 '새 판매 ID 로 다시 연결'을 사용해 주세요.",
+      });
     }
-    var now = rec && !wsLinkText_(rec.values[10]) ? wsLinkObject_(rec.values) : null;
+    if (relink && !mismatch) {
+      return reply({ ok: false, message: "다시 연결할 필요가 없는 판매입니다. 화면을 새로고침해 주세요." });
+    }
+    if (relink) {
+      // 예전 기록은 이 판매로 옮기지 않는다: 분리(삭제 시각)하고 이 행에 새 ID
+      linkSheet.getRange(rec.row, 11).setValue(new Date());
+      id = Utilities.getUuid();
+      var relinkCell = sheet.getRange(rowNumber, WS_DATE_COLUMN);
+      relinkCell.setNote(wsNoteWithSaleId_(relinkCell.getNote(), id));
+      rec = null;
+      live = false;
+    }
+    var now = live ? wsLinkObject_(rec.values) : null;
     var changed = [];
     for (var q = 0; q < patches.length; q++) {
       var have = now ? now[patches[q].field] : "";
@@ -329,7 +395,7 @@ function wsHandleSaleLink_(body) {
     var fields = {};
     for (var w = 0; w < patches.length; w++) fields[patches[w].field] = patches[w].value;
     if (staffId) fields.staffId = staffId;
-    var saved = wsWriteLink_(ss, id, { sheet: sheetName, date: text(current[2]) }, fields);
+    var saved = wsWriteLink_(ss, id, { sheet: sheetName, date: text(current[2]), check: rowCheck }, fields);
     SpreadsheetApp.flush();
     return reply({ ok: true, sheet: sheetName, row: rowNumber, saleId: id, link: saved });
   } finally {

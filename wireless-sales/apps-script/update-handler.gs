@@ -300,6 +300,14 @@ function wsHandleSaleUpdate_(e) {
     } catch (err) {
       // 참고내용 키 이동에 실패해도 판매 수정은 그대로
     }
+    // 판매연결(sale-link.gs): CTN 이 바뀌면 그 판매 기록의 확인값도 새 값으로 (실패해도 수정은 그대로 — 조회 시 확인 필요로 표시)
+    if (typeof wsRefreshLinkCheck_ === "function") {
+      try {
+        wsRefreshLinkCheck_(ss, sheet, rowNumber, current, after, tz);
+      } catch (err) {
+        // 확인값 갱신 실패
+      }
+    }
     // 검수 보완 요청: 고객명·CTN 변경 시 키 이동, G열이 O 가 되면 진행 중 요청을 검수완료로 닫기 (실패해도 수정은 그대로)
     var reviewClosed = false;
     if (typeof wsMoveReviewsForRow_ === "function") {

@@ -86,7 +86,7 @@ function handleListRequest_(e) {
   }
   try {
     // 판매 고유 ID(C열 메모)·판매연결 정보 (sale-link.gs)
-    if (typeof wsAttachLinks_ === "function") wsAttachLinks_(ss, sheet, rows);
+    if (typeof wsAttachLinks_ === "function") wsAttachLinks_(ss, sheet, rows, tz);
   } catch (err) {
     // 판매연결을 못 읽어도 판매내역 조회는 그대로 (ID 상태 없음 → 화면은 저장을 막음)
   }

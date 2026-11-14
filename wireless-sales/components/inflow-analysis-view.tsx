@@ -6,7 +6,7 @@ import { SalesDataGate, sheetLabel, sheetToYearMonth } from "@/components/sales-
 import { useMonthSales } from "@/components/use-month-sales";
 import { EmptyBox, SummaryTile } from "@/components/work-ui";
 import { formatNumber, todayInKorea } from "@/lib/format";
-import { previousMonth, sheetForMonth } from "@/lib/month-sheet";
+import { nextMonth, previousMonth, salesAcrossMonths, sheetForMonth } from "@/lib/month-sheet";
 import { PRODUCT_METRICS } from "@/lib/product-metrics";
 import { INFLOW_MISSING, inflowOf } from "@/lib/sale-link";
 import {
@@ -60,14 +60,16 @@ function AnalysisBody({ sheet, sheets, sales }: { sheet: string; sheets: string[
   const prevMonth = previousMonth(month);
   const prevSheet = sheetForMonth(prevMonth, today);
   const prev = useMonthSales(prevSheet && sheets.includes(prevSheet) ? prevSheet : null);
+  const nextSheet = sheetForMonth(nextMonth(month), today);
+  const next = useMonthSales(nextSheet && sheets.includes(nextSheet) ? nextSheet : null);
 
   const weeks = useMemo(() => {
     const set = new Set(daysOfMonth(month).map(weekStart));
     return [...set].sort();
   }, [month]);
   const period: Period = kind === "month" ? mp : kind === "week" ? weekPeriod(week) : dayPeriod(day);
-  // 주가 지난 달에 걸치면 전월 판매도 함께 (불러온 경우)
-  const pool = useMemo(() => [...sales, ...(prev.sales ?? [])], [sales, prev.sales]);
+  // 주(월~일)가 월말·월초에 걸치면 앞뒤 달 판매도 함께 합산 (불러온 경우)
+  const pool = useMemo(() => salesAcrossMonths(prev.sales, sales, next.sales), [sales, prev.sales, next.sales]);
   const selected = useMemo(() => (kind === "month" ? sales : inRange(pool, period.start, period.end)), [kind, sales, pool, period.start, period.end]);
 
   const rate = inflowInputRate(selected);
@@ -173,7 +175,7 @@ function AnalysisBody({ sheet, sheets, sales }: { sheet: string; sheets: string[
       )}
 
       <Table
-        title={`${sheetLabel(sheet)} 주별 유입경로 변화 (월요일 시작 주)`}
+        title={`${sheetLabel(sheet)} 판매의 주별 유입경로 변화 (월요일 시작 주 · 달에 걸친 주 전체는 위 주간 보기에서 두 달 합산)`}
         head={["주", "판매", ...INFLOW_ROWS.filter((i) => sales.some((s) => inflowOf(s) === i))]}
         rows={trend.map((t) => [
           `${t.week} ~`,

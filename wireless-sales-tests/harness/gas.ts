@@ -43,6 +43,8 @@ export interface GasOptions {
   /** 잠금 실패 흉내 */
   busy?: boolean;
   files?: string[];
+  /** .gs 파일을 읽을 폴더 (기본: wireless-sales/apps-script). 예전 버전 Apps Script 로 되돌린 상황 시험용 */
+  dir?: string;
   /** emulated: 운영 doPost 흉내 순서 / test-entry: test-entry.gs 의 doPost (기본: GAS_ENTRY 환경변수) */
   entry?: "emulated" | "test-entry";
   /** test-entry: 시트에 붙은 프로젝트 흉내 (getActiveSpreadsheet 가 시트를 돌려줌) */
@@ -101,7 +103,7 @@ export function makeGas(ss: FakeSpreadsheet, opts: GasOptions = {}) {
   vm.createContext(ctx);
   const files = opts.files ?? (entry === "test-entry" ? TEST_PROJECT_FILES : DEFAULT_FILES);
   let src = files.map((f) => {
-    const p = path.join(APPS_SCRIPT_DIR, `${f}.gs`);
+    const p = path.join(opts.dir ?? APPS_SCRIPT_DIR, `${f}.gs`);
     return existsSync(p) ? readFileSync(p, "utf8") : "";
   }).join("\n");
   if (entry === "test-entry") {

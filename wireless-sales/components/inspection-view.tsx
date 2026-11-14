@@ -26,18 +26,20 @@ import {
 } from "@/lib/inspection-status";
 
 import { isReviewPending, type SaleReview } from "@/lib/inspection-review";
-import { DONGPAN_KINDS, dongpanKind, isDongpanKind, type DongpanKind } from "@/lib/dongpan";
+import { DONGPAN_KINDS, dongpanCheckNeeded, dongpanKind, isDongpanKind, type DongpanKind } from "@/lib/dongpan";
 
 export { inspectionStatus, type InspectionStatus }; // 예전 import 경로 유지
 
 /**
  * 목록 필터 (하나만 선택): 검수·수납 상태 + "보완 요청" (보완 요청 중이어도 검수 미완료 집계에 그대로 포함)
- * + 동판 구분 "순동"·"신동"·"약동" (AK열, 조회 전용 — 검수·수납 상태와 상관없이 그 구분의 판매만)
+ * + 동판 구분 "순동"·"신동"·"약동" (AK열, 조회 전용 — 검수·수납 상태와 상관없이 그 구분의 판매만,
+ *   그 글자로 시작하면 포함) + "동판 확인 필요" (약돈 등 오타 의심)
  */
-type ListFilter = Filter | "review" | DongpanKind;
+type ListFilter = Filter | "review" | DongpanKind | "dongpanCheck";
 
 function matchListFilter(sale: SheetSale, filter: ListFilter): boolean {
   if (filter === "review") return isReviewPending(sale);
+  if (filter === "dongpanCheck") return dongpanCheckNeeded(sale);
   if (isDongpanKind(filter)) return dongpanKind(sale) === filter;
   return matchFilter(inspectionStatus(sale), filter);
 }
@@ -144,7 +146,7 @@ function InspectionList({
   const chipCount = (f: ListFilter) =>
     f === "review"
       ? searched.filter((s) => isReviewPending(s)).length
-      : isDongpanKind(f)
+      : isDongpanKind(f) || f === "dongpanCheck"
         ? searched.filter((s) => matchListFilter(s, f)).length // 목록과 같은 조건으로 센다
         : searchedStatuses.filter((st) => matchFilter(st, f)).length;
   // 장표와 같은 순서: C열 개통일 오름차순, 같은 날짜는 장표 행 순서
@@ -247,6 +249,10 @@ function InspectionList({
             { value: "review", label: "보완 요청", count: chipCount("review") },
             { value: "done", label: "완료", count: chipCount("done") },
             ...DONGPAN_KINDS.map((kind) => ({ value: kind, label: kind, count: chipCount(kind) })),
+            // 오타 의심이 있을 때만 보임 (예: 약돈-…) — 장표 값은 고치지 않음
+            ...(chipCount("dongpanCheck") > 0
+              ? [{ value: "dongpanCheck" as const, label: "동판 확인 필요", count: chipCount("dongpanCheck") }]
+              : []),
           ]}
         />
         <div className="ml-auto">

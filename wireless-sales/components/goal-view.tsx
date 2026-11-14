@@ -17,7 +17,7 @@ import {
   type GoalItem,
   type GoalScope,
 } from "@/lib/goals";
-import { previousMonth, sheetForMonth } from "@/lib/month-sheet";
+import { nextMonth, previousMonth, salesAcrossMonths, sheetForMonth } from "@/lib/month-sheet";
 import {
   PRODUCT_METRICS,
   PRODUCT_METRIC_LABEL,
@@ -63,6 +63,9 @@ function GoalBody({ sheet, sheets, sales }: { sheet: string; sheets: string[]; s
   const prevMonth = previousMonth(month);
   const prevSheet = sheetForMonth(prevMonth, today);
   const prev = useMonthSales(prevSheet && sheets.includes(prevSheet) ? prevSheet : null);
+  // 다음 달 시트 (지난 달을 볼 때 월말 주가 다음 달에 걸치면 두 달을 합산)
+  const nextSheet = sheetForMonth(nextMonth(month), today);
+  const next = useMonthSales(nextSheet && sheets.includes(nextSheet) ? nextSheet : null);
 
   const [goals, setGoals] = useState<GoalItem[] | null>(null);
   const [history, setHistory] = useState<GoalHistoryItem[]>([]);
@@ -183,11 +186,14 @@ function GoalBody({ sheet, sheets, sales }: { sheet: string; sheets: string[]; s
   }
 
   // 전주·전월 비교 (기준일: 이번 달이면 오늘, 지난 달이면 그 달 말일)
+  // 주 = 월요일~일요일. 월말·월초에 걸친 주는 앞뒤 달 장표를 함께 합산한다
   const period = monthPeriod(month);
-  const refDay = today >= period.start && today <= period.end ? today : period.end;
+  const current = today >= period.start && today <= period.end;
+  const refDay = current ? today : period.end;
   const thisWeek = weekStart(refDay);
+  const thisWeekEnd = current ? today : addDays(thisWeek, 6);
   const lastWeek = addDays(thisWeek, -7);
-  const pool = useMemo(() => [...sales, ...(prev.sales ?? [])], [sales, prev.sales]);
+  const pool = useMemo(() => salesAcrossMonths(prev.sales, sales, next.sales), [sales, prev.sales, next.sales]);
   const staffSum = (metric: ProductMetricKey): number | null => {
     let sum: number | null = null;
     for (const row of rows) {
@@ -254,6 +260,9 @@ function GoalBody({ sheet, sheets, sales }: { sheet: string; sheets: string[]; s
             <tr>
               <th scope="col" className="sticky left-0 bg-zinc-50 px-3 py-2.5 text-left font-semibold">대상</th>
               <th scope="col" className="px-3 py-2.5 text-right font-semibold">개통</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-semibold whitespace-nowrap" title="UMNP 는 후불 실적이 아니며 목표 대상이 아님 (직원 실적관리와 같은 기준)">
+                UMNP<span className="ml-1 font-normal text-ink-muted">(후불 아님)</span>
+              </th>
               {PRODUCT_METRICS.map((m) => (
                 <th key={m.key} scope="col" className="px-3 py-2.5 text-right font-semibold whitespace-nowrap">
                   {m.label}
@@ -273,6 +282,7 @@ function GoalBody({ sheet, sheets, sales }: { sheet: string; sheets: string[]; s
                     {noId && <span className="block text-xs font-normal text-amber-700">직원 ID 없음 (목표 입력 불가)</span>}
                   </th>
                   <td className="px-3 py-2.5 text-right text-ink">{formatNumber(counts.sales)}</td>
+                  <td className="px-3 py-2.5 text-right text-ink-sub">{formatNumber(counts.umnp)}</td>
                   {PRODUCT_METRICS.map(({ key }) => (
                     <td key={key} className="px-3 py-2 text-right align-top whitespace-nowrap">
                       {editing && !noId ? (
@@ -297,6 +307,7 @@ function GoalBody({ sheet, sheets, sales }: { sheet: string; sheets: string[]; s
             <tr>
               <th scope="row" className="sticky left-0 bg-white px-3 py-2 text-left font-semibold">직원 목표 합계 (참고)</th>
               <td />
+              <td />
               {PRODUCT_METRICS.map(({ key }) => {
                 const sum = staffSum(key);
                 const store = goalOf(rows[0], key);
@@ -313,11 +324,15 @@ function GoalBody({ sheet, sheets, sales }: { sheet: string; sheets: string[]; s
       </section>
 
       <CompareSection
-        title={`주간 비교 (이번 주 ${thisWeek} ~ ${refDay} / 지난주 ${lastWeek} ~ ${addDays(lastWeek, 6)})`}
+        title={`주간 비교 (${current ? "이번 주" : "마지막 주"} ${thisWeek} ~ ${thisWeekEnd} / 그 전 주 ${lastWeek} ~ ${addDays(lastWeek, 6)})`}
         rows={rows}
-        current={(r) => inRange(r.scope === "store" ? pool : pool.filter((s) => s.staff === r.name), thisWeek, refDay)}
+        current={(r) => inRange(r.scope === "store" ? pool : pool.filter((s) => s.staff === r.name), thisWeek, thisWeekEnd)}
         previous={(r) => inRange(r.scope === "store" ? pool : pool.filter((s) => s.staff === r.name), lastWeek, addDays(lastWeek, 6))}
-        note={prev.sales === null && thisWeek < period.start ? "전월 장표를 불러오지 못해 지난 달에 걸친 주는 이번 달 판매만 셉니다." : undefined}
+        note={
+          (lastWeek < period.start && prev.sales === null) || (thisWeekEnd > period.end && next.sales === null && !!nextSheet && sheets.includes(nextSheet))
+            ? "앞뒤 달 장표를 불러오지 못해 달에 걸친 주는 불러온 달 판매만 셉니다."
+            : undefined
+        }
       />
       <CompareSection
         title={`월간 비교 (${month} / 전월 ${prevMonth})`}

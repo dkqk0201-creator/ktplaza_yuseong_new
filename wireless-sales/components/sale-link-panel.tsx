@@ -46,9 +46,11 @@ export function SaleLinkPanel({
 
   const state = sale.saleIdState;
   const duplicate = state === "duplicate";
+  const mismatch = state === "mismatch";
+  const [relink, setRelink] = useState(false);
   // Apps Script 가 판매 ID 상태를 돌려주지 않으면(sale-link.gs 미배포) 저장할 수 없다
   const unavailable = state === undefined;
-  const locked = readOnly || duplicate || unavailable || saving;
+  const locked = readOnly || duplicate || unavailable || saving || (mismatch && !relink);
 
   const valueOf = (f: SaleLinkField) => draft[f] ?? current[f];
   const changed = EDITABLE.filter((f) => valueOf(f).trim() !== current[f].trim());
@@ -85,6 +87,7 @@ export function SaleLinkPanel({
           saleId: sale.saleId ?? "",
           staff: sale.staff,
           patches: changed.map((f) => ({ field: f, before: current[f], value: valueOf(f).trim() })),
+          ...(mismatch && relink ? { relink: true } : {}),
         }),
       });
       const body = (await response.json()) as { ok: boolean; saleId?: string; link?: SaleLink; message?: string };
@@ -116,13 +119,27 @@ export function SaleLinkPanel({
           판매연결을 보여 주거나 저장하지 않습니다. 점장 확인이 필요합니다.
         </p>
       )}
+      {mismatch && (
+        <div role="alert" className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          <p className="font-semibold">
+            이 판매의 개통일·CTN 이 저장된 판매연결 기록과 다릅니다 (장표에서 값만 옮기거나 직접 고친 경우 등).
+            다른 판매의 유입경로가 붙지 않도록 연결 정보를 보여 주지 않습니다.
+          </p>
+          {!readOnly && !relink && (
+            <button type="button" onClick={() => setRelink(true)} className="mt-2 rounded-lg border border-amber-600 px-3 py-1.5 text-sm font-semibold text-amber-900">
+              새 판매 ID 로 다시 연결 (유입경로를 새로 입력)
+            </button>
+          )}
+          {relink && <p className="mt-1 text-xs">예전 기록은 옮기지 않고 분리됩니다. 아래에 유입경로 등을 새로 입력해 저장하세요.</p>}
+        </div>
+      )}
       {unavailable && (
         <p className="mb-3 rounded-lg bg-zinc-100 px-3 py-2 text-sm text-ink-sub">
           판매연결 기능이 아직 스프레드시트(Apps Script)에 배포되지 않아 저장할 수 없습니다.
         </p>
       )}
       <SaleFieldGroups groups={[{ title: "판매연결", fields: EDITABLE.map(view) }]} />
-      {!readOnly && !duplicate && !unavailable && (
+      {!readOnly && !duplicate && !unavailable && (!mismatch || relink) && (
         <div className="mt-3 flex items-center gap-3">
           <button
             type="button"

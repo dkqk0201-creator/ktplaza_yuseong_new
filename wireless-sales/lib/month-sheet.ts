@@ -40,3 +40,19 @@ export function previousMonth(yearMonth: string): string {
   const [y, m] = yearMonth.split("-").map(Number);
   return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
 }
+
+/** 다음 달 ("2026-12" → "2027-01") */
+export function nextMonth(yearMonth: string): string {
+  const [y, m] = yearMonth.split("-").map(Number);
+  return m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+}
+
+/**
+ * 주(월~일) 집계용 판매 모음: 이번 달 + 앞뒤 달 판매 중 그 기간에 드는 것만 (월말·월초에 걸친 주를 두 달 합산).
+ * 같은 판매가 두 번 들어가지 않도록 월별 목록을 그대로 이어 붙인다 (월 시트마다 판매는 한 번씩만 있음).
+ */
+export function salesAcrossMonths<T>(...months: (readonly T[] | null | undefined)[]): T[] {
+  const out: T[] = [];
+  for (const list of months) if (list) out.push(...list);
+  return out;
+}

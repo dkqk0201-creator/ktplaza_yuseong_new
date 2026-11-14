@@ -92,8 +92,11 @@ export function emptyLink(): SaleLink {
   return { inflow: "", campaign: "", goodbye: "", prospectId: "", tmStaffId: "", staffId: "" };
 }
 
-/** saleId 상태: ok = 이 판매만 가진 ID / none = 아직 ID 없음(예전 판매) / duplicate = 같은 ID 가 다른 행에도 있음 */
-export type SaleIdState = "ok" | "none" | "duplicate";
+/**
+ * saleId 상태: ok = 이 판매만 가진 ID / none = 아직 ID 없음(예전 판매) / duplicate = 같은 ID 가 다른 행에도 있음
+ * mismatch = 판매연결 기록의 확인값(개통일+CTN)이 이 행과 다름 (장표에서 값만 옮긴 경우 등) — 연결 정보를 붙이지 않음
+ */
+export type SaleIdState = "ok" | "none" | "duplicate" | "mismatch";
 
 /** 한 항목 값 검사. 문제가 있으면 안내 문구 */
 export function linkValueError(field: SaleLinkField, value: string): string | null {
