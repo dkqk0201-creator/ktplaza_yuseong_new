@@ -576,7 +576,7 @@ export function SaleDetail({
             />
           )}
           {mode === "confirm" && (
-            <ChangeList changes={changes} notes={noteChanges} links={visibleLinkChanges} campaigns={config.campaigns} />
+            <ChangeList changes={changes} notes={noteChanges} links={visibleLinkChanges} campaigns={config.campaigns} rawCampaign={sale.link?.campaign} />
           )}
         </div>
 
@@ -1034,11 +1034,14 @@ function ChangeList({
   notes,
   links = [],
   campaigns = [],
+  rawCampaign = "",
 }: {
   changes: SaleChange[];
   notes: NoteChange[];
   links?: LinkEditPlan["patches"];
   campaigns?: readonly Campaign[];
+  /** 연결 안 된 캠페인 원문 (기존 값이 "확인 필요"였음을 보여 주기 위해) */
+  rawCampaign?: string;
 }) {
   return (
     <section aria-label="변경된 항목" className="rounded-xl border border-line">
@@ -1101,7 +1104,7 @@ function ChangeList({
               </span>
             </p>
             <p className="mt-1 text-ink-sub">
-              기존: <span className="text-ink">{linkValueText(l.field, l.before, campaigns)}</span>
+              기존: <span className="text-ink">{l.field === "campaignId" && !l.before && rawCampaign.trim() ? `확인 필요 · ${rawCampaign.trim()}` : linkValueText(l.field, l.before, campaigns)}</span>
             </p>
             <p className="text-ink-sub">
               변경: <span className="font-semibold text-brand">{linkValueText(l.field, l.value, campaigns)}</span>

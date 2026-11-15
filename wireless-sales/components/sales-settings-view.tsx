@@ -27,6 +27,8 @@ const splitList = (text: string) => text.split(",").map((a) => a.trim()).filter(
 
 export function SalesSettingsView() {
   const { config, loaded, error, reload } = useSalesConfig();
+  // 저장하면 버전이 바뀌어 항목 표가 새로 그려지므로, 저장 결과 안내는 바깥에서 보관한다
+  const [inflowMessage, setInflowMessage] = useState<SettingsMessage>(null);
   if (!loaded) return <p className="text-sm text-ink-muted">설정을 불러오는 중…</p>;
   return (
     <div className="space-y-8">
@@ -37,7 +39,7 @@ export function SalesSettingsView() {
           <button type="button" onClick={() => void reload()} className="font-semibold underline">다시 읽기</button>
         </p>
       )}
-      <InflowSettings key={`inflow-${config.inflowVersion}`} options={config.inflows} version={config.inflowVersion} />
+      <InflowSettings key={`inflow-${config.inflowVersion}`} options={config.inflows} version={config.inflowVersion} message={inflowMessage} setMessage={setInflowMessage} />
       <CampaignSettings campaigns={config.campaigns} version={config.campaignVersion} />
     </div>
   );
@@ -60,12 +62,23 @@ interface InflowRowDraft {
   isNew: boolean;
 }
 
-function InflowSettings({ options, version }: { options: InflowOption[]; version: string }) {
+type SettingsMessage = { tone: "ok" | "error"; text: string } | null;
+
+function InflowSettings({
+  options,
+  version,
+  message,
+  setMessage,
+}: {
+  options: InflowOption[];
+  version: string;
+  message: SettingsMessage;
+  setMessage: (m: SettingsMessage) => void;
+}) {
   const initial = (): InflowRowDraft[] =>
     sortedOptions(options).map((o) => ({ name: o.name, aliases: o.aliases.join(", "), active: o.active, order: String(o.order), isNew: false }));
   const [rows, setRows] = useState<InflowRowDraft[]>(initial);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const items: InflowOption[] = rows.map((r) => ({ name: r.name.trim(), aliases: splitList(r.aliases), active: r.active, order: Number(r.order) }));
   const problem = inflowOptionsError(items, options);
   const dirty = JSON.stringify(rows) !== JSON.stringify(initial());
