@@ -8,88 +8,63 @@
  * 같은 saleId 가 두 행에 있으면(시트에서 행 복사 등) 둘 다 "ID 중복 — 확인 필요"로 표시하고 연결·저장하지 않는다.
  */
 
-/** 유입경로 선택값 (한 판매에 대표 경로 1개) */
-export const INFLOW_SOURCES = [
-  "네이버 플레이스",
-  "네이버 블로그",
-  "네이버 예약",
-  "인스타그램",
-  "스레드",
-  "지인 소개",
-  "자점 단골 고객",
-  "TM",
-  "매장 문자",
-  "자연 방문",
-  "외부영업",
-  "KT 안내",
-  "기타",
-  "미확인",
-] as const;
-export type InflowSource = (typeof INFLOW_SOURCES)[number];
-/** 저장된 값이 없는 판매 (직접 고른 "미확인"과 구분) */
-export const INFLOW_MISSING = "미입력";
+import {
+  DEFAULT_INFLOW_OPTIONS,
+  INFLOW_MISSING,
+  INFLOW_RAW_MAX,
+  inflowGroup,
+  isSelectableInflow,
+  resolveInflow,
+  selectableInflows,
+  type InflowOption,
+} from "@/lib/inflow-options";
+import { CAMPAIGN_ID_RE } from "@/lib/campaigns";
+
+export { INFLOW_MISSING };
+
+/** 기본 유입경로 선택값 (항목 시트가 없을 때) — 네이버·자점·TM·내방·외부영업 + 미확인 */
+export const INFLOW_SOURCES: readonly string[] = selectableInflows(DEFAULT_INFLOW_OPTIONS);
 
 export const CAMPAIGN_MAX = 40;
 export const PROSPECT_ID_MAX = 40;
 
-/** 카톡 보고에 적힌 표현 → 선택값 (띄어쓰기·대소문자 무시). 모르는 표현은 null (추정하지 않음) */
-const INFLOW_ALIASES: Record<string, InflowSource> = {
-  네이버플레이스: "네이버 플레이스",
-  플레이스: "네이버 플레이스",
-  스마트플레이스: "네이버 플레이스",
-  네이버블로그: "네이버 블로그",
-  블로그: "네이버 블로그",
-  네이버예약: "네이버 예약",
-  인스타그램: "인스타그램",
-  인스타: "인스타그램",
-  스레드: "스레드",
-  쓰레드: "스레드",
-  threads: "스레드",
-  지인소개: "지인 소개",
-  지인: "지인 소개",
-  자점단골고객: "자점 단골 고객",
-  자점단골: "자점 단골 고객",
-  단골: "자점 단골 고객",
-  단골고객: "자점 단골 고객",
-  tm: "TM",
-  매장문자: "매장 문자",
-  문자: "매장 문자",
-  자연방문: "자연 방문",
-  워크인: "자연 방문",
-  외부영업: "외부영업",
-  kt안내: "KT 안내",
-  기타: "기타",
-  미확인: "미확인",
-  모름: "미확인",
-};
-
-export function parseInflow(raw: string): InflowSource | null {
-  const key = (raw ?? "").replace(/\s+/g, "").toLowerCase();
-  if (!key) return null;
-  return INFLOW_ALIASES[key] ?? null;
+/** 카톡 보고에 적힌 표현 → 기본 항목 이름. 모르는 표현은 null (추정하지 않음) */
+export function parseInflow(raw: string, options: readonly InflowOption[] = DEFAULT_INFLOW_OPTIONS): string | null {
+  const r = resolveInflow(raw, options);
+  return r.kind === "match" ? r.name : null;
 }
 
-export function isInflowSource(value: unknown): value is InflowSource {
-  return typeof value === "string" && (INFLOW_SOURCES as readonly string[]).includes(value);
+export function isInflowSource(value: unknown, options: readonly InflowOption[] = DEFAULT_INFLOW_OPTIONS): value is string {
+  return typeof value === "string" && value.trim() !== "" && isSelectableInflow(value, options);
 }
 
 /** 판매연결 값 (모두 글자, 없으면 "") */
 export interface SaleLink {
+  /** 유입경로 항목 이름 ("" = 미입력 또는 확인 필요) */
   inflow: string;
+  /** 캠페인: 직원이 보고한 원문 (목록과 맞으면 campaignId 도 있음) */
   campaign: string;
-  /** 굿바이 표시 "O" / "X" / "" (인정 기준 미확정 — 제안: O 표시만 실적) */
+  /** 리본 "O" / "X" / "" (저장 칸 이름은 예전 그대로 goodbye) */
   goodbye: string;
   /** 향후 가망고객관리 연동 (지금은 저장 구조만) */
   prospectId: string;
   tmStaffId: string;
   /** 저장 당시 판매 직원 ID (M열 직원명 → lib/data/staff-list.ts 의 ID). 이름 변경·퇴사 후에도 유지 */
   staffId: string;
+  /** 캠페인 목록의 캠페인ID (CMP-0001). "" = 캠페인 없음 또는 확인 필요 */
+  campaignId: string;
+  /** 리본 값의 방식: 자동(중고폰&현물 판매로 판정) / 수동(점장이 고름) / "" */
+  ribbonMode: string;
+  /** 유입경로를 목록에서 찾지 못했을 때의 카톡 원문 (확인 필요) */
+  inflowRaw: string;
+  /** 간편등록 요청 ID (같은 요청 재전송 시 판매 중복 방지) — 화면에서 바꾸지 않음 */
+  requestId: string;
 }
-export const SALE_LINK_FIELDS = ["inflow", "campaign", "goodbye", "prospectId", "tmStaffId"] as const;
+export const SALE_LINK_FIELDS = ["inflow", "campaign", "goodbye", "prospectId", "tmStaffId", "campaignId", "ribbonMode", "inflowRaw"] as const;
 export type SaleLinkField = (typeof SALE_LINK_FIELDS)[number];
 
 export function emptyLink(): SaleLink {
-  return { inflow: "", campaign: "", goodbye: "", prospectId: "", tmStaffId: "", staffId: "" };
+  return { inflow: "", campaign: "", goodbye: "", prospectId: "", tmStaffId: "", staffId: "", campaignId: "", ribbonMode: "", inflowRaw: "", requestId: "" };
 }
 
 /**
@@ -98,30 +73,26 @@ export function emptyLink(): SaleLink {
  */
 export type SaleIdState = "ok" | "none" | "duplicate" | "mismatch";
 
-/** 한 항목 값 검사. 문제가 있으면 안내 문구 */
-export function linkValueError(field: SaleLinkField, value: string): string | null {
+/** 한 항목 값 검사. 문제가 있으면 안내 문구 (Apps Script sale-link.gs wsLinkValueError_ 와 같은 기준) */
+export function linkValueError(
+  field: SaleLinkField,
+  value: string,
+  options: readonly InflowOption[] = DEFAULT_INFLOW_OPTIONS,
+): string | null {
   const v = value.trim();
   if (!v) return null;
-  if (field === "inflow") return isInflowSource(v) ? null : "유입경로는 목록에서 골라 주세요.";
-  if (field === "goodbye") return v === "O" || v === "X" ? null : "굿바이는 O 또는 X 로 입력해 주세요.";
+  if (field === "inflow") return isSelectableInflow(v, options) ? null : "유입경로는 목록에서 골라 주세요.";
+  if (field === "goodbye") return v === "O" || v === "X" ? null : "리본은 O 또는 X 로 입력해 주세요.";
   if (field === "campaign") return v.length <= CAMPAIGN_MAX ? null : `캠페인명은 ${CAMPAIGN_MAX}자 이내로 입력해 주세요.`;
   if (field === "prospectId") return v.length <= PROSPECT_ID_MAX && /^[\w-]+$/.test(v) ? null : "가망고객 ID 형식이 올바르지 않습니다.";
   if (field === "tmStaffId") return /^st-\d{3}$/.test(v) ? null : "TM 발굴 직원 ID 형식이 올바르지 않습니다.";
+  if (field === "campaignId") return CAMPAIGN_ID_RE.test(v) ? null : "캠페인 ID 형식이 올바르지 않습니다.";
+  if (field === "ribbonMode") return v === "자동" || v === "수동" ? null : "리본 방식이 올바르지 않습니다.";
+  if (field === "inflowRaw") return v.length <= INFLOW_RAW_MAX ? null : `유입경로 원문은 ${INFLOW_RAW_MAX}자까지 보관합니다.`;
   return null;
 }
 
-/** 분석용 유입경로 (저장 값이 없으면 "미입력") */
-export function inflowOf(sale: { link?: SaleLink }): string {
-  const v = sale.link?.inflow?.trim() ?? "";
-  return v && isInflowSource(v) ? v : INFLOW_MISSING;
-}
-
-/** 판매들에 쓰인 캠페인명 (가나다순, 중복 없이) — 입력칸 추천 목록 */
-export function usedCampaigns(sales: readonly { link?: SaleLink }[]): string[] {
-  const set = new Set<string>();
-  for (const s of sales) {
-    const c = s.link?.campaign?.trim();
-    if (c) set.add(c);
-  }
-  return [...set].sort((a, b) => a.localeCompare(b, "ko"));
+/** 분석용 유입경로 분류 (미입력·미확인·확인 필요·기존값 구분 — lib/inflow-options.ts inflowGroup) */
+export function inflowOf(sale: { link?: SaleLink }, options: readonly InflowOption[] = DEFAULT_INFLOW_OPTIONS): string {
+  return inflowGroup(sale.link, options);
 }

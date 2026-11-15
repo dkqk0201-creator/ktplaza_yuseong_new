@@ -3,6 +3,9 @@ import { COLUMN_COUNT, type SheetRowArray } from "@/lib/sheet-columns";
 import { parseReview, type SaleReview } from "@/lib/inspection-review";
 import { emptyLink, type SaleIdState, type SaleLink, type SaleLinkField } from "@/lib/sale-link";
 import { parseGoalItem, type GoalChange, type GoalHistoryItem, type GoalItem } from "@/lib/goals";
+import { parseSalesConfig, type SalesConfig } from "@/lib/sales-config";
+import type { InflowOption } from "@/lib/inflow-options";
+import type { CampaignInput } from "@/lib/campaigns";
 import {
   GOBULBI_HANDLER,
   parseGobulbiItem,
@@ -261,6 +264,8 @@ export type AppsScriptBatchItem =
       saleId?: string;
       /** 판매연결(유입경로 등) 저장 결과: true / false(실패) / null(sale-link.gs 없음) */
       linksSaved: boolean | null;
+      /** 같은 등록요청 ID 로 이미 저장돼 있던 판매 (장표에 다시 쓰지 않음) */
+      repeated?: boolean;
     }
   | { ok: false; error: AppsScriptError };
 
@@ -335,7 +340,7 @@ export async function saveRowsToAppsScript(
     const saleId = parseSaleId(r.saleId);
     // UMNP 판매는 No. 가 빈칸
     if (r.ok === true && Number.isInteger(rowNumber)) {
-      return { ok: true, sheet, row: rowNumber, no, notesSaved, linksSaved, ...(saleId ? { saleId } : {}) };
+      return { ok: true, sheet, row: rowNumber, no, notesSaved, linksSaved, ...(saleId ? { saleId } : {}), ...(r.repeated === true ? { repeated: true } : {}) };
     }
     if (r.ok === true) {
       return {
@@ -584,7 +589,12 @@ export async function updateRowInAppsScript(
    * notePatches: 장표 밖 참고내용(웹앱참고) 항목 수정 (여러 개 가능, 바꾼 항목만). 있으면 changes 가 비어도 된다.
    *   바꾸지 않은 다른 참고 항목은 Apps Script 가 그대로 둔다.
    */
-  options: { onlyChanges?: boolean; notePatches?: NotePatch[] } = {},
+  options: {
+    onlyChanges?: boolean;
+    notePatches?: NotePatch[];
+    /** 판매연결(유입경로·캠페인·리본)을 같은 요청·같은 잠금에서 함께 저장 (있으면 changes 가 비어도 된다) */
+    link?: { saleId: string; staffId: string; patches: SaleLinkPatch[] };
+  } = {},
 ): Promise<{
   sheet: string;
   row: number;
@@ -596,11 +606,16 @@ export async function updateRowInAppsScript(
   notePatched?: boolean;
   /** G열이 O 가 되어 진행 중 검수 보완 요청을 닫았으면 true */
   reviewClosed?: boolean;
+  /** link 를 보냈을 때만: 판매연결 저장 성공 여부 (false = 장표 수정은 됐고 판매연결만 실패) */
+  linkSaved?: boolean;
+  saleId?: string;
+  link?: SaleLink;
 }> {
   const notePatches = options.notePatches ?? [];
   const notePatch = notePatches.length > 0 ? notePatches : null;
+  const linkPart = options.link && options.link.patches.length > 0 ? options.link : null;
   if (
-    (changes.length === 0 && !notePatch) ||
+    (changes.length === 0 && !notePatch && !linkPart) ||
     (notePatch && options.onlyChanges) ||
     [...changes, ...checks].some((c) => c.col === 1 || c.col === 2)
   ) {
@@ -641,6 +656,7 @@ export async function updateRowInAppsScript(
           })),
         ],
         ...(options.onlyChanges ? { keepRowFormulas: true } : {}),
+        ...(linkPart ? { link: linkPart } : {}),
       },
       "Apps Script가 수정을 거부했습니다.",
     );
@@ -703,6 +719,14 @@ export async function updateRowInAppsScript(
     no: data.no === undefined || data.no === null ? "" : String(data.no),
     values: data.values.slice(0, COLUMN_COUNT),
     ...(data.reviewClosed === true ? { reviewClosed: true } : {}),
+    ...(linkPart
+      ? (() => {
+          const saleId = parseSaleId(data.saleId);
+          const link = parseLink(data.link);
+          // 예전 update-handler.gs 는 link 를 모른 채 장표만 고친다 → 판매연결은 저장 안 됨으로 알림
+          return { linkSaved: data.linkSaved === true && !!saleId && !!link, ...(saleId ? { saleId } : {}), ...(link ? { link } : {}) };
+        })()
+      : {}),
     ...(notePatch
       ? {
           notePatched: data.notePatched === true,
@@ -950,4 +974,48 @@ export async function getGoalHistoryFromAppsScript(month: string): Promise<GoalH
     });
   }
   return out;
+}
+
+/* ---------- 유입경로 항목 · 캠페인 목록 (config-handler.gs, update-handler.gs 입구로 전달) ---------- */
+
+export const CONFIG_HANDLER = "ws-config";
+
+async function postConfig(payload: Record<string, unknown>, fallback: string): Promise<Record<string, unknown>> {
+  let data: Record<string, unknown>;
+  try {
+    data = await postToAppsScript(payload, fallback);
+  } catch (error) {
+    if (error instanceof AppsScriptError && error.code === "rejected" && error.details.handler !== CONFIG_HANDLER) {
+      throw new AppsScriptError("bad_response", "Apps Script에 유입경로·캠페인 설정(config-handler.gs)이 배포되어 있지 않습니다.");
+    }
+    throw error;
+  }
+  if (data.handler !== CONFIG_HANDLER) {
+    throw new AppsScriptError("bad_response", "Apps Script에 유입경로·캠페인 설정(config-handler.gs)이 배포되어 있지 않습니다.");
+  }
+  return data;
+}
+
+export async function getSalesConfigFromAppsScript(): Promise<SalesConfig> {
+  return parseSalesConfig(await postConfig({ action: "config-get" }, "Apps Script가 설정 조회를 거부했습니다."));
+}
+
+export async function saveInflowOptionsInAppsScript(items: InflowOption[], version: string): Promise<SalesConfig> {
+  return parseSalesConfig(await postConfig({ action: "config-inflow-save", items, version }, "Apps Script가 유입경로 저장을 거부했습니다."));
+}
+
+export async function saveCampaignInAppsScript(
+  campaign: CampaignInput & { id?: string },
+  version: string,
+): Promise<{ id: string; config: SalesConfig }> {
+  const data = await postConfig({ action: "config-campaign-save", campaign, version }, "Apps Script가 캠페인 저장을 거부했습니다.");
+  const id = typeof data.id === "string" && /^CMP-\d{4}$/.test(data.id) ? data.id : "";
+  if (!id) throw new AppsScriptError("bad_response", "Apps Script 캠페인 저장 응답을 확인하지 못했습니다.");
+  return { id, config: parseSalesConfig(data) };
+}
+
+export async function attachCampaignInAppsScript(campaignId: string, apply: boolean): Promise<number> {
+  const data = await postConfig({ action: "config-campaign-attach", campaignId, apply }, "Apps Script가 캠페인 연결을 거부했습니다.");
+  const n = Number(data.count);
+  return Number.isInteger(n) && n >= 0 ? n : 0;
 }

@@ -44,7 +44,12 @@
  * - action = "inspection-review" 요청은 inspection-review.gs 의 wsHandleInspectionReview_ 로 넘긴다.
  * - action = "gobulbi" 요청(예산관리 고불비사용)은 gobulbi.gs 의 wsHandleGobulbi_ 로 넘긴다.
  * - action = "auth-login" · "auth-check" · "auth-logout"(웹앱 관리자 로그인)은 auth-handler.gs 의 wsHandleAuth_ 로 넘긴다.
- * - action = "sale-link-set"(판매연결: 유입경로·캠페인·굿바이 등)은 sale-link.gs 의 wsHandleSaleLink_ 로 넘긴다.
+ * - action = "sale-link-set"(판매연결: 유입경로·캠페인·리본 등)은 sale-link.gs 의 wsHandleSaleLink_ 로 넘긴다.
+ * - action = "config-…"(유입경로 항목·캠페인 목록)은 config-handler.gs 의 wsHandleConfig_ 로 넘긴다.
+ * - sale-update 에 link: { saleId, staffId, patches: [{ field, before, value }] } 를 함께 보내면 판매 수정과 판매연결
+ *   (유입경로·캠페인·리본)을 한 번에, 같은 잠금 안에서 저장한다 (2026-11-15). 판매연결 확인(판매 ID·ID 중복·확인값·
+ *   화면에서 본 값)이 맞지 않으면 장표에 아무것도 쓰지 않고 거부한다. 장표 수정 뒤 판매연결 쓰기만 실패하면
+ *   ok: true + linkSaved: false 로 알린다 (웹앱이 "판매연결만 다시 저장"을 안내).
  * 시트 이름은 실제 월 시트 이름 "1월"~"12월" 형식 (예: "10월"). "2026년 10월" 같은 화면 표시용 글자는 받지 않는다.
  * 응답: { ok, handler, sheet, row, no, values: [38칸] } (수정 후 그 행의 값)
  */
@@ -63,6 +68,10 @@ function wsHandleSaleUpdate_(e) {
   // 판매연결 정보 저장(sale-link.gs) — 유입경로·캠페인·굿바이·연동 ID
   if (body && body.action === "sale-link-set" && typeof wsHandleSaleLink_ === "function") {
     return wsHandleSaleLink_(body);
+  }
+  // 유입경로 항목·캠페인 목록(config-handler.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
+  if (body && typeof body.action === "string" && body.action.indexOf("config-") === 0 && typeof wsHandleConfig_ === "function") {
+    return wsHandleConfig_(body);
   }
   // 예산관리 고불비사용(gobulbi.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
   if (body && body.action === "gobulbi" && typeof wsHandleGobulbi_ === "function") {
@@ -96,7 +105,9 @@ function wsHandleSaleUpdate_(e) {
 
   // 바꿀 칸 검사: A, D~AL 만 (B No.·C 개통일 금지), 같은 칸 두 번 금지
   var rawChanges = body.changes;
-  if (
+  // 판매연결만 고치는 요청(link 만 있음)은 장표 칸 변경이 비어 있어도 된다
+  if (Array.isArray(rawChanges) && rawChanges.length === 0 && body.link && typeof body.link === "object") rawChanges = [];
+  else if (
     !Array.isArray(rawChanges) ||
     rawChanges.length === 0 ||
     rawChanges.length > WS_COLUMN_COUNT + 20
@@ -155,7 +166,16 @@ function wsHandleSaleUpdate_(e) {
     seen[col] = true;
     if (!checkOnly) writes++;
   }
-  if (writes === 0 && !notePatch) {
+  // 판매연결 (유입경로·캠페인·리본) — 형식만 먼저 확인 (사용 중 항목·캠페인은 잠금 안에서)
+  var linkPatch = body.link !== undefined && body.link !== null;
+  if (linkPatch) {
+    if (typeof wsLinkPrepare_ !== "function" || typeof body.link !== "object" || body.link.relink === true) {
+      return reply({ ok: false, message: "판매연결 항목 형식이 올바르지 않습니다." });
+    }
+    var linkFormat = wsLinkRequestError_(body.link, null);
+    if (linkFormat) return reply({ ok: false, message: "판매연결: " + linkFormat });
+  }
+  if (writes === 0 && !notePatch && !linkPatch) {
     return reply({ ok: false, message: "수정할 항목이 없습니다." });
   }
 
@@ -270,6 +290,17 @@ function wsHandleSaleUpdate_(e) {
       }
     }
 
+    // 판매연결: 장표에 아무것도 쓰기 전에 판매 ID·확인값·화면에서 본 값 확인 (실패하면 아무것도 쓰지 않음)
+    var linkPrep = null;
+    if (linkPatch) {
+      var linkCfgError = wsLinkRequestError_(body.link, wsLinkConfig_(ss));
+      if (linkCfgError) return reply({ ok: false, message: "판매연결: " + linkCfgError + " 수정하지 않았습니다." });
+      linkPrep = wsLinkPrepare_(ss, sheet, sheetName, rowNumber, current, tz, body.link);
+      if (linkPrep.error) {
+        return reply({ ok: false, code: linkPrep.code, message: "판매연결: " + linkPrep.error + " (판매 수정도 저장하지 않았습니다)" });
+      }
+    }
+
     // 바뀐 칸만 그 칸에 쓴다 (B·C 열과 다른 칸, 확인만 하는 칸은 그대로)
     for (var w = 0; w < changes.length; w++) {
       if (changes[w].check === true) continue;
@@ -334,6 +365,18 @@ function wsHandleSaleUpdate_(e) {
         // 장표 칸 수정은 그대로. 웹앱이 notePatched 가 없으면 정책명 미저장을 알린다
       }
     }
+    // 판매연결: 수정 후 행(개통일·CTN 이 바뀌었으면 새 확인값)으로 저장. 실패해도 장표 수정은 그대로 (linkSaved: false)
+    var linkSaved = null;
+    var linkResult = null;
+    if (linkPrep) {
+      try {
+        linkResult = wsLinkCommit_(ss, sheet, sheetName, rowNumber, after, tz, linkPrep, body.link);
+        SpreadsheetApp.flush();
+        linkSaved = true;
+      } catch (err) {
+        linkSaved = false;
+      }
+    }
     var result = {
       ok: true,
       sheet: sheetName,
@@ -342,8 +385,15 @@ function wsHandleSaleUpdate_(e) {
       values: after.map(function (v) {
         return v instanceof Date ? Utilities.formatDate(v, tz, "yyyy-MM-dd") : v;
       }),
-      message: writes > 0 ? "판매내역이 수정되었습니다." : "참고내용이 수정되었습니다.",
+      message: writes > 0 ? "판매내역이 수정되었습니다." : notePatch ? "참고내용이 수정되었습니다." : "판매연결이 수정되었습니다.",
     };
+    if (linkSaved !== null) {
+      result.linkSaved = linkSaved;
+      if (linkResult) {
+        result.saleId = linkResult.saleId;
+        result.link = linkResult.link;
+      }
+    }
     if (reviewClosed) result.reviewClosed = true;
     if (notePatch) {
       result.notePatched = notePatched;

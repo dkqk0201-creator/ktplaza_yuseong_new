@@ -1,6 +1,7 @@
 import type { DeleteSaleRequest } from "@/lib/delete-sale-api";
 import type { SaleChange } from "@/lib/sale-edit";
 import type { NoteChange } from "@/lib/sale-form-layout";
+import type { SaleLink, SaleLinkField } from "@/lib/sale-link";
 
 /*
  * 화면 ↔ 우리 서버(/api/sales/update) 사이의 약속 (기존 판매 수정).
@@ -24,6 +25,11 @@ export interface UpdateSaleRequest {
    * 바꾸지 않은 참고 항목은 그대로 남는다.
    */
   notes?: NoteChange[];
+  /**
+   * 판매연결(유입경로·캠페인·리본) 변경 — 판매 수정과 같은 요청·같은 잠금에서 저장 (2026-11-15 통합 저장).
+   * saleId = 화면에서 본 판매 ID ("" = 예전 판매), staff = 판매 직원명(직원 ID 기록용), patches = 바꾼 항목만.
+   */
+  link?: { saleId: string; staff: string; patches: { field: SaleLinkField; before: string; value: string }[] };
 }
 
 export type UpdateSaleResponse =
@@ -37,6 +43,11 @@ export type UpdateSaleResponse =
       notes?: Record<string, string>;
       /** 장표 칸은 수정됐지만 정책명은 저장하지 못한 경우 등 */
       warning?: string;
+      /** link 를 보냈을 때: 저장된 판매연결 */
+      saleId?: string;
+      link?: SaleLink;
+      /** link 를 보냈는데 판매연결만 저장하지 못함 (장표 수정은 완료) → 판매연결만 다시 저장 */
+      linkPending?: boolean;
     }
   | { ok: false; message: string; errors?: string[] };
 

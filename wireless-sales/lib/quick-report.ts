@@ -2,7 +2,10 @@ import type { ColumnKey, SheetRowValues } from "@/lib/sheet-columns";
 import { formatCtn } from "@/lib/format";
 import { cleanPolicyName, policyNameError } from "@/lib/model-policy";
 import { quickVSplit, type VPartKey } from "@/lib/v-split";
-import { CAMPAIGN_MAX, parseInflow } from "@/lib/sale-link";
+import { CAMPAIGN_MAX } from "@/lib/sale-link";
+import { DEFAULT_INFLOW_OPTIONS, INFLOW_CHECK, resolveInflow, type InflowOption } from "@/lib/inflow-options";
+import { resolveCampaign, type Campaign } from "@/lib/campaigns";
+import { ribbonFromUsedPhone, ribbonModeFor } from "@/lib/ribbon";
 
 /*
  * 간편등록: 직원 카톡 판매보고 → 분석 → 검수 → 장표 한 행.
@@ -52,7 +55,6 @@ export const STAFF_REPORT_TEMPLATE = [
   "동판 : ",
   "ㄴ가능일 : ",
   "",
-  "굿바이 : ",
   "유입경로 : ",
   "캠페인 : ",
   "",
@@ -105,7 +107,8 @@ export const QUICK_FIELDS = [
   { id: "customerPromise", label: "고객약속사항", column: "customerPromise" },
   // 판매연결 항목 (장표·웹앱참고가 아니라 보조 시트 "웹앱판매연결"에 판매 고유 ID 로 저장, lib/sale-link.ts)
   // 카톡 보고에 이 줄이 없어도 등록에는 문제 없다 (선택 항목)
-  { id: "goodbye", label: "굿바이", column: null },
+  // 리본(저장 칸 이름 goodbye): 보고의 "중고폰&현물 판매" 내용으로 자동 판정 (lib/ribbon.ts). 점장이 바꿀 수 있음
+  { id: "goodbye", label: "리본", column: null },
   { id: "inflow", label: "유입경로", column: null },
   { id: "campaign", label: "캠페인", column: null },
 ] as const satisfies readonly {
@@ -205,7 +208,9 @@ const TOP_LEVEL: {
   { key: "부가", id: "addon" },
   { key: "동판", id: "dongpan", children: { 가능일: "availableDate" } },
   { key: "고객약속사항", id: "customerPromise" },
+  // 리본: 직원 보고에는 보통 없음 (중고폰&현물 판매로 자동 판정). 따로 적었으면 그 값이 우선 (예전 이름 "굿바이" 도 읽음)
   { key: "굿바이", id: "goodbye" },
+  { key: "리본", id: "goodbye" },
   { key: "유입경로", id: "inflow" },
   { key: "캠페인", id: "campaign" },
   { key: "캠페인명", id: "campaign" },
@@ -253,6 +258,8 @@ export interface QuickReport {
   repeatedFields: QuickFieldId[];
   /** 이 판매 건의 원문 */
   raw: string;
+  /** "중고폰&현물 판매" 줄이 보고에 있었는지 (예전 양식은 없음 → 리본을 판정하지 않음) */
+  usedPhoneLine?: boolean;
 }
 
 /** 카톡 복사 시 붙는 "[이름] [오후 3:21]" 같은 앞부분 제거 */
@@ -271,6 +278,10 @@ export function parseQuickReports(text: string): QuickReport[] {
   const finish = () => {
     if (current) {
       current.raw = rawLines.join("\n").trim();
+      // 리본: "중고폰&현물 판매" 줄이 있고 리본 줄을 따로 적지 않았으면 그 내용으로 자동 판정 (빈칸도 X)
+      if (current.usedPhoneLine && !current.fields.goodbye && !current.repeatedFields.includes("goodbye")) {
+        current.fields.goodbye = ribbonFromUsedPhone(current.fields.usedPhone);
+      }
       reports.push(current);
     }
   };
@@ -346,6 +357,7 @@ export function parseQuickReports(text: string): QuickReport[] {
     const top = TOP_LEVEL.find((t) => normalizeKey(t.key) === key);
     if (top) {
       parent = top;
+      if (top.id === "usedPhone") current.usedPhoneLine = true;
       if (top.id) set(current, top.id, value);
       lastField = top.id;
       continue;
@@ -385,8 +397,8 @@ export interface QuickNormalized {
    * 장표 A~AL 이 아니라 Apps Script 의 숨김 보조 시트 "웹앱참고" 에 판매 건별로 보관한다.
    */
   notes: SaleNotes;
-  /** 판매연결 (유입경로·캠페인·굿바이). 적지 않은 항목은 "" */
-  link: { inflow: string; campaign: string; goodbye: string };
+  /** 판매연결 (유입경로·캠페인·리본). 적지 않은 항목은 "" */
+  link: QuickLink;
 }
 
 /** 참고 항목 id → 직원이 적은 원문 (+ V열 세부 금액 vPlan·vInstallment) */
@@ -414,6 +426,24 @@ export interface QuickContext {
   /** 오늘 날짜 (한국 시간, YYYY-MM-DD) — 연도와 저장 대상 월 판단에 사용 */
   today: string;
   staffNames: readonly string[];
+  /** 유입경로 항목·캠페인 목록 (없으면 기본 유입경로 5개, 캠페인 없음) */
+  config?: { inflows: readonly InflowOption[]; campaigns: readonly Campaign[] };
+}
+
+/** 간편등록 판매연결 값 (웹앱판매연결에 저장) */
+export interface QuickLink {
+  /** 유입경로 항목 이름 ("" = 미입력 또는 확인 필요) */
+  inflow: string;
+  /** 유입경로를 목록에서 못 찾았을 때 원문 (확인 필요) */
+  inflowRaw: string;
+  /** 캠페인 원문 (캠페인 없음이면 "") */
+  campaign: string;
+  /** 목록과 맞은 캠페인ID ("" = 없음 또는 확인 필요) */
+  campaignId: string;
+  /** 리본 O/X ("" = 판정 안 함) */
+  goodbye: string;
+  /** 리본 방식 자동/수동 ("" = 리본 없음) */
+  ribbonMode: string;
 }
 
 /** 금액: "30만" → 300000, "15000원" → 15000, "300,000원" → 300000. 애매하면 error */
@@ -812,32 +842,42 @@ export function normalizeQuick(
     }
   }
 
-  // 판매연결: 유입경로(목록 값만, 모르는 표현은 추정하지 않고 확인 필요), 캠페인(짧은 자유 입력), 굿바이(O/X)
-  const link = { inflow: "", campaign: "", goodbye: "" };
-  if (v("inflow")) {
-    const inflow = parseInflow(v("inflow"));
-    if (inflow) {
-      link.inflow = inflow;
-      display.inflow = inflow;
-    } else {
-      issues.push({ field: "inflow", message: `유입경로 "${v("inflow")}" 를 목록에서 골라 주세요.` });
-    }
+  // 판매연결: 유입경로(항목·별칭만, 모르는 표현은 추정하지 않고 확인 필요 — 저장은 막지 않음),
+  // 캠페인(목록의 이름·별칭과 맞으면 캠페인ID, 아니면 원문만 — 확인 필요), 리본(O/X, 방식 자동/수동)
+  const inflows = ctx.config?.inflows ?? DEFAULT_INFLOW_OPTIONS;
+  const campaignList = ctx.config?.campaigns ?? [];
+  const link: QuickLink = { inflow: "", inflowRaw: "", campaign: "", campaignId: "", goodbye: "", ribbonMode: "" };
+  const inflow = resolveInflow(v("inflow"), inflows);
+  if (inflow.kind === "match") {
+    link.inflow = inflow.name;
+    display.inflow = inflow.name;
+  } else if (inflow.kind === "check") {
+    link.inflowRaw = inflow.raw;
+    display.inflow = `${INFLOW_CHECK} · ${inflow.raw}`;
   }
   if (v("campaign")) {
     if (v("campaign").length > CAMPAIGN_MAX) {
       issues.push({ field: "campaign", message: `캠페인명은 ${CAMPAIGN_MAX}자 이내로 입력해 주세요.` });
     } else {
-      link.campaign = v("campaign");
-      display.campaign = v("campaign");
+      const c = resolveCampaign(v("campaign"), campaignList);
+      if (c.kind === "match") {
+        link.campaign = v("campaign");
+        link.campaignId = c.campaign.id;
+        display.campaign = c.campaign.name;
+      } else if (c.kind === "check") {
+        link.campaign = c.raw;
+        display.campaign = `${INFLOW_CHECK} · ${c.raw}`;
+      }
     }
   }
   if (v("goodbye")) {
     const value = ox(v("goodbye"));
     if (value) {
       link.goodbye = value;
+      link.ribbonMode = ribbonModeFor(value, fields.usedPhone);
       display.goodbye = value;
     } else {
-      issues.push({ field: "goodbye", message: `굿바이는 O 또는 X 로 입력해 주세요. (받은 값: ${v("goodbye")})` });
+      issues.push({ field: "goodbye", message: `리본은 O 또는 X 로 입력해 주세요. (받은 값: ${v("goodbye")})` });
     }
   }
 

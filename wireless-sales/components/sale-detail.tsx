@@ -1,6 +1,21 @@
 "use client";
 
-import { SaleLinkPanel } from "@/components/sale-link-panel";
+import { SaleLinkPanel, type PendingLink } from "@/components/sale-link-panel";
+import { useSalesConfig } from "@/components/use-sales-config";
+import {
+  CAMPAIGN_KEEP_RAW,
+  campaignChoices,
+  currentLink,
+  inflowChoices,
+  linkEditable,
+  linkFieldLabel,
+  linkValueText,
+  planLinkEdit,
+  type LinkDraft,
+  type LinkEditPlan,
+} from "@/lib/sale-link-edit";
+import { LINK_HINT } from "@/lib/sale-form-layout";
+import type { Campaign } from "@/lib/campaigns";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { postDeleteSale } from "@/lib/delete-sale-api";
 import { formatCtn, formatNumber } from "@/lib/format";
@@ -247,7 +262,24 @@ export function SaleDetail({
     const problem = noteError(field, value);
     if (problem) noteErrors[field] = problem;
   }
-  const changeCount = changes.length + noteChanges.length;
+  // 판매연결(유입경로·캠페인·리본): 판매 수정과 함께 한 번에 저장 (중고폰&현물 판매를 바꾸면 리본 다시 판정)
+  const { config } = useSalesConfig();
+  const [linkDraft, setLinkDraft] = useState<LinkDraft>({});
+  const [pendingLink, setPendingLink] = useState<PendingLink | null>(null);
+  const usedPhoneOriginal = noteOriginal(sale, "usedPhone");
+  const usedPhoneAfter = notesEdit.usedPhone ?? usedPhoneOriginal;
+  const linkPlan: LinkEditPlan | null =
+    mode !== "view" && linkEditable(sale)
+      ? planLinkEdit(
+          sale,
+          linkDraft,
+          { changed: usedPhoneAfter.trim() !== usedPhoneOriginal.trim(), after: usedPhoneAfter },
+          config.campaigns,
+        )
+      : null;
+  const linkPatches = linkPlan?.patches ?? [];
+  const visibleLinkChanges = linkPatches.filter((p) => p.field !== "ribbonMode" && p.field !== "inflowRaw");
+  const changeCount = changes.length + noteChanges.length + visibleLinkChanges.length;
 
   // 삭제·수정 요청 중에는 창을 닫지 않는다 (Esc·배경 클릭·닫기 버튼 모두)
   const deletingRef = useRef(false);
@@ -359,6 +391,7 @@ export function SaleDetail({
   function startEdit() {
     setEdited({});
     setNotesEdit({});
+    setLinkDraft({});
     setVEdit({});
     setUpdateError(null);
     setUpdateNotice(null);
@@ -369,8 +402,9 @@ export function SaleDetail({
   async function handleUpdate(
     list: SaleChange[],
     notes: NoteChange[],
+    linkChanges: LinkEditPlan["patches"] = [],
   ) {
-    if (deletingRef.current || (list.length === 0 && notes.length === 0)) return;
+    if (deletingRef.current || (list.length === 0 && notes.length === 0 && linkChanges.length === 0)) return;
     deletingRef.current = true;
     setSaving(true);
     setUpdateError(null);
@@ -385,6 +419,7 @@ export function SaleDetail({
       },
       changes: list,
       ...(notes.length > 0 ? { notes } : {}),
+      ...(linkChanges.length > 0 ? { link: { saleId: sale.saleId ?? "", staff: sale.staff, patches: linkChanges } } : {}),
     });
     deletingRef.current = false;
     setSaving(false);
@@ -398,14 +433,20 @@ export function SaleDetail({
         ...next,
         ...(savedNotes && Object.keys(savedNotes).length > 0 ? { notes: savedNotes } : {}),
         ...(sale.review ? { review: sale.review } : {}),
+        // 판매 ID·판매연결은 장표 값이 아니므로: 새로 저장했으면 그 값, 아니면 보던 값
+        ...(result.saleId && result.link
+          ? { saleId: result.saleId, saleIdState: "ok" as const, link: result.link }
+          : { ...(sale.saleId ? { saleId: sale.saleId } : {}), ...(sale.saleIdState ? { saleIdState: sale.saleIdState } : {}), ...(sale.link ? { link: sale.link } : {}) }),
       };
       setUpdated(shown);
+      setPendingLink(result.linkPending ? { patches: linkChanges } : null);
       setMode("view");
       setEdited({});
       setNotesEdit({});
       setVEdit({});
+      setLinkDraft({});
       setUpdateNotice(
-        `${result.message} (${list.length + notes.length}개 항목)` +
+        `${result.message} (${list.length + notes.length + linkChanges.filter((p) => p.field !== "ribbonMode" && p.field !== "inflowRaw").length}개 항목)` +
           (result.warning ? ` ⚠ ${result.warning}` : ""),
       );
       onUpdated?.(result.message);
@@ -507,8 +548,10 @@ export function SaleDetail({
               sheet={sheet}
               sale={sale}
               readOnly={readOnly}
+              pending={pendingLink}
               onSaved={(next, message) => {
                 setUpdated(next);
+                setPendingLink(null);
                 onUpdated?.(message);
               }}
             />
@@ -529,10 +572,11 @@ export function SaleDetail({
               onNoteChange={(field, value) =>
                 setNotesEdit((prev) => ({ ...prev, [field]: value }))
               }
+              linkGroup={linkGroupView(sale, linkPlan, linkDraft, setLinkDraft, config)}
             />
           )}
           {mode === "confirm" && (
-            <ChangeList changes={changes} notes={noteChanges} />
+            <ChangeList changes={changes} notes={noteChanges} links={visibleLinkChanges} campaigns={config.campaigns} />
           )}
         </div>
 
@@ -624,7 +668,7 @@ export function SaleDetail({
                 </button>
                 <button
                   type="button"
-                  onClick={() => void handleUpdate(changes, noteChanges)}
+                  onClick={() => void handleUpdate(changes, noteChanges, linkPatches)}
                   disabled={saving || changeCount === 0}
                   aria-busy={saving}
                   className="h-11 rounded-lg bg-brand text-[15px] font-bold text-white disabled:cursor-wait disabled:opacity-70"
@@ -817,8 +861,11 @@ function SaleEditForm({
   vEdit,
   vPreview,
   onVChange,
+  linkGroup,
 }: {
   sale: SheetSale;
+  /** 판매연결 입력칸 묶음 (유입경로·캠페인·리본) — 판매연결을 고칠 수 없는 판매면 안내만 */
+  linkGroup: FieldGroup;
   vEdit: VSplitEdit;
   vPreview: number | null;
   onVChange: (part: keyof VSplitEdit, value: string) => void;
@@ -940,7 +987,8 @@ function SaleEditForm({
       const [first, ...rest] = main.map(view);
       return first ? [{ ...first, children: [...rest, ...children.map(view)] }] : [];
     }),
-  })).filter((g) => g.fields.length > 0); // 판매연결 묶음(유입경로·굿바이)은 "판매연결" 칸에서 따로 고침
+  })).filter((g) => g.fields.length > 0); // 판매연결 묶음은 아래 linkGroup (판매 수정과 함께 저장)
+  groups.push(linkGroup);
   groups.push({
     title: "장표 추가 항목 (간편등록 양식에 없는 칸)",
     fields: [
@@ -984,14 +1032,18 @@ function changeValueText(key: ColumnKey, value: string): string {
 function ChangeList({
   changes,
   notes,
+  links = [],
+  campaigns = [],
 }: {
   changes: SaleChange[];
   notes: NoteChange[];
+  links?: LinkEditPlan["patches"];
+  campaigns?: readonly Campaign[];
 }) {
   return (
     <section aria-label="변경된 항목" className="rounded-xl border border-line">
       <h3 className="border-b border-line bg-zinc-50 px-4 py-2.5 text-sm font-bold text-ink">
-        변경된 항목 {changes.length + notes.length}개
+        변경된 항목 {changes.length + notes.length + links.length}개
       </h3>
       <ul className="divide-y divide-line">
         {changes.map(({ key, before, after, auto, autoNote }) => (
@@ -1040,12 +1092,118 @@ function ChangeList({
             </p>
           </li>
         ))}
+        {links.map((l) => (
+          <li key={l.field} className="px-4 py-3 text-sm">
+            <p className="font-semibold text-ink">
+              {linkFieldLabel(l.field)}
+              <span className="ml-1.5 rounded bg-zinc-100 px-1.5 py-0.5 text-[11px] font-semibold text-ink-muted">
+                판매연결 · 장표 저장 안 함
+              </span>
+            </p>
+            <p className="mt-1 text-ink-sub">
+              기존: <span className="text-ink">{linkValueText(l.field, l.before, campaigns)}</span>
+            </p>
+            <p className="text-ink-sub">
+              변경: <span className="font-semibold text-brand">{linkValueText(l.field, l.value, campaigns)}</span>
+            </p>
+          </li>
+        ))}
       </ul>
       <p className="border-t border-line px-4 py-2.5 text-xs text-ink-muted">
         [수정 저장]을 누르면 장표의 같은 행에 위 항목만 반영됩니다.
+        {links.length > 0 && " 판매연결(유입경로·캠페인·리본)도 같은 저장으로 함께 반영됩니다."}
         {notes.length > 0 &&
           " 참고 항목은 장표가 아니라 웹앱 보관 시트에 저장되며, 바꾸지 않은 참고 항목은 그대로 남습니다."}
       </p>
     </section>
   );
+}
+
+/** 판매 수정의 판매연결 입력칸 (유입경로·캠페인·리본) */
+function linkGroupView(
+  sale: SheetSale,
+  plan: LinkEditPlan | null,
+  draft: LinkDraft,
+  setDraft: (update: (d: LinkDraft) => LinkDraft) => void,
+  config: { inflows: import("@/lib/inflow-options").InflowOption[]; campaigns: Campaign[] },
+): FieldGroup {
+  const title = "유입경로 · 캠페인 · 리본 (판매연결)";
+  if (!plan) {
+    return {
+      title,
+      fields: [
+        {
+          id: "edit-link-locked",
+          label: "판매연결",
+          hint: LINK_HINT,
+          note: true,
+          value:
+            sale.saleIdState === "duplicate"
+              ? "판매 ID 중복 — 점장 확인 필요"
+              : sale.saleIdState === "mismatch"
+                ? "확인 필요 — 판매 상세의 '새 판매 ID 로 다시 연결' 사용"
+                : "판매연결 기능 미배포",
+          readOnly: true,
+        },
+      ],
+    };
+  }
+  const cur = currentLink(sale);
+  const campaignOpts = campaignChoices(cur, config.campaigns);
+  const campaignLabels = new Map(campaignOpts);
+  const changedField = (f: "inflow" | "campaign" | "goodbye") => plan.patches.some((p) => p.field === f || (f === "campaign" && p.field === "campaignId"));
+  return {
+    title,
+    fields: [
+      {
+        id: "edit-link-inflow",
+        label: "유입경로",
+        hint: LINK_HINT,
+        note: true,
+        value: plan.view.inflow,
+        onChange: (v) => setDraft((d) => ({ ...d, inflow: v })),
+        options: inflowChoices(cur, config.inflows),
+        placeholder: cur.inflowRaw ? `확인 필요 · ${cur.inflowRaw}` : "미입력",
+        changed: changedField("inflow"),
+        info: cur.inflowRaw && !cur.inflow ? `카톡 원문 "${cur.inflowRaw}" — 목록에서 고르면 그 항목으로 저장됩니다.` : undefined,
+      },
+      {
+        id: "edit-link-campaign",
+        label: "캠페인",
+        hint: LINK_HINT,
+        note: true,
+        value: plan.view.campaign,
+        onChange: (v) => setDraft((d) => ({ ...d, campaign: v })),
+        // 선택 값은 캠페인ID, 화면에는 캠페인명
+        options: campaignOpts.map(([v]) => v),
+        optionLabels: Object.fromEntries(campaignLabels),
+        placeholder: "없음",
+        changed: changedField("campaign"),
+        info:
+          plan.view.campaign === CAMPAIGN_KEEP_RAW
+            ? "보고한 캠페인명이 목록에 없습니다. 목록에서 고르면 그 캠페인으로 연결됩니다."
+            : config.campaigns.length === 0
+              ? "등록된 캠페인이 없습니다 (유입·캠페인 분석 → 항목 관리)."
+              : undefined,
+      },
+      {
+        id: "edit-link-goodbye",
+        label: "리본",
+        hint: LINK_HINT,
+        note: true,
+        value: plan.view.goodbye,
+        onChange: (v) => setDraft((d) => ({ ...d, goodbye: v })),
+        options: ["O", "X"],
+        placeholder: "판정 안 함",
+        changed: changedField("goodbye"),
+        info:
+          plan.notice ??
+          (plan.autoRibbon
+            ? `중고폰&현물 판매 내용으로 다시 판정: ${plan.autoRibbon}`
+            : draft.goodbye === undefined && cur.ribbonMode
+              ? `저장된 방식: ${cur.ribbonMode}`
+              : "중고폰&현물 판매 내용을 고치면 다시 판정합니다 (직접 고른 값은 유지)."),
+      },
+    ],
+  };
 }

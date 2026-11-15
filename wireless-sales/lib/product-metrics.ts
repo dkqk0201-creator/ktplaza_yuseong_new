@@ -1,4 +1,5 @@
 import { normalizeCategory } from "@/lib/quick-report";
+import { ribbonOf } from "@/lib/ribbon";
 import { isO, type SheetSale } from "@/lib/sheet-record";
 
 /*
@@ -16,7 +17,8 @@ import { isO, type SheetSale } from "@/lib/sheet-record";
  *   제휴카드  제카 AE열 O
  *   동판      AK열이 "순동"·"신동"·"약동" 으로 시작 (뒤에 금액·메모가 붙어도 그 유형). 세부: 순동·신동·약동
  *             "약돈" 처럼 첫 두 글자가 비슷한 오타는 세지 않고 "확인 필요"로 따로 표시 (장표 값은 고치지 않음)
- *   굿바이    판매연결의 굿바이 표시가 O — ※ 인정 기준 미확정 (제안 기준). 중고폰 금액으로는 세지 않음
+ *   리본      (2026-11-15 확정, 예전 이름 굿바이) 판매연결의 리본 O, 없으면 중고폰&현물 판매 내용으로 자동판정한 O (lib/ribbon.ts).
+ *             판정 불가(원본 없음)는 세지 않음. 중고폰 금액으로는 세지 않음
  * 실력지표제외(F열) O 인 판매도 포함한다 (F열 값·다른 기능의 의미는 그대로).
  */
 
@@ -32,7 +34,7 @@ export const PRODUCT_METRICS = [
   { key: "second", label: "2ND" },
   { key: "card", label: "제휴카드" },
   { key: "dongpan", label: "동판" },
-  { key: "goodbye", label: "굿바이" },
+  { key: "goodbye", label: "리본" },
 ] as const;
 export type ProductMetricKey = (typeof PRODUCT_METRICS)[number]["key"];
 export const PRODUCT_METRIC_KEYS: readonly ProductMetricKey[] = PRODUCT_METRICS.map((m) => m.key);
@@ -40,7 +42,7 @@ export const PRODUCT_METRIC_LABEL = Object.fromEntries(
   PRODUCT_METRICS.map((m) => [m.key, m.label]),
 ) as Record<ProductMetricKey, string>;
 /** 인정 기준이 아직 확정되지 않은 지표 (화면에 "기준 미확정" 표시) */
-export const UNCONFIRMED_METRICS: ReadonlySet<ProductMetricKey> = new Set(["goodbye"]);
+export const UNCONFIRMED_METRICS: ReadonlySet<ProductMetricKey> = new Set<ProductMetricKey>();
 
 export function isProductMetricKey(value: unknown): value is ProductMetricKey {
   return typeof value === "string" && (PRODUCT_METRIC_KEYS as readonly string[]).includes(value);
@@ -90,7 +92,7 @@ export function saleMetrics(sale: SheetSale): SaleMetrics {
     card: isO(sale.jeca),
     dongpan: dongpanType(sale.dongpan),
     dongpanCheck: dongpanNeedsCheck(sale.dongpan),
-    goodbye: isO(sale.link?.goodbye ?? ""),
+    goodbye: ribbonOf(sale).value === "O",
   };
 }
 

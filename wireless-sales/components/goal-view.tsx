@@ -404,7 +404,7 @@ function GoalBody({ sheet, sheets, sales }: { sheet: string; sheets: string[]; s
 
       <p className="text-xs leading-relaxed text-ink-muted">
         지표 기준: 후불 = 신규·번이·기변 (UMNP 제외) · 번호이동 · 초스/스초 = 요금제에 &lsquo;초스&rsquo; 또는 &lsquo;스초&rsquo; · 디초/삼초 = 판매보고 &lsquo;디초/삼초 : O&rsquo; ·
-        2ND = AD열 O · 제휴카드 = AE열 O · 동판 = AK열 순동·신동·약동으로 시작 · 굿바이 = 판매연결 굿바이 O (인정 기준 미확정). 지표끼리 더하지 않으며,
+        2ND = AD열 O · 제휴카드 = AE열 O · 동판 = AK열 순동·신동·약동으로 시작 · 리본 = 중고폰&amp;현물 판매에 리본 진행 O (예정·취소·점프만은 X, 원본 없는 과거 판매는 세지 않음). 지표끼리 더하지 않으며,
         개통 = 판매 행 수입니다. 실력지표제외(F열 O) 판매도 포함합니다. 남은 근무일수·일평균 필요 건수는 가망고객관리의 실제 근무 데이터를 연동한 뒤 표시합니다.
       </p>
     </div>

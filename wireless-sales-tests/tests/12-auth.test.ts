@@ -37,6 +37,9 @@ const step = (ms = Date.now()) => Math.floor(ms / 30000);
 const code = (ms = Date.now()) => totpCode(TEST_TOTP_KEY, step(ms));
 const sessionKey = () => Buffer.from(process.env.AUTH_SESSION_SECRET!, "utf8");
 
+import { GET as configGET } from "@/app/api/settings/config/route";
+import { POST as inflowPOST } from "@/app/api/settings/inflow/route";
+import { POST as campaignPOST } from "@/app/api/settings/campaigns/route";
 type Handler = (r: Request) => Promise<Response>;
 /** 업무 API 전부 (경로, 메서드, 함수, 정상 형식의 요청 본문) */
 const ROUTES: [string, "GET" | "POST", Handler, unknown][] = [
@@ -54,6 +57,9 @@ const ROUTES: [string, "GET" | "POST", Handler, unknown][] = [
   ["/api/sales/link", "POST", linkPOST, { target: {}, saleId: "", patches: [] }],
   ["/api/goals/board?month=2026-10", "GET", boardGET, undefined],
   ["/api/goals/board", "POST", boardPOST, { month: "2026-10", items: [] }],
+  ["/api/settings/config", "GET", configGET, undefined],
+  ["/api/settings/inflow", "POST", inflowPOST, { items: [], version: "" }],
+  ["/api/settings/campaigns", "POST", campaignPOST, { campaign: {}, version: "" }],
 ];
 
 function req(url: string, method: string, body: unknown, headers: Record<string, string>) {
@@ -86,7 +92,7 @@ test("2) 모든 업무 API 파일: 내보낸 GET·POST 의 첫 동작이 require
   const walk = (d: string) => { for (const f of readdirSync(d)) { const p = path.join(d, f); if (statSync(p).isDirectory()) walk(p); else if (f === "route.ts") files.push(p); } };
   walk(path.join(WS, "app/api"));
   const business = files.filter((f) => !f.includes(`${path.sep}auth${path.sep}`));
-  assert.equal(business.length, 11);
+  assert.equal(business.length, 14);
   let handlers = 0;
   for (const f of business) {
     const src = readFileSync(f, "utf8");

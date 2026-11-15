@@ -14,6 +14,7 @@ import { diffNotes } from "@/lib/sale-form-layout";
 import { planVSplit } from "@/lib/v-split";
 import type { SheetSale } from "@/lib/sheet-record";
 import { POST as quickPOST } from "@/app/api/sales/quick/route";
+import { forgetSalesConfig } from "@/lib/server/sales-config";
 import { POST as updatePOST } from "@/app/api/sales/update/route";
 import { POST as deletePOST } from "@/app/api/sales/delete/route";
 import { POST as markDonePOST } from "@/app/api/sales/mark-done/route";
@@ -76,6 +77,7 @@ export function setup(opts: GasOptions & { months?: string[]; slots?: number } =
   return { ss, gas };
 }
 export function connect(gas: Gas) {
+  forgetSalesConfig(); // 서버가 기억한 유입경로·캠페인 설정은 시험마다 새로 (다른 가짜 시트의 설정이 남지 않게)
   globalThis.fetch = (async (_url: string, init: RequestInit) => {
     const { secret: _s, ...body } = JSON.parse(String(init.body));
     return Response.json(gas.doPost(body));
@@ -89,6 +91,10 @@ const post = (handler: (r: Request) => Promise<Response>, body: unknown) =>
 export async function register(...texts: string[]) {
   const items = texts.map((t) => ({ fields: parseQuickReports(t)[0].fields }));
   return post(quickPOST, { items });
+}
+/** 간편등록 + 등록요청 ID (화면이 카드마다 만드는 값) */
+export async function registerWithIds(items: { text: string; requestId: string }[]) {
+  return post(quickPOST, { items: items.map((i) => ({ fields: parseQuickReports(i.text)[0].fields, requestId: i.requestId })) });
 }
 let seq = 0;
 export interface ReportOpt { date?: string; staff?: string; category?: string; extra?: string; use?: string; benefit?: string }

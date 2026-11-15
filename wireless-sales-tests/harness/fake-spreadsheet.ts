@@ -103,6 +103,7 @@ export class FakeSheet {
       },
       setNote: (n: string) => { mark("setNote"); sheet.cell(r, c).note = n ?? ""; return range; },
       getNote: () => sheet.peek(r, c)?.note ?? "",
+      clearContent: () => { mark("clearContent"); each((rr, cc) => { const cell = sheet.peek(rr, cc); if (cell) { cell.value = ""; cell.formula = ""; } }); return range; },
       clearNote: () => { mark("clearNote"); each((rr, cc) => { const cell = sheet.peek(rr, cc); if (cell) cell.note = ""; }); return range; },
       setNumberFormat: (f: string) => { each((rr, cc) => { sheet.cell(rr, cc).format = f; }); return range; },
     };

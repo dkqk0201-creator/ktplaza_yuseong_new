@@ -82,10 +82,10 @@ async function inflowMap(): Promise<Record<string, string>> {
 
 test("1) 새 판매 저장 → 앱 정렬 → 웹앱 판매 수정(고객명·CTN·다른 칸) 후에도 ID·유입경로 그대로", async () => {
   const { ss } = setup({ slots: 20 });
-  await register(report(A.name, A.ctn, { date: "10.08", extra: "유입경로 : 네이버 블로그" }), report(B.name, B.ctn, { date: "10.09", extra: "유입경로 : TM" }));
+  await register(report(A.name, A.ctn, { date: "10.08", extra: "유입경로 : 네이버" }), report(B.name, B.ctn, { date: "10.09", extra: "유입경로 : TM" }));
   const idA = byName(await list(), A.name).saleId!;
-  await register(report(C.name, C.ctn, { date: "10.02", extra: "유입경로 : 지인 소개" })); // 앱 정렬로 A·B 가 아래로
-  assert.deepEqual(await inflowMap(), { [A.name]: "네이버 블로그", [B.name]: "TM", [C.name]: "지인 소개" });
+  await register(report(C.name, C.ctn, { date: "10.02", extra: "유입경로 : 자점" })); // 앱 정렬로 A·B 가 아래로
+  assert.deepEqual(await inflowMap(), { [A.name]: "네이버", [B.name]: "TM", [C.name]: "자점" });
   const a = byName(await list(), A.name);
   assert.equal(a.saleId, idA);
   // 웹앱 수정: 고객명·CTN·모델명 (C열 개통일은 웹앱 수정 금지)
@@ -94,7 +94,7 @@ test("1) 새 판매 저장 → 앱 정렬 → 웹앱 판매 수정(고객명·CT
   const a2 = byName(await list(), "가짜바뀐이름");
   assert.equal(a2.saleId, idA);
   assert.equal(a2.saleIdState, "ok", "CTN 을 웹앱으로 고치면 확인값도 함께 바뀜");
-  assert.equal(inflowOf(a2), "네이버 블로그");
+  assert.equal(inflowOf(a2), "네이버");
   assert.match(ss.month().cell(a2.row, L("C")).note, ID_LINE);
   // 개통일(C열)은 웹앱 수정 대상이 아님 → 거부
   const dateEdit = await post(updatePOST, { target: target(a2), changes: [{ col: 2, before: a2.activatedAt, value: "2026-10-20" }] });
@@ -104,12 +104,12 @@ test("1) 새 판매 저장 → 앱 정렬 → 웹앱 판매 수정(고객명·CT
 test("2) 장표에서 직접 행 이동·정렬(메모가 함께 움직임)·행 삽입·행 삭제 → 판매를 따라감", async () => {
   const { ss } = setup({ slots: 20 });
   await register(
-    report(A.name, A.ctn, { date: "10.03", extra: "유입경로 : 네이버 플레이스" }),
-    report(B.name, B.ctn, { date: "10.04", extra: "유입경로 : 인스타그램" }),
-    report(C.name, C.ctn, { date: "10.05", extra: "유입경로 : 매장 문자" }),
+    report(A.name, A.ctn, { date: "10.03", extra: "유입경로 : 네이버" }),
+    report(B.name, B.ctn, { date: "10.04", extra: "유입경로 : 자점" }),
+    report(C.name, C.ctn, { date: "10.05", extra: "유입경로 : 내방" }),
   );
   const sheet = ss.month();
-  const want = { [A.name]: "네이버 플레이스", [B.name]: "인스타그램", [C.name]: "매장 문자" };
+  const want = { [A.name]: "네이버", [B.name]: "자점", [C.name]: "내방" };
   const rows = Object.fromEntries((await list()).map((s) => [s.customer, s.row]));
   moveRow(sheet, rows[C.name], rows[A.name]); // C 를 맨 위로 끌어 옮김
   assert.deepEqual(await inflowMap(), want);
@@ -123,7 +123,7 @@ test("2) 장표에서 직접 행 이동·정렬(메모가 함께 움직임)·행
   // 판매 하나의 행을 통째로 삭제 → 그 판매만 사라지고 나머지는 그대로
   const after = Object.fromEntries((await list()).map((s) => [s.customer, s.row]));
   deleteRowAt(sheet, after[B.name]);
-  assert.deepEqual(await inflowMap(), { [A.name]: "네이버 플레이스", [C.name]: "매장 문자" });
+  assert.deepEqual(await inflowMap(), { [A.name]: "네이버", [C.name]: "내방" });
   // 이동 후에도 웹앱 저장·수정 정상
   const c = byName(await list(), C.name);
   assert.equal((await saveLink(c, [{ field: "campaign", before: "", value: "주말특가" }])).ok, true);
@@ -140,14 +140,14 @@ test("3) 행 복사(메모 포함) → 두 행 모두 'ID 중복', 연결 정보
   for (const t of twins) {
     assert.equal(t.saleIdState, "duplicate");
     assert.equal(t.link, undefined);
-    const r = await saveLink(t, [{ field: "inflow", before: "", value: "기타" }]);
+    const r = await saveLink(t, [{ field: "inflow", before: "", value: "미확인" }]);
     assert.equal(r.ok, false);
   }
 });
 
 test("4) 값만 붙여넣기로 판매 내용과 메모(ID)가 엇갈리면 → 확인 필요(mismatch), 다른 판매의 유입경로를 붙이지 않음 / 다시 연결은 새 ID", async () => {
   const { ss } = setup({ slots: 20 });
-  await register(report(A.name, A.ctn, { date: "10.03", extra: "유입경로 : 네이버 블로그" }), report(B.name, B.ctn, { date: "10.04", extra: "유입경로 : 외부영업" }));
+  await register(report(A.name, A.ctn, { date: "10.03", extra: "유입경로 : 네이버" }), report(B.name, B.ctn, { date: "10.04", extra: "유입경로 : 외부영업" }));
   const sheet = ss.month();
   const a = byName(await list(), A.name);
   const b = byName(await list(), B.name);
@@ -159,7 +159,7 @@ test("4) 값만 붙여넣기로 판매 내용과 메모(ID)가 엇갈리면 → 
   assert.equal(moved.row, a.row);
   assert.equal(moved.saleId, idA);
   assert.equal(moved.saleIdState, "mismatch", "A 의 ID 가 B 판매 행에 남음 → 확인 필요");
-  assert.equal(moved.link, undefined, "A 의 유입경로(네이버 블로그)가 B 에 붙지 않음");
+  assert.equal(moved.link, undefined, "A 의 유입경로(네이버)가 B 에 붙지 않음");
   // 저장은 거부, relink 로만 새 ID (예전 기록은 옮기지 않음)
   const refused = await saveLink(moved, [{ field: "inflow", before: "", value: "TM" }]);
   assert.equal(refused.ok, false);
@@ -177,7 +177,7 @@ test("4) 값만 붙여넣기로 판매 내용과 메모(ID)가 엇갈리면 → 
 
 test("5) 장표에서 CTN·개통일을 직접 고치면 확인 필요 (웹앱 수정은 그대로 유지) / 고객명만 직접 고치면 그대로", async () => {
   const { ss } = setup({ slots: 20 });
-  await register(report(A.name, A.ctn, { extra: "유입경로 : 자연 방문" }), report(B.name, B.ctn, { extra: "유입경로 : KT 안내" }), report(C.name, C.ctn, { extra: "유입경로 : 기타" }));
+  await register(report(A.name, A.ctn, { extra: "유입경로 : 내방" }), report(B.name, B.ctn, { extra: "유입경로 : 외부영업" }), report(C.name, C.ctn, { extra: "유입경로 : 미확인" }));
   const sheet = ss.month();
   const sales = await list();
   sheet.cell(byName(sales, A.name).row, L("E")).value = "010-0000-1212"; // CTN 직접 수정
@@ -188,16 +188,16 @@ test("5) 장표에서 CTN·개통일을 직접 고치면 확인 필요 (웹앱 �
   assert.equal(byName(after, B.name).saleIdState, "mismatch");
   const c = byName(after, "가짜고객명수정");
   assert.equal(c.saleIdState, "ok");
-  assert.equal(inflowOf(c), "기타");
+  assert.equal(inflowOf(c), "미확인");
 });
 
 test("6) 예전 버전(운영과 같은 main)으로 되돌려 등록·정렬·수정·삭제 → 다시 새 버전: ID·유입경로가 다른 판매에 붙지 않음", async () => {
   const { ss } = setup({ slots: 25, entry: "emulated" });
   // 새 버전에서 등록
   await register(
-    report(A.name, A.ctn, { date: "10.06", extra: "유입경로 : 네이버 블로그" }),
+    report(A.name, A.ctn, { date: "10.06", extra: "유입경로 : 네이버" }),
     report(B.name, B.ctn, { date: "10.07", extra: "유입경로 : TM" }),
-    report(C.name, C.ctn, { date: "10.08", extra: "유입경로 : 지인 소개" }),
+    report(C.name, C.ctn, { date: "10.08", extra: "유입경로 : 자점" }),
   );
   const before = Object.fromEntries((await list()).map((s) => [s.customer, s.saleId]));
   // 예전 버전으로 되돌림
@@ -218,7 +218,7 @@ test("6) 예전 버전(운영과 같은 main)으로 되돌려 등록·정렬·�
   const a = byName(sales, A.name);
   const b = byName(sales, "가짜B개명");
   assert.equal(a.saleId, before[A.name], "예전 버전 정렬 후에도 A 의 ID 유지");
-  assert.equal(inflowOf(a), "네이버 블로그");
+  assert.equal(inflowOf(a), "네이버");
   assert.equal(b.saleId, before[B.name], "예전 버전에서 고객명을 바꿔도 ID 유지");
   assert.equal(inflowOf(b), "TM");
   for (const name of [D.name, E.name, "가짜새판매"]) {
@@ -230,15 +230,15 @@ test("6) 예전 버전(운영과 같은 main)으로 되돌려 등록·정렬·�
   assert.ok(!sales.some((s) => s.saleId === before[C.name] && s.saleIdState === "ok"));
   // 새 버전에서 예전 판매에 유입경로 저장 → 그 행에만 새 ID
   const d = byName(sales, D.name);
-  const saved = await saveLink(d, [{ field: "inflow", before: "", value: "자연 방문" }], d.saleIdState === "mismatch" ? { relink: true } : {});
+  const saved = await saveLink(d, [{ field: "inflow", before: "", value: "내방" }], d.saleIdState === "mismatch" ? { relink: true } : {});
   assert.equal(saved.ok, true, JSON.stringify(saved));
-  assert.equal(inflowOf(byName(await list(), D.name)), "자연 방문");
-  assert.equal(inflowOf(byName(await list(), A.name)), "네이버 블로그");
+  assert.equal(inflowOf(byName(await list(), D.name)), "내방");
+  assert.equal(inflowOf(byName(await list(), A.name)), "네이버");
 });
 
 test("7) 예전 버전에서 CTN 을 고치면(확인값 갱신 안 됨) → 새 버전에서 확인 필요로 막힘 (잘못 연결되지 않는 쪽)", async () => {
   const { ss } = setup({ slots: 20, entry: "emulated" });
-  await register(report(A.name, A.ctn, { extra: "유입경로 : 인스타그램" }));
+  await register(report(A.name, A.ctn, { extra: "유입경로 : 자점" }));
   useVersion(ss, "old");
   assert.equal((await edit(byName(await list(), A.name), { ctn: "010-0000-3434" })).ok, true);
   useVersion(ss, "new");

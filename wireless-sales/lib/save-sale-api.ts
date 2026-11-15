@@ -13,6 +13,10 @@ export type SaveSaleResponse =
       warning?: string;
       /** 새 판매 고유 ID (Apps Script sale-link.gs 가 있을 때) */
       saleId?: string;
+      /** 같은 등록요청으로 이미 저장돼 있던 판매 (장표에 다시 쓰지 않음) */
+      repeated?: boolean;
+      /** 판매는 저장됐지만 판매연결(유입경로·캠페인·리본)을 저장하지 못함 → "판매연결만 다시 저장" 필요 */
+      linkPending?: boolean;
     }
   | { ok: false; message: string; errors?: string[] };
 

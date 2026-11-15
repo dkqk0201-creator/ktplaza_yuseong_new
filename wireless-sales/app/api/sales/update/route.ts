@@ -20,6 +20,10 @@ import {
   type NoteChange,
 } from "@/lib/sale-form-layout";
 import type { ColumnKey } from "@/lib/sheet-columns";
+import { linkValueError, type SaleLinkField } from "@/lib/sale-link";
+import { staffIdForName } from "@/lib/data/staff-list";
+import { getSalesConfig } from "@/lib/server/sales-config";
+import type { InflowOption } from "@/lib/inflow-options";
 import type {
   UpdateSaleResponse,
   UpdateSaleTarget,
@@ -98,6 +102,37 @@ function parseTarget(input: unknown): UpdateSaleTarget | null {
     return null;
   }
   return { sheet, row, no, activatedAt, customer, ctn };
+}
+
+/** 판매 수정 화면에서 함께 고칠 수 있는 판매연결 항목 */
+const LINK_EDITABLE = new Set<SaleLinkField>(["inflow", "campaign", "goodbye", "campaignId", "ribbonMode", "inflowRaw"]);
+const SALE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+type ParsedLink = { saleId: string; staffId: string; patches: { field: SaleLinkField; before: string; value: string }[] };
+
+/** 판매연결 변경 검사 (없으면 null, 형식 오류면 글자) */
+function parseLinkPart(input: unknown, inflows: readonly InflowOption[]): ParsedLink | null | string {
+  if (input === undefined || input === null) return null;
+  if (typeof input !== "object") return "판매연결 형식이 올바르지 않습니다.";
+  const raw = input as Record<string, unknown>;
+  const saleId = typeof raw.saleId === "string" ? raw.saleId : "";
+  if (saleId && !SALE_ID.test(saleId)) return "판매 ID 형식이 올바르지 않습니다.";
+  if (!Array.isArray(raw.patches) || raw.patches.length > LINK_EDITABLE.size) return "판매연결 형식이 올바르지 않습니다.";
+  const seen = new Set<string>();
+  const patches: ParsedLink["patches"] = [];
+  for (const item of raw.patches) {
+    const p = (item ?? {}) as Record<string, unknown>;
+    const field = p.field as SaleLinkField;
+    if (typeof p.field !== "string" || !LINK_EDITABLE.has(field) || seen.has(field)) return "판매연결 항목이 올바르지 않습니다.";
+    if (typeof p.before !== "string" || typeof p.value !== "string" || p.before.length > 100 || p.value.length > 100) return "판매연결 값이 올바르지 않습니다.";
+    const problem = linkValueError(field, p.value, inflows);
+    if (problem) return problem;
+    seen.add(field);
+    patches.push({ field, before: p.before.trim(), value: p.value.trim() });
+  }
+  if (patches.length === 0) return null;
+  const staff = typeof raw.staff === "string" ? raw.staff : "";
+  return { saleId, staffId: staffIdForName(staff) ?? "", patches };
 }
 
 interface ParsedChanges {
@@ -227,9 +262,14 @@ export async function POST(request: Request) {
   if (typeof noteChanges === "string") {
     return reply({ ok: false, message: noteChanges }, 400);
   }
-  // 참고 항목만 바꾼 경우: 장표 칸 변경 없이 참고내용만 저장
+  const config = raw.link !== undefined && raw.link !== null ? await getSalesConfig() : null;
+  const linkPart = parseLinkPart(raw.link, config?.inflows ?? []);
+  if (typeof linkPart === "string") {
+    return reply({ ok: false, message: linkPart }, 400);
+  }
+  // 참고 항목·판매연결만 바꾼 경우: 장표 칸 변경 없이 그것만 저장
   const onlyNotes =
-    noteChanges.length > 0 &&
+    (noteChanges.length > 0 || linkPart !== null) &&
     (submitted === undefined || (Array.isArray(submitted) && submitted.length === 0));
   const parsed: ParsedChanges | string = onlyNotes
     ? { cells: [], list: [] }
@@ -245,16 +285,20 @@ export async function POST(request: Request) {
       target,
       cells,
       [],
-      noteChanges.length > 0
-        ? {
-            notePatches: noteChanges.map((n) => ({
-              field: n.field,
-              before: n.before,
-              value: n.after,
-            })),
-          }
-        : {},
+      {
+        ...(noteChanges.length > 0
+          ? {
+              notePatches: noteChanges.map((n) => ({
+                field: n.field,
+                before: n.before,
+                value: n.after,
+              })),
+            }
+          : {}),
+        ...(linkPart ? { link: linkPart } : {}),
+      },
     );
+    const linkPending = linkPart !== null && result.linkSaved !== true;
     const notesNotSaved = noteChanges.length > 0 && result.notePatched !== true;
     const onlyPolicy =
       noteChanges.length === 1 && noteChanges[0].field === POLICY_NAME_FIELD;
@@ -266,15 +310,21 @@ export async function POST(request: Request) {
             ? "판매내역이 수정되었습니다."
             : onlyPolicy
               ? "정책명이 수정되었습니다."
-              : "참고내용이 수정되었습니다.",
+              : noteChanges.length > 0
+                ? "참고내용이 수정되었습니다."
+                : "판매연결이 수정되었습니다.",
         row: result.row,
         no: result.no,
         values: result.values,
         ...(noteChanges.length > 0 && result.notes ? { notes: result.notes } : {}),
-        ...(notesNotSaved
+        ...(result.saleId && result.link ? { saleId: result.saleId, link: result.link } : {}),
+        ...(linkPending ? { linkPending: true } : {}),
+        ...(notesNotSaved || linkPending
           ? {
-              warning:
-                "장표 칸은 수정됐지만 참고 항목(장표 저장 안 함)은 저장하지 못했습니다. 화면을 새로고침한 뒤 다시 확인해 주세요.",
+              warning: [
+                notesNotSaved ? "장표 칸은 수정됐지만 참고 항목(장표 저장 안 함)은 저장하지 못했습니다. 화면을 새로고침한 뒤 다시 확인해 주세요." : "",
+                linkPending ? "판매 수정은 저장됐지만 유입경로·캠페인·리본(판매연결)은 저장하지 못했습니다. '판매연결만 다시 저장'을 눌러 주세요." : "",
+              ].filter(Boolean).join(" "),
             }
           : {}),
       },

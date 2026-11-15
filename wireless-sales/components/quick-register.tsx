@@ -16,7 +16,9 @@ import {
 } from "@/lib/quick-report";
 import { POLICY_NAME_MAX } from "@/lib/model-policy";
 import { SaleFieldGroups, type FieldView } from "@/components/sale-fields";
-import { INFLOW_SOURCES, usedCampaigns } from "@/lib/sale-link";
+import { selectableInflows } from "@/lib/inflow-options";
+import { sortedCampaigns } from "@/lib/campaigns";
+import { useSalesConfig } from "@/components/use-sales-config";
 import { LINK_HINT, NOTE_HINT, QUICK_GROUPS, V_HINT, columnHint, fieldLabel } from "@/lib/sale-form-layout";
 import type { QuickBatchResponse, SaveSaleResponse } from "@/lib/save-sale-api";
 
@@ -28,11 +30,13 @@ import type { QuickBatchResponse, SaveSaleResponse } from "@/lib/save-sale-api";
 type Submit =
   | { state: "idle" }
   | { state: "saving" }
-  | { state: "done"; sheet: string; no: string; warning?: string }
+  | { state: "done"; sheet: string; no: string; warning?: string; repeated?: boolean; linkPending?: boolean; retrying?: boolean }
   | { state: "failed"; message: string; errors?: string[] };
 
 interface Item {
   id: number;
+  /** 등록요청 ID (이 카드를 다시 보내도 판매가 두 번 저장되지 않게 — Apps Script 가 확인) */
+  requestId: string;
   fields: QuickFields;
   unknownLines: string[];
   repeatedFields: QuickFieldId[];
@@ -61,12 +65,23 @@ const STATUS_TONE: Record<Status, "warn" | "good" | "muted"> = {
   failed: "warn",
 };
 
+/** 등록요청 ID (UUID v4). randomUUID 가 없는 브라우저는 getRandomValues 로 같은 형식을 만든다 */
+function newRequestId(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
 /** 한 번에 보낼 최대 건수 (서버·Apps Script 와 같은 30건) */
 const BATCH_SIZE = 30;
 
 /** 여러 건을 한 번에 저장 요청한다. 보낸 순서대로 건별 결과를 돌려준다. */
 async function postQuickBatch(
   list: QuickFields[],
+  requestIds: string[],
 ): Promise<SaveSaleResponse[]> {
   const unknown = (message: string): SaveSaleResponse[] =>
     list.map(() => ({ ok: false, message }));
@@ -74,7 +89,7 @@ async function postQuickBatch(
     const response = await fetch("/api/sales/quick", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: list.map((fields) => ({ fields })) }),
+      body: JSON.stringify({ items: list.map((fields, k) => ({ fields, requestId: requestIds[k] })) }),
     });
     const body = (await response.json()) as QuickBatchResponse;
     if (body?.ok === true && Array.isArray(body.results)) {
@@ -87,7 +102,7 @@ async function postQuickBatch(
     throw new Error("invalid");
   } catch {
     return unknown(
-      "서버와 통신하지 못했습니다. 장표에 저장되었는지 확인한 뒤 다시 시도해 주세요.",
+      "서버와 통신하지 못했습니다. 다시 등록해도 같은 등록 요청으로 보내므로 판매가 두 번 저장되지 않습니다.",
     );
   }
 }
@@ -127,8 +142,13 @@ export function QuickRegister({
     else ensureFresh();
   }, [selectedSheet, currentSheet, selectSheet, ensureFresh]);
   const sheetReady = data?.sheet === currentSheet;
-  // 예전에 쓴 캠페인명 (입력칸 추천 목록)
-  const campaigns = useMemo(() => usedCampaigns(data?.sales ?? []), [data]);
+  // 유입경로 항목·캠페인 목록 (항목 관리에서 바꾼 값)
+  const { config } = useSalesConfig();
+  const inflowOptions = useMemo(() => selectableInflows(config.inflows), [config.inflows]);
+  const campaigns = useMemo(
+    () => sortedCampaigns(config.campaigns.filter((c) => c.active)).map((c) => c.name),
+    [config.campaigns],
+  );
 
   const existingKeys = useMemo(
     () =>
@@ -145,10 +165,10 @@ export function QuickRegister({
       new Map(
         items.map((item) => [
           item.id,
-          normalizeQuick(item.fields, { today, staffNames }),
+          normalizeQuick(item.fields, { today, staffNames, config }),
         ]),
       ),
-    [items, today, staffNames],
+    [items, today, staffNames, config],
   );
 
   /** 붙여넣은 글 안에서 같은 개통일+CTN 이 2번 이상 나오는 키 */
@@ -184,6 +204,7 @@ export function QuickRegister({
     const reports = parseQuickReports(text);
     const added = reports.map((r) => ({
       id: nextId.current++,
+      requestId: newRequestId(),
       fields: r.fields,
       unknownLines: r.unknownLines,
       repeatedFields: r.repeatedFields,
@@ -226,7 +247,7 @@ export function QuickRegister({
     // 이번에 등록에 성공한 건 (id → 저장 위치)
     const succeeded = new Map<
       number,
-      { sheet: string; no: string; warning?: string }
+      { sheet: string; no: string; warning?: string; repeated?: boolean; linkPending?: boolean }
     >();
     // 등록 완료·등록 중인 건은 절대 다시 보내지 않는다
     const queue = targets
@@ -246,7 +267,10 @@ export function QuickRegister({
     // 여러 건을 한 번의 요청으로 보낸다 (Apps Script 호출·잠금·장표 읽기가 1번)
     for (let start = 0; start < queue.length; start += BATCH_SIZE) {
       const chunk = queue.slice(start, start + BATCH_SIZE);
-      const results = await postQuickBatch(chunk.map((i) => i.fields));
+      const results = await postQuickBatch(
+        chunk.map((i) => i.fields),
+        chunk.map((i) => i.requestId),
+      );
       const byId = new Map(chunk.map((item, k) => [item.id, results[k]]));
       for (const [id, result] of byId) {
         if (result.ok) {
@@ -255,6 +279,8 @@ export function QuickRegister({
             sheet: result.sheet,
             no: result.no,
             warning: result.warning,
+            repeated: result.repeated,
+            linkPending: result.linkPending,
           });
         }
       }
@@ -270,6 +296,8 @@ export function QuickRegister({
                   sheet: result.sheet,
                   no: result.no,
                   warning: result.warning,
+                  repeated: result.repeated,
+                  linkPending: result.linkPending,
                 },
               }
             : {
@@ -290,10 +318,13 @@ export function QuickRegister({
     // 분석한 모든 건이 등록 완료일 때만 입력창·분석 결과를 비워 처음 상태로 돌린다.
     // 실패·확인 필요·중복 가능성·미등록 건이 하나라도 있으면 아무것도 지우지 않는다.
     const all = itemsRef.current;
+    // 판매연결만 저장 못 한 건이 있으면 카드를 남겨 "판매연결만 다시 저장"을 누를 수 있게 한다
     const allDone =
       saved > 0 &&
       all.length > 0 &&
-      all.every((i) => i.submit.state === "done" || succeeded.has(i.id));
+      all.every((i) => i.submit.state === "done" || succeeded.has(i.id)) &&
+      ![...succeeded.values()].some((r) => r.linkPending) &&
+      !all.some((i) => i.submit.state === "done" && i.submit.linkPending);
     if (allDone) {
       setDoneNotice(
         all.map((i) => {
@@ -314,6 +345,33 @@ export function QuickRegister({
       setCopied(null);
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
+  }
+
+  /** 판매는 저장됐고 판매연결만 못 한 건: 같은 등록요청 ID 로 다시 보내 판매연결만 이어서 저장 (판매는 다시 쓰지 않음) */
+  async function retryLink(id: number) {
+    const item = itemsRef.current.find((i) => i.id === id);
+    if (!item || item.submit.state !== "done" || !item.submit.linkPending || runningRef.current) return;
+    runningRef.current = true;
+    setRunning(true);
+    updateItem(id, (i) => (i.submit.state === "done" ? { ...i, submit: { ...i.submit, retrying: true } } : i));
+    const [result] = await postQuickBatch([item.fields], [item.requestId]);
+    runningRef.current = false;
+    setRunning(false);
+    updateItem(id, (i) => {
+      if (i.submit.state !== "done") return i;
+      if (result.ok && !result.linkPending) {
+        return { ...i, submit: { state: "done", sheet: result.sheet, no: result.no, repeated: true } };
+      }
+      return {
+        ...i,
+        submit: {
+          ...i.submit,
+          retrying: false,
+          warning: result.ok ? result.warning : `다시 저장하지 못했습니다: ${result.message}`,
+        },
+      };
+    });
+    if (result.ok) void invalidate();
   }
 
   async function copyTemplate() {
@@ -479,6 +537,8 @@ export function QuickRegister({
                 running={running}
                 canRegister={sheetReady}
                 campaigns={campaigns}
+                inflowOptions={inflowOptions}
+                onRetryLink={() => void retryLink(item.id)}
                 onChange={(id, value) =>
                   updateItem(item.id, (i) => ({
                     ...i,
@@ -511,6 +571,8 @@ function QuickItemCard({
   running,
   canRegister,
   campaigns,
+  inflowOptions,
+  onRetryLink,
   onChange,
   onAllowDuplicate,
   onRegister,
@@ -519,6 +581,8 @@ function QuickItemCard({
   index: number;
   item: Item;
   campaigns: readonly string[];
+  inflowOptions: readonly string[];
+  onRetryLink: () => void;
   status: Status;
   normalized: QuickNormalized;
   duplicateReason: string | null;
@@ -551,30 +615,44 @@ function QuickItemCard({
     const shown = normalized.display[id];
     // 동판에 X 이외의 글자가 있으면 가능일은 입력 불가 (AL열 X 저장)
     const dateBlocked = id === "availableDate" && !availableDateAllowed(item.fields.dongpan);
-    // 판매연결 항목 (유입경로·캠페인·굿바이): 장표가 아닌 "웹앱판매연결"에 판매 고유 ID 로 저장
+    // 판매연결 항목 (유입경로·캠페인·리본): 장표가 아닌 "웹앱판매연결"에 판매 고유 ID 로 저장
     if (id === "inflow" || id === "campaign" || id === "goodbye") {
       const value = item.fields[id];
-      const parsed = id === "inflow" ? normalized.display.inflow : undefined;
+      const link = normalized.link;
+      // 카톡에 "블로그" 처럼 적었으면 항목 이름으로 바꿔 보여 준다 (모르는 표현은 원문 그대로 → 확인 필요)
+      const shown = id === "inflow" ? link.inflow || value : value;
+      const info =
+        id === "inflow"
+          ? link.inflowRaw
+            ? `확인 필요: "${link.inflowRaw}" 은(는) 유입경로 항목에 없어 원문만 저장됩니다. 목록에서 고르면 그 항목으로 저장됩니다.`
+            : !value.trim()
+              ? "선택하지 않으면 '미입력'으로 저장됩니다. 고객이 모르면 '미확인'을 고르세요."
+              : undefined
+          : id === "campaign"
+            ? link.campaignId
+              ? `캠페인 연결: ${normalized.display.campaign}`
+              : link.campaign
+                ? `확인 필요: 캠페인 목록에 없는 이름이라 원문만 저장됩니다. (유입·캠페인 분석 → 항목 관리에서 캠페인·별칭을 등록하면 연결할 수 있습니다)`
+                : "평소에는 비워 두세요 (없음)."
+            : link.ribbonMode === "자동"
+              ? `중고폰&현물 판매 내용으로 자동 판정: ${link.goodbye}`
+              : link.ribbonMode === "수동"
+                ? "직접 고른 값 (중고폰&현물 판매 판정과 다름)"
+                : "보고에 중고폰&현물 판매 줄이 없어 판정하지 않았습니다. 필요하면 직접 고르세요.";
       return {
         id: `quick-${item.id}-${id}`,
         label: fieldLabel(id),
         hint: LINK_HINT,
         note: true,
-        // 카톡에 "블로그" 처럼 적었으면 목록 값으로 바꿔 보여 준다 (모르는 표현은 그대로 → 확인 필요)
-        value: parsed ?? value,
+        value: shown,
         onChange: (v) => onChange(id, v),
         disabled: locked,
-        options: id === "inflow" ? INFLOW_SOURCES : id === "goodbye" ? ["O", "X"] : undefined,
+        options: id === "inflow" ? inflowOptions : id === "goodbye" ? ["O", "X"] : undefined,
         suggestions: id === "campaign" ? campaigns : undefined,
-        placeholder: id === "campaign" ? "선택 입력 (예: 주말특가)" : id === "goodbye" ? "미입력" : "선택하세요",
+        placeholder: id === "campaign" ? "없음" : id === "goodbye" ? "판정 안 함" : "선택하세요",
         maxLength: id === "campaign" ? 60 : undefined,
         problems: issuesByField.get(id),
-        info:
-          id === "inflow" && !value.trim()
-            ? "선택하지 않으면 '미입력'으로 저장됩니다. 고객이 모르면 '미확인'을 고르세요."
-            : id === "goodbye"
-              ? "중고폰 보상판매 실적 표시 (인정 기준 확정 전 — O 만 실적)"
-              : undefined,
+        info,
       };
     }
     return {
@@ -634,10 +712,25 @@ function QuickItemCard({
             저장되었습니다.
           </span>
         )}
+        {item.submit.state === "done" && item.submit.repeated && (
+          <span className="w-full text-xs font-semibold text-emerald-700">
+            이미 저장돼 있던 판매입니다 (같은 등록 요청 — 장표에 다시 쓰지 않았습니다).
+          </span>
+        )}
         {item.submit.state === "done" && item.submit.warning && (
           <span className="w-full text-xs font-semibold text-rose-700">
             ⚠ {item.submit.warning}
           </span>
+        )}
+        {item.submit.state === "done" && item.submit.linkPending && (
+          <button
+            type="button"
+            onClick={onRetryLink}
+            disabled={running}
+            className="h-9 rounded-lg bg-rose-600 px-3 text-xs font-bold text-white disabled:opacity-50"
+          >
+            {item.submit.retrying ? "다시 저장 중..." : "판매연결만 다시 저장"}
+          </button>
         )}
         <div className="ml-auto flex gap-2">
           {!locked && (

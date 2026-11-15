@@ -103,7 +103,7 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     href: "/analysis",
-    label: "유입경로 분석",
+    label: "유입·캠페인",
     icon: (
       <svg {...iconProps}>
         <path d="M3 4h18l-7 8v6l-4 2v-8z" />

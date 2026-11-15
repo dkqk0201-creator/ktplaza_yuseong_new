@@ -79,7 +79,7 @@ export const QUICK_GROUPS: QuickGroup[] = [
     ],
   },
   // 판매연결 (보조 시트 "웹앱판매연결"). 판매 수정에서는 아래 판매연결 칸이 아니라 따로 저장하는 "판매연결" 칸에서 고친다
-  { title: "유입경로 · 굿바이", items: [{ id: "inflow" }, { id: "campaign" }, { id: "goodbye" }] },
+  { title: "유입경로 · 캠페인 · 리본", items: [{ id: "inflow" }, { id: "campaign" }, { id: "goodbye" }] },
   { title: "고객약속사항", items: [{ id: "customerPromise" }] },
 ];
 

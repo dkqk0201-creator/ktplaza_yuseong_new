@@ -3,9 +3,12 @@ import { staffIdForName } from "@/lib/data/staff-list";
 import { SALE_LINK_FIELDS, linkValueError, type SaleLink, type SaleLinkField } from "@/lib/sale-link";
 import { parseSaleTarget } from "@/lib/sale-target";
 import { AppsScriptError, saveSaleLinkInAppsScript, type SaleLinkPatch } from "@/lib/server/apps-script";
+import { getSalesConfig } from "@/lib/server/sales-config";
 
 /*
- * 판매연결 저장 API (판매 상세의 "판매연결" 칸): 유입경로·캠페인·굿바이 (+ 향후 가망고객ID·TM발굴직원ID).
+ * 판매연결 저장 API: 유입경로·캠페인·리본 (+ 향후 가망고객ID·TM발굴직원ID).
+ * 쓰이는 곳: 판매연결만 저장 실패한 판매의 "판매연결만 다시 저장", 확인 필요(mismatch) 판매의 "새 판매 ID 로 다시 연결".
+ * (평소 수정은 판매 수정 화면에서 판매 내용과 함께 /api/sales/update 로 저장)
  * POST { target, saleId, staff, patches: [{ field, before, value }] }
  *   → { ok: true, saleId, link } / { ok: false, message }
  * Apps Script(sale-link.gs)가 행·No.·개통일·고객·CTN·판매 ID 와 저장된 값을 다시 확인한 뒤 저장한다.
@@ -39,6 +42,7 @@ export async function POST(request: Request) {
   if (!target || saleId === null || (saleId !== "" && !/^[0-9a-f-]{36}$/.test(saleId)) || !rawPatches || rawPatches.length === 0 || rawPatches.length > SALE_LINK_FIELDS.length) {
     return reply({ ok: false, message: "저장할 판매 건 정보가 올바르지 않습니다." }, 400);
   }
+  const { inflows } = await getSalesConfig();
   const patches: SaleLinkPatch[] = [];
   const seen = new Set<string>();
   for (const raw of rawPatches) {
@@ -47,7 +51,7 @@ export async function POST(request: Request) {
     if (!field || seen.has(field) || typeof p.before !== "string" || typeof p.value !== "string" || p.before.length > 60 || p.value.length > 60) {
       return reply({ ok: false, message: "저장할 항목 형식이 올바르지 않습니다." }, 400);
     }
-    const problem = linkValueError(field, p.value);
+    const problem = linkValueError(field, p.value, inflows);
     if (problem) return reply({ ok: false, message: problem }, 400);
     seen.add(field);
     patches.push({ field, before: p.before.trim(), value: p.value.trim() });

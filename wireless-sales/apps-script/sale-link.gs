@@ -21,6 +21,12 @@
  *
  * 판매연결 정보 — 숨김 보조 시트 "웹앱판매연결" (처음 저장할 때 자동 생성·숨김. 직접 고치지 마세요)
  *   판매ID | 월 시트 | 개통일 | 판매 직원ID | 유입경로 | 캠페인 | 굿바이 | 가망고객ID | TM발굴직원ID | 수정 시각 | 삭제 시각 | 확인값
+ *   | 캠페인ID | 리본방식 | 등록요청ID | 유입경로원문     ← 2026-11-15 추가 (예전 12칸 시트는 처음 쓸 때 제목만 이어 붙임)
+ *   - 굿바이 칸 = 화면 이름 "리본" (O/X). 리본방식 = 자동(중고폰&현물 판매로 판정) / 수동(점장이 고름)
+ *   - 캠페인 칸 = 직원이 보고한 원문, 캠페인ID = 캠페인 목록(config-handler.gs "웹앱캠페인")과 맞춘 ID
+ *   - 유입경로 = 항목 이름(config-handler.gs "웹앱유입경로"의 사용 중 항목 또는 미확인), 유입경로원문 = 목록에 없던 카톡 원문
+ *   - 등록요청ID = 간편등록 화면이 판매 카드마다 만든 ID. 같은 ID 로 다시 오면 판매를 또 쓰지 않는다 (save-handler.gs).
+ *     판매 행 C열 메모에도 "웹앱등록요청ID: <ID>" 줄로 판매 ID 와 함께 적는다 (판매를 쓰는 순간 함께 기록 → 연결 저장이 실패해도 재전송 중복 방지)
  *   고객 이름·전화번호는 저장하지 않는다. 판매를 삭제하면 기록을 지우지 않고 삭제 시각만 남긴다 (향후 연동 이력).
  *
  * 요청 (웹앱 서버만, API_SECRET 필요):
@@ -44,15 +50,26 @@ var WS_LINK_HEADER = [
   "수정 시각",
   "삭제 시각",
   "확인값",
+  "캠페인ID",
+  "리본방식",
+  "등록요청ID",
+  "유입경로원문",
 ];
 var WS_LINK_COLS = WS_LINK_HEADER.length;
 /** 저장할 수 있는 항목 → 열 번호(0부터) */
-var WS_LINK_FIELD_COL = { staffId: 3, inflow: 4, campaign: 5, goodbye: 6, prospectId: 7, tmStaffId: 8 };
-var WS_LINK_EDITABLE = { inflow: true, campaign: true, goodbye: true, prospectId: true, tmStaffId: true };
-var WS_INFLOW_SOURCES = [
-  "네이버 플레이스", "네이버 블로그", "네이버 예약", "인스타그램", "스레드", "지인 소개", "자점 단골 고객",
-  "TM", "매장 문자", "자연 방문", "외부영업", "KT 안내", "기타", "미확인",
-];
+var WS_LINK_FIELD_COL = {
+  staffId: 3, inflow: 4, campaign: 5, goodbye: 6, prospectId: 7, tmStaffId: 8,
+  campaignId: 12, ribbonMode: 13, requestId: 14, inflowRaw: 15,
+};
+var WS_LINK_EDITABLE = {
+  inflow: true, campaign: true, goodbye: true, prospectId: true, tmStaffId: true,
+  campaignId: true, ribbonMode: true, inflowRaw: true,
+};
+/** 기본 유입경로 (config-handler.gs 의 "웹앱유입경로" 시트가 없을 때). 2026-11-15 확정 5개 + 미확인 */
+var WS_INFLOW_SOURCES = ["네이버", "자점", "TM", "내방", "외부영업", "미확인"];
+var WS_REQUEST_ID_PREFIX = "웹앱등록요청ID: ";
+var WS_REQUEST_ID_RE = /(^|\n)웹앱등록요청ID: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=\n|$)/;
+var WS_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 var WS_SALE_ID_PREFIX = "웹앱판매ID: ";
 var WS_SALE_ID_RE = /(^|\n)웹앱판매ID: ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?=\n|$)/;
 var WS_DATE_COLUMN = 3; // C열
@@ -88,6 +105,26 @@ function wsNoteWithSaleId_(note, id) {
   return lines.join("\n");
 }
 
+/** 셀 메모 글에서 등록요청 ID (없으면 "") */
+function wsRequestIdFromNote_(note) {
+  var m = WS_REQUEST_ID_RE.exec(String(note || ""));
+  return m ? m[2] : "";
+}
+/** 메모 글에서 등록요청 ID 줄을 뺀 결과 (다른 글은 그대로) */
+function wsNoteWithoutRequestId_(note) {
+  var lines = String(note || "")
+    .split("\n")
+    .filter(function (line) {
+      return line.indexOf(WS_REQUEST_ID_PREFIX) !== 0;
+    });
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines.join("\n");
+}
+/** 새 판매 C열 메모: 판매 ID 줄 + (있으면) 등록요청 ID 줄 */
+function wsNewSaleNote_(saleId, requestId) {
+  return WS_SALE_ID_PREFIX + saleId + (requestId ? "\n" + WS_REQUEST_ID_PREFIX + requestId : "");
+}
+
 /** 월 시트 판매 영역 C열 메모 → 행 번호별 ID 와 ID 별 개수 */
 function wsSaleIdsOfSheet_(sheet) {
   var last = sheet.getLastRow();
@@ -109,6 +146,12 @@ function wsLinkSheet_(ss, create) {
     sheet = ss.insertSheet(WS_LINK_SHEET);
     sheet.getRange(1, 1, 1, WS_LINK_COLS).setValues([WS_LINK_HEADER]);
     sheet.hideSheet();
+  } else if (sheet && create) {
+    // 예전 12칸 시트: 뒤에 새 칸 제목만 이어 붙인다 (기존 기록·칸은 그대로)
+    var head = sheet.getRange(1, 1, 1, WS_LINK_COLS).getValues()[0];
+    for (var h = 0; h < WS_LINK_COLS; h++) {
+      if (String(head[h] || "") === "") sheet.getRange(1, h + 1).setValue(WS_LINK_HEADER[h]);
+    }
   }
   return sheet;
 }
@@ -140,15 +183,41 @@ function wsLinkObject_(values) {
     prospectId: wsLinkText_(values[7]),
     tmStaffId: wsLinkText_(values[8]),
     staffId: wsLinkText_(values[3]),
+    campaignId: wsLinkText_(values[12]),
+    ribbonMode: wsLinkText_(values[13]),
+    requestId: wsLinkText_(values[14]),
+    inflowRaw: wsLinkText_(values[15]),
   };
 }
 
-/** 항목 값 검사 (웹앱 lib/sale-link.ts linkValueError 와 같은 기준). 문제 있으면 안내 문구 */
-function wsLinkValueError_(field, value) {
+/**
+ * 값 검사에 쓰는 설정: 사용 중 유입경로 이름(+미확인), 사용 중 캠페인ID.
+ * config-handler.gs 가 없으면 기본 유입경로, 캠페인ID 는 형식만 검사.
+ */
+function wsLinkConfig_(ss) {
+  return {
+    inflows: typeof wsActiveInflowNames_ === "function" ? wsActiveInflowNames_(ss) : WS_INFLOW_SOURCES,
+    campaigns: typeof wsActiveCampaignIds_ === "function" ? wsActiveCampaignIds_(ss) : null,
+  };
+}
+
+/** 항목 값 검사 (웹앱 lib/sale-link.ts linkValueError 와 같은 기준). 문제 있으면 안내 문구. cfg = wsLinkConfig_(ss) (없으면 기본값) */
+function wsLinkValueError_(field, value, cfg) {
   var v = String(value || "").trim();
   if (!v) return "";
-  if (field === "inflow") return WS_INFLOW_SOURCES.indexOf(v) >= 0 ? "" : "유입경로는 목록에서 골라 주세요.";
-  if (field === "goodbye") return v === "O" || v === "X" ? "" : "굿바이는 O 또는 X 로 입력해 주세요.";
+  if (field === "inflow") {
+    var names = cfg && cfg.inflows ? cfg.inflows : WS_INFLOW_SOURCES;
+    return names.indexOf(v) >= 0 ? "" : "유입경로는 목록에서 골라 주세요.";
+  }
+  if (field === "goodbye") return v === "O" || v === "X" ? "" : "리본은 O 또는 X 로 입력해 주세요.";
+  if (field === "campaignId") {
+    if (!/^CMP-\d{4}$/.test(v)) return "캠페인 ID 형식이 올바르지 않습니다.";
+    if (cfg && cfg.campaigns && !Object.prototype.hasOwnProperty.call(cfg.campaigns, v)) return "사용 중인 캠페인이 아닙니다. 캠페인 목록을 확인해 주세요.";
+    return "";
+  }
+  if (field === "ribbonMode") return v === "자동" || v === "수동" ? "" : "리본 방식이 올바르지 않습니다.";
+  if (field === "inflowRaw") return v.length <= 40 ? "" : "유입경로 원문은 40자까지 보관합니다.";
+  if (field === "requestId") return WS_UUID_RE.test(v) ? "" : "등록 요청 ID 형식이 올바르지 않습니다.";
   if (field === "campaign") return v.length <= 40 ? "" : "캠페인명은 40자 이내로 입력해 주세요.";
   if (field === "prospectId") return v.length <= 40 && /^[\w-]+$/.test(v) ? "" : "가망고객 ID 형식이 올바르지 않습니다.";
   if (field === "tmStaffId" || field === "staffId") return /^st-\d{3}$/.test(v) ? "" : "직원 ID 형식이 올바르지 않습니다.";
@@ -159,7 +228,7 @@ function wsLinkValueError_(field, value) {
 function wsWriteLink_(ss, saleId, info, fields) {
   var sheet = wsLinkSheet_(ss, true);
   var existing = wsReadLinks_(sheet)[saleId];
-  var values = existing ? existing.values.slice() : ["'" + saleId, "", "", "", "", "", "", "", "", "", "", ""];
+  var values = existing ? existing.values.slice() : ["'" + saleId];
   while (values.length < WS_LINK_COLS) values.push("");
   values[1] = "'" + info.sheet;
   values[2] = "'" + info.date;
@@ -185,27 +254,44 @@ function wsWriteLink_(ss, saleId, info, fields) {
 function wsSaveLinksSafely_(ss, sheet, tz, results, links) {
   try {
     var ok = true;
+    var cfg = wsLinkConfig_(ss);
+    var existingLinks = null;
     for (var k = 0; k < results.length; k++) {
       if (!results[k] || !results[k].ok) continue;
-      var cell = sheet.getRange(results[k].row, WS_DATE_COLUMN);
-      var id = Utilities.getUuid();
-      cell.setNote(wsNoteWithSaleId_(cell.getNote(), id));
-      results[k].saleId = id;
       var link = Array.isArray(links) ? links[k] : null;
+      var requestId = link && typeof link === "object" && WS_UUID_RE.test(String(link.requestId || "")) ? String(link.requestId) : "";
+      var id = results[k].saleId || "";
+      if (!id) {
+        // 판매 ID 를 미리 만들지 않은 저장(예전 방식·등록요청 ID 없음): 지금 C열 메모에 적는다
+        var cell = sheet.getRange(results[k].row, WS_DATE_COLUMN);
+        id = Utilities.getUuid();
+        cell.setNote(wsNoteWithSaleId_(cell.getNote(), id));
+        results[k].saleId = id;
+      }
+      // 같은 등록 요청 재전송: 판매연결 기록이 이미 있으면 그대로 둔다 (그사이 점장이 고친 값을 덮지 않음)
+      if (results[k].repeated) {
+        if (existingLinks === null) existingLinks = wsReadLinks_(wsLinkSheet_(ss, false));
+        if (existingLinks[id]) continue;
+      }
       var fields = {};
       var any = false;
       if (link && typeof link === "object") {
         for (var f in WS_LINK_FIELD_COL) {
           if (!Object.prototype.hasOwnProperty.call(link, f)) continue;
+          if (f === "requestId") continue;
           var value = String(link[f] || "").trim();
           if (!value) continue;
-          if (wsLinkValueError_(f, value)) {
+          if (wsLinkValueError_(f, value, cfg)) {
             ok = false;
             continue;
           }
           fields[f] = value;
           any = true;
         }
+      }
+      if (requestId) {
+        fields.requestId = requestId;
+        any = true;
       }
       if (any) {
         var rowValues = sheet.getRange(results[k].row, 1, 1, WS_COLUMN_COUNT).getValues()[0];
@@ -274,11 +360,105 @@ function wsClearSaleLinkForRow_(ss, sheet, rowNumber) {
   var cell = sheet.getRange(rowNumber, WS_DATE_COLUMN);
   var note = cell.getNote();
   var id = wsSaleIdFromNote_(note);
-  if (!id) return;
-  cell.setNote(wsNoteWithSaleId_(note, ""));
+  if (!id) {
+    if (wsRequestIdFromNote_(note)) cell.setNote(wsNoteWithoutRequestId_(note));
+    return;
+  }
+  // 판매 ID 줄과 등록요청 ID 줄을 함께 지운다 (지운 판매로 재전송이 "이미 저장됨" 처리되지 않게)
+  cell.setNote(wsNoteWithoutRequestId_(wsNoteWithSaleId_(note, "")));
   var linkSheet = wsLinkSheet_(ss, false);
   var rec = wsReadLinks_(linkSheet)[id];
   if (rec) linkSheet.getRange(rec.row, 11).setValue(new Date());
+}
+
+/**
+ * 판매연결 저장 요청의 형식 검사 (잠금 전, 장표를 읽지 않음). 문제 있으면 안내 문구, 없으면 "".
+ * body: { saleId, patches: [{ field, before, value }], staffId }
+ */
+function wsLinkRequestError_(body, cfg) {
+  var expectedId = String(body.saleId || "");
+  if (expectedId && !WS_UUID_RE.test(expectedId)) return "판매 ID 형식이 올바르지 않습니다.";
+  var patches = body.patches;
+  if (!Array.isArray(patches) || patches.length === 0 || patches.length > 10) return "저장할 항목이 없습니다.";
+  var seen = {};
+  for (var p = 0; p < patches.length; p++) {
+    var item = patches[p] || {};
+    if (
+      !Object.prototype.hasOwnProperty.call(WS_LINK_EDITABLE, item.field) ||
+      seen[item.field] ||
+      typeof item.before !== "string" ||
+      typeof item.value !== "string"
+    ) {
+      return "저장할 항목 형식이 올바르지 않습니다.";
+    }
+    var bad = wsLinkValueError_(item.field, item.value, cfg);
+    if (bad) return bad;
+    seen[item.field] = true;
+  }
+  var staffId = String(body.staffId || "");
+  if (staffId && wsLinkValueError_("staffId", staffId)) return "직원 ID 형식이 올바르지 않습니다.";
+  return "";
+}
+
+/**
+ * 판매연결 저장 준비 (잠금 안, 아무것도 쓰지 않음). 판매 행(current)이 화면의 판매인지는 호출하는 쪽이 이미 확인했다.
+ * 판매 ID·ID 중복·확인값(mismatch)·화면에서 본 값(before)을 확인한다.
+ * 반환: { error, code } 또는 { id, rec, live, mismatch }
+ */
+function wsLinkPrepare_(ss, sheet, sheetName, rowNumber, current, tz, body) {
+  var ids = wsSaleIdsOfSheet_(sheet);
+  var id = ids.byRow[rowNumber] || "";
+  var relink = body.relink === true;
+  if (id !== String(body.saleId || "")) {
+    return { error: "판매 ID 가 화면과 다릅니다. 화면을 새로고침한 뒤 다시 확인해 주세요." };
+  }
+  if (id && ids.count[id] !== 1) {
+    return { code: "duplicate_id", error: "같은 판매 ID 가 장표의 다른 행에도 있어 저장하지 않았습니다 (행 복사 등). 점장 확인이 필요합니다." };
+  }
+  var rec = id ? wsReadLinks_(wsLinkSheet_(ss, false))[id] : null;
+  var rowCheck = wsSaleCheck_(current, tz);
+  var live = !!rec && !wsLinkText_(rec.values[10]);
+  var mismatch =
+    live && (wsLinkText_(rec.values[1]) !== sheetName || (wsLinkText_(rec.values[11]) && wsLinkText_(rec.values[11]) !== rowCheck));
+  if (mismatch && !relink) {
+    return {
+      code: "mismatch",
+      error: "이 판매의 개통일·CTN 이 판매연결 기록과 달라 저장하지 않았습니다 (장표에서 값만 옮긴 경우 등). 점장 확인 후 '새 판매 ID 로 다시 연결'을 사용해 주세요.",
+    };
+  }
+  if (relink && !mismatch) return { error: "다시 연결할 필요가 없는 판매입니다. 화면을 새로고침해 주세요." };
+  var now = live && !mismatch ? wsLinkObject_(rec.values) : null;
+  for (var q = 0; q < body.patches.length; q++) {
+    var have = now ? now[body.patches[q].field] : "";
+    if (have !== body.patches[q].before.trim()) {
+      return { error: "저장된 판매연결 값이 화면과 달라 저장하지 않았습니다. 화면을 새로고침해 주세요." };
+    }
+  }
+  return { id: id, rec: rec, live: live, mismatch: mismatch };
+}
+
+/**
+ * 판매연결 저장 (잠금 안). prep = wsLinkPrepare_ 결과, rowValues = 저장 시점의 판매 행 (수정 후 값).
+ * 다시 연결(relink)이면 예전 기록을 분리하고 새 ID, 예전 판매(ID 없음)면 이 행에만 새 ID.
+ */
+function wsLinkCommit_(ss, sheet, sheetName, rowNumber, rowValues, tz, prep, body) {
+  var id = prep.id;
+  if (prep.mismatch) {
+    // 예전 기록은 이 판매로 옮기지 않는다: 분리(삭제 시각)하고 이 행에 새 ID
+    wsLinkSheet_(ss, false).getRange(prep.rec.row, 11).setValue(new Date());
+    id = "";
+  }
+  if (!id) {
+    id = Utilities.getUuid();
+    var cell = sheet.getRange(rowNumber, WS_DATE_COLUMN);
+    cell.setNote(wsNoteWithSaleId_(cell.getNote(), id));
+  }
+  var fields = {};
+  for (var w = 0; w < body.patches.length; w++) fields[body.patches[w].field] = body.patches[w].value;
+  var staffId = String(body.staffId || "");
+  if (staffId) fields.staffId = staffId;
+  var saved = wsWriteLink_(ss, id, { sheet: sheetName, date: wsText_(rowValues[2], tz), check: wsSaleCheck_(rowValues, tz) }, fields);
+  return { saleId: id, link: saved };
 }
 
 function wsHandleSaleLink_(body) {
@@ -294,36 +474,16 @@ function wsHandleSaleLink_(body) {
   if (!(rowNumber >= WS_FIRST_ROW) || Math.floor(rowNumber) !== rowNumber) {
     return reply({ ok: false, message: "행 번호가 올바르지 않습니다." });
   }
-  var expectedId = String(body.saleId || "");
-  if (expectedId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(expectedId)) {
-    return reply({ ok: false, message: "판매 ID 형식이 올바르지 않습니다." });
-  }
-  var patches = body.patches;
-  if (!Array.isArray(patches) || patches.length === 0 || patches.length > 10) {
-    return reply({ ok: false, message: "저장할 항목이 없습니다." });
-  }
-  var seen = {};
-  for (var p = 0; p < patches.length; p++) {
-    var item = patches[p] || {};
-    if (
-      !Object.prototype.hasOwnProperty.call(WS_LINK_EDITABLE, item.field) ||
-      seen[item.field] ||
-      typeof item.before !== "string" ||
-      typeof item.value !== "string"
-    ) {
-      return reply({ ok: false, message: "저장할 항목 형식이 올바르지 않습니다." });
-    }
-    var bad = wsLinkValueError_(item.field, item.value);
-    if (bad) return reply({ ok: false, message: bad });
-    seen[item.field] = true;
-  }
-  var staffId = String(body.staffId || "");
-  if (staffId && wsLinkValueError_("staffId", staffId)) return reply({ ok: false, message: "직원 ID 형식이 올바르지 않습니다." });
+  var formatError = wsLinkRequestError_(body, null);
+  if (formatError) return reply({ ok: false, message: formatError });
 
   var lock = LockService.getScriptLock();
   if (!lock.tryLock(15000)) return reply({ ok: false, message: "다른 작업이 진행 중입니다. 잠시 후 다시 시도해 주세요." });
   try {
     var ss = wsSpreadsheet_();
+    // 사용 중 유입경로·캠페인 기준 검사 (설정 시트를 읽어야 하므로 잠금 안에서)
+    var cfgError = wsLinkRequestError_(body, wsLinkConfig_(ss));
+    if (cfgError) return reply({ ok: false, message: cfgError });
     var tz = ss.getSpreadsheetTimeZone();
     var sheet = ss.getSheetByName(sheetName);
     if (!sheet) return reply({ ok: false, message: sheetName + " 시트를 찾을 수 없습니다." });
@@ -343,61 +503,11 @@ function wsHandleSaleLink_(body) {
     if (mismatches.length) {
       return reply({ ok: false, message: "장표 내용이 화면과 달라 저장하지 않았습니다 (" + mismatches.join(", ") + "). 화면을 새로고침해 주세요." });
     }
-    var ids = wsSaleIdsOfSheet_(sheet);
-    var id = ids.byRow[rowNumber] || "";
-    var relink = body.relink === true;
-    if (id !== expectedId) {
-      return reply({ ok: false, message: "판매 ID 가 화면과 다릅니다. 화면을 새로고침한 뒤 다시 확인해 주세요." });
-    }
-    if (id && ids.count[id] !== 1) {
-      return reply({ ok: false, code: "duplicate_id", message: "같은 판매 ID 가 장표의 다른 행에도 있어 저장하지 않았습니다 (행 복사 등). 점장 확인이 필요합니다." });
-    }
-    var linkSheet = wsLinkSheet_(ss, false);
-    var rec = id ? wsReadLinks_(linkSheet)[id] : null;
-    var rowCheck = wsSaleCheck_(current, tz);
-    var live = rec && !wsLinkText_(rec.values[10]);
-    var mismatch =
-      live && (wsLinkText_(rec.values[1]) !== sheetName || (wsLinkText_(rec.values[11]) && wsLinkText_(rec.values[11]) !== rowCheck));
-    if (mismatch && !relink) {
-      return reply({
-        ok: false,
-        code: "mismatch",
-        message: "이 판매의 개통일·CTN 이 판매연결 기록과 달라 저장하지 않았습니다 (장표에서 값만 옮긴 경우 등). 점장 확인 후 '새 판매 ID 로 다시 연결'을 사용해 주세요.",
-      });
-    }
-    if (relink && !mismatch) {
-      return reply({ ok: false, message: "다시 연결할 필요가 없는 판매입니다. 화면을 새로고침해 주세요." });
-    }
-    if (relink) {
-      // 예전 기록은 이 판매로 옮기지 않는다: 분리(삭제 시각)하고 이 행에 새 ID
-      linkSheet.getRange(rec.row, 11).setValue(new Date());
-      id = Utilities.getUuid();
-      var relinkCell = sheet.getRange(rowNumber, WS_DATE_COLUMN);
-      relinkCell.setNote(wsNoteWithSaleId_(relinkCell.getNote(), id));
-      rec = null;
-      live = false;
-    }
-    var now = live ? wsLinkObject_(rec.values) : null;
-    var changed = [];
-    for (var q = 0; q < patches.length; q++) {
-      var have = now ? now[patches[q].field] : "";
-      if (have !== patches[q].before.trim()) changed.push(patches[q].field);
-    }
-    if (changed.length) {
-      return reply({ ok: false, message: "저장된 값이 화면과 달라 저장하지 않았습니다. 화면을 새로고침해 주세요." });
-    }
-    // 예전 판매: 확인이 끝난 이 행에만 ID 를 만든다
-    if (!id) {
-      id = Utilities.getUuid();
-      var cell = sheet.getRange(rowNumber, WS_DATE_COLUMN);
-      cell.setNote(wsNoteWithSaleId_(cell.getNote(), id));
-    }
-    var fields = {};
-    for (var w = 0; w < patches.length; w++) fields[patches[w].field] = patches[w].value;
-    if (staffId) fields.staffId = staffId;
-    var saved = wsWriteLink_(ss, id, { sheet: sheetName, date: text(current[2]), check: rowCheck }, fields);
+    var prep = wsLinkPrepare_(ss, sheet, sheetName, rowNumber, current, tz, body);
+    if (prep.error) return reply(prep.code ? { ok: false, code: prep.code, message: prep.error } : { ok: false, message: prep.error });
+    var saved = wsLinkCommit_(ss, sheet, sheetName, rowNumber, current, tz, prep, body);
     SpreadsheetApp.flush();
-    return reply({ ok: true, sheet: sheetName, row: rowNumber, saleId: id, link: saved });
+    return reply({ ok: true, sheet: sheetName, row: rowNumber, saleId: saved.saleId, link: saved.link });
   } finally {
     lock.releaseLock();
   }

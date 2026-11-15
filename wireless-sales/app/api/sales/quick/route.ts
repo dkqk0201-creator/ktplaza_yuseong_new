@@ -15,6 +15,7 @@ import {
   saveRowsToAppsScript,
 } from "@/lib/server/apps-script";
 import { toSheetRowArray } from "@/lib/sheet-columns";
+import { getSalesConfig } from "@/lib/server/sales-config";
 
 /*
  * 간편등록 저장 API.
@@ -24,6 +25,9 @@ import { toSheetRowArray } from "@/lib/sheet-columns";
  * Apps Script save(B열 보호, 수식 차단, LockService)로 저장한다.
  * 확인이 필요한 건은 저장하지 않고 그 건만 실패로 돌려준다.
  * 직원 양식에 없는 장표 칸은 보내지 않는다 (= 장표에서 빈칸 그대로).
+ * 유입경로·캠페인·리본(판매연결)은 판매와 같은 Apps Script 호출로 저장한다 (2026-11-15 통합 저장).
+ *   items[k].requestId (화면이 판매 카드마다 만든 ID): 같은 ID 로 다시 보내면 Apps Script 가 판매를 또 쓰지 않고
+ *   이미 저장된 판매를 돌려준다 (repeated). 통신이 끊겨 저장 여부를 모를 때도 같은 ID 로 재시도하면 안전하다.
  */
 
 function reply(body: SaveSaleResponse | QuickBatchResponse, status: number) {
@@ -59,6 +63,14 @@ const ERROR_REPLIES: Record<
   rejected: { status: 502, message: "스프레드시트에 저장하지 못했습니다." },
 };
 
+const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function parseRequestId(input: unknown): string | null | undefined {
+  if (typeof input !== "object" || input === null) return undefined;
+  const v = (input as Record<string, unknown>).requestId;
+  if (v === undefined) return undefined;
+  return typeof v === "string" && REQUEST_ID.test(v) ? v : null;
+}
+
 function parseFields(input: unknown): QuickFields | null {
   if (typeof input !== "object" || input === null) return null;
   const raw = (input as Record<string, unknown>).fields;
@@ -90,17 +102,19 @@ function errorReply(error: unknown): { status: number; message: string } {
 }
 
 /** 여러 건 저장. 확인이 필요한 건은 빼고 나머지만 Apps Script 로 한 번에 보낸다. */
-async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
+async function saveItems(list: QuickFields[], requestIds: (string | undefined)[] = []): Promise<SaveSaleResponse[]> {
+  const config = await getSalesConfig();
   const context = {
     today: todayInKorea(),
     staffNames: await getStaffNames(),
+    config,
   };
   const results: SaveSaleResponse[] = new Array(list.length);
   const pending: {
     index: number;
     row: ReturnType<typeof toSheetRowArray>;
     notes: Record<string, string>;
-    /** 판매연결 (유입경로·캠페인·굿바이 + 판매 직원ID) — 판매 고유 ID 와 함께 "웹앱판매연결"에 저장 */
+    /** 판매연결 (유입경로·캠페인·리본 + 판매 직원ID·등록요청ID) — 판매 고유 ID 와 함께 "웹앱판매연결"에 저장 */
     link: Record<string, string>;
   }[] = [];
   list.forEach((fields, index) => {
@@ -119,6 +133,7 @@ async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
         link: {
           ...normalized.link,
           staffId: staffIdForName(String(normalized.row.staff ?? "")) ?? "",
+          ...(requestIds[index] ? { requestId: requestIds[index]! } : {}),
         },
       });
     }
@@ -138,7 +153,7 @@ async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
         return;
       }
       const hasNotes = Object.keys(pending[k].notes).length > 0;
-      const { staffId: _staffId, ...entered } = pending[k].link;
+      const { staffId: _staffId, requestId: _requestId, ...entered } = pending[k].link;
       const hasLink = Object.values(entered).some((v) => v.length > 0);
       const warnings: string[] = [];
       if (hasNotes && !item.notesSaved) {
@@ -149,8 +164,8 @@ async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
       if (item.linksSaved === false || (hasLink && item.linksSaved === null)) {
         warnings.push(
           item.linksSaved === null
-            ? "장표 저장은 완료됐지만 유입경로·캠페인·굿바이는 저장하지 못했습니다. Apps Script 에 sale-link.gs 배포가 필요합니다."
-            : "장표 저장은 완료됐지만 유입경로·캠페인·굿바이(판매연결)는 저장하지 못했습니다. 판매 상세에서 다시 입력해 주세요.",
+            ? "장표 저장은 완료됐지만 유입경로·캠페인·리본은 저장하지 못했습니다. Apps Script 에 sale-link.gs 배포가 필요합니다."
+            : "판매는 저장됐지만 유입경로·캠페인·리본(판매연결)은 저장하지 못했습니다. '판매연결만 다시 저장'을 눌러 주세요 (판매는 다시 저장되지 않습니다).",
         );
       }
       results[index] = {
@@ -160,6 +175,8 @@ async function saveItems(list: QuickFields[]): Promise<SaveSaleResponse[]> {
         row: item.row,
         ...(warnings.length ? { warning: warnings.join(" ") } : {}),
         ...(item.saleId ? { saleId: item.saleId } : {}),
+        ...(item.repeated ? { repeated: true } : {}),
+        ...(item.linksSaved === false && hasLink && item.saleId ? { linkPending: true } : {}),
       };
     });
   } catch (error) {
@@ -195,13 +212,14 @@ export async function POST(request: Request) {
       );
     }
     const list = items.map(parseFields);
-    if (list.some((f) => f === null)) {
+    const requestIds = items.map(parseRequestId);
+    if (list.some((f) => f === null) || requestIds.some((r) => r === null) || new Set(requestIds.filter(Boolean)).size !== requestIds.filter(Boolean).length) {
       return reply(
         { ok: false, message: "요청 형식이 올바르지 않습니다." },
         400,
       );
     }
-    const results = await saveItems(list as QuickFields[]);
+    const results = await saveItems(list as QuickFields[], requestIds as (string | undefined)[]);
     return reply({ ok: true, results }, 200);
   }
 

@@ -37,6 +37,8 @@ export interface FieldView {
   children?: FieldView[];
   /** 있으면 목록에서 고르는 칸 (첫 줄 "선택 안 함" = "") */
   options?: readonly string[];
+  /** 목록 값 → 화면에 보일 글자 (예: 캠페인ID → 캠페인명). 없으면 값 그대로 */
+  optionLabels?: Readonly<Record<string, string>>;
   /** 자유 입력 + 예전에 쓴 값 추천 목록 */
   suggestions?: readonly string[];
 }
@@ -94,10 +96,10 @@ function FieldInput({ field }: { field: FieldView }) {
         >
           <option value="">{field.placeholder ?? "선택 안 함"}</option>
           {/* 목록에 없는 값(예전 값·잘못 적은 값)도 그대로 보이게 */}
-          {field.value && !field.options.includes(field.value) && <option value={field.value}>{field.value}</option>}
+          {field.value && !field.options.includes(field.value) && <option value={field.value}>{field.optionLabels?.[field.value] ?? field.value}</option>}
           {field.options.map((o) => (
             <option key={o} value={o}>
-              {o}
+              {field.optionLabels?.[o] ?? o}
             </option>
           ))}
         </select>

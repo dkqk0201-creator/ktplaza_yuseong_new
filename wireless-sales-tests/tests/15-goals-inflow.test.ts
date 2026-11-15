@@ -100,25 +100,32 @@ test("2) 직원 실적관리도 같은 기준: 기준 변경 전후 차이 (가�
 
 /* ---------- 2. 간편등록 유입경로·캠페인·굿바이 ---------- */
 
-test("3) 카톡 보고: '유입경로 : 블로그' → 네이버 블로그 / 모르는 표현은 추정하지 않고 확인 필요 / 줄이 없어도 등록 가능 / 웹앱참고(참고내용)에는 넣지 않음", () => {
-  assert.ok(STAFF_REPORT_TEMPLATE.includes("유입경로 : ") && STAFF_REPORT_TEMPLATE.includes("캠페인 : ") && STAFF_REPORT_TEMPLATE.includes("굿바이 : "));
+test("3) 카톡 보고: '유입경로 : 블로그' → 네이버 (2026-11-15 5개 항목) / 모르는 표현은 저장은 막지 않고 원문만 보관(확인 필요) / 줄이 없어도 등록 가능 / 웹앱참고(참고내용)에는 넣지 않음", () => {
+  assert.ok(STAFF_REPORT_TEMPLATE.includes("유입경로 : ") && STAFF_REPORT_TEMPLATE.includes("캠페인 : ") && STAFF_REPORT_TEMPLATE.includes("중고폰&현물 판매 : "));
+  assert.ok(!STAFF_REPORT_TEMPLATE.includes("굿바이"), "직원 양식에서 굿바이 줄은 뺌 (리본은 중고폰&현물 판매로 자동)");
   assert.ok(NOTE_FIELDS.every((f) => !["inflow", "campaign", "goodbye"].includes(f.id)));
   const base = ["개통일자 : 10.05", "직원명 : 윤기석", `고객명 : ${A.name}`, `CTN : ${A.ctn}`, "개통구분 : 기변", "모델명 : 테스트폰", "요금제 : 베이직", "ㄴ유지/변경 : 유지"];
   const n = (extra: string[]) => normalizeQuick(parseQuickReports([...base, ...extra].join("\n"))[0].fields, ctx);
   const ok = n(["유입경로 : 블로그", "캠페인 : 주말특가", "굿바이 : o"]);
   assert.deepEqual(ok.issues, []);
-  assert.deepEqual(ok.link, { inflow: "네이버 블로그", campaign: "주말특가", goodbye: "O" });
+  assert.deepEqual(ok.link, { inflow: "네이버", inflowRaw: "", campaign: "주말특가", campaignId: "", goodbye: "O", ribbonMode: "수동" });
   assert.ok(!("inflow" in ok.notes) && !("campaign" in ok.notes) && !("goodbye" in ok.notes));
   const none = n([]);
   assert.deepEqual(none.issues, []);
-  assert.deepEqual(none.link, { inflow: "", campaign: "", goodbye: "" });
+  assert.deepEqual(none.link, { inflow: "", inflowRaw: "", campaign: "", campaignId: "", goodbye: "", ribbonMode: "" });
   const bad = n(["유입경로 : 전단지 보고", "굿바이 : 보상", `캠페인 : ${"가".repeat(41)}`]);
-  assert.deepEqual(bad.issues.map((i) => i.field).sort(), ["campaign", "goodbye", "inflow"]);
+  assert.deepEqual(bad.issues.map((i) => i.field).sort(), ["campaign", "goodbye"], "모르는 유입경로는 등록을 막지 않음");
   assert.equal(bad.link.inflow, "");
+  assert.equal(bad.link.inflowRaw, "전단지 보고");
   for (const s of INFLOW_SOURCES) assert.equal(parseInflow(s), s, s);
-  assert.equal(parseInflow("인스타"), "인스타그램");
-  assert.equal(parseInflow("쓰레드"), "스레드");
+  assert.deepEqual([...INFLOW_SOURCES], ["네이버", "자점", "TM", "내방", "외부영업", "미확인"]);
+  assert.equal(parseInflow("블로그"), "네이버");
+  assert.equal(parseInflow("스마트 플레이스"), "네이버");
+  assert.equal(parseInflow("단골"), "자점");
+  assert.equal(parseInflow("자연 방문"), "내방");
+  assert.equal(parseInflow("전단지"), "외부영업");
   assert.equal(parseInflow("모름"), "미확인");
+  assert.equal(parseInflow("인스타"), null, "SNS 는 임의로 배정하지 않음");
   assert.equal(parseInflow("유튜브"), null);
   assert.equal(emptyQuickFields().inflow, "");
 });
@@ -128,7 +135,7 @@ test("3) 카톡 보고: '유입경로 : 블로그' → 네이버 블로그 / 모
 test("4) 새 판매: C열 메모에 판매 ID, 판매연결은 ID 로 저장 / 보조 시트 숨김·고객 이름·번호 없음 / 다른 판매 메모 보존", async () => {
   const { ss } = setup();
   ss.month().cell(12, L("C")).note = "점장 메모: 확인할 것"; // 빈 자리에 있던 사람 메모
-  const r = await register(report(A.name, A.ctn, { extra: "유입경로 : 네이버 플레이스\n캠페인 : 아이폰 사전예약\n굿바이 : O" }), report(B.name, B.ctn));
+  const r = await register(report(A.name, A.ctn, { extra: "유입경로 : 네이버 플레이스\n캠페인 : 아이폰 사전예약\n리본 : O" }), report(B.name, B.ctn));
   const results = r.results as { ok: boolean; saleId?: string }[];
   assert.ok(results.every((x) => x.ok && /^[0-9a-f-]{36}$/.test(x.saleId ?? "")));
   assert.notEqual(results[0].saleId, results[1].saleId);
@@ -136,7 +143,8 @@ test("4) 새 판매: C열 메모에 판매 ID, 판매연결은 ID 로 저장 / �
   const b = byName(await list(), B.name);
   assert.equal(a.saleId, results[0].saleId);
   assert.equal(a.saleIdState, "ok");
-  assert.deepEqual({ ...a.link }, { inflow: "네이버 플레이스", campaign: "아이폰 사전예약", goodbye: "O", prospectId: "", tmStaffId: "", staffId: staffIdForName(a.staff) });
+  // 캠페인 목록에 없는 이름은 원문만 (캠페인ID 없음 = 확인 필요), 리본 줄을 직접 적으면 수동
+  assert.deepEqual({ ...a.link }, { ...emptyLink(), inflow: "네이버", campaign: "아이폰 사전예약", goodbye: "O", ribbonMode: "수동", staffId: staffIdForName(a.staff) });
   // 아무것도 적지 않은 새 판매: 판매 직원 ID 만 기록 (향후 연동용), 유입경로는 미입력
   assert.deepEqual({ ...b.link }, { ...emptyLink(), staffId: staffIdForName(b.staff) });
   assert.equal(inflowOf(b), "미입력");
@@ -145,27 +153,27 @@ test("4) 새 판매: C열 메모에 판매 ID, 판매연결은 ID 로 저장 / �
   assert.equal(linkSheet.hidden, true);
   const text = JSON.stringify(linkSheet.rows.map((row) => row.map((c) => c.value)));
   assert.ok(!text.includes(A.name) && !text.includes(A.ctn.replace(/\D/g, "").slice(-4)), "고객 이름·번호 없음");
-  assert.ok(!JSON.stringify(ss.getSheetByName("웹앱참고")?.rows.map((row) => row.map((c) => c.value)) ?? []).includes("네이버 플레이스"), "웹앱참고에는 저장 안 함");
+  assert.ok(!JSON.stringify(ss.getSheetByName("웹앱참고")?.rows.map((row) => row.map((c) => c.value)) ?? []).includes("아이폰 사전예약"), "웹앱참고에는 저장 안 함");
 });
 
 test("5) 정렬로 판매가 다른 행으로 밀려도 ID·판매연결이 판매를 따라감 / 같은 날 같은 고객·CTN 판매 2건도 각각 구분", async () => {
   setup();
-  await register(report(A.name, A.ctn, { date: "10.07", extra: "유입경로 : 인스타그램" }));
+  await register(report(A.name, A.ctn, { date: "10.07", extra: "유입경로 : 자점" }));
   const a1 = byName(await list(), A.name);
   await register(report(B.name, B.ctn, { date: "10.03", extra: "유입경로 : TM" })); // 더 이른 날짜 → A 가 아래로
   const a2 = byName(await list(), A.name);
   assert.notEqual(a2.row, a1.row);
   assert.equal(a2.saleId, a1.saleId);
-  assert.equal(a2.link?.inflow, "인스타그램");
+  assert.equal(a2.link?.inflow, "자점");
   assert.equal(byName(await list(), B.name).link?.inflow, "TM");
 
   // 같은 날·같은 고객·같은 CTN 2건 (중복 확인 통과 후 등록)
   setup();
-  await register(report(C.name, C.ctn, { extra: "유입경로 : 지인 소개" }), report(C.name, C.ctn, { extra: "유입경로 : 매장 문자" }));
+  await register(report(C.name, C.ctn, { extra: "유입경로 : 내방" }), report(C.name, C.ctn, { extra: "유입경로 : 외부영업" }));
   const twins = (await list()).filter((s) => s.customer === C.name);
   assert.equal(twins.length, 2);
   assert.notEqual(twins[0].saleId, twins[1].saleId);
-  assert.deepEqual(twins.map((s) => s.link?.inflow).sort(), ["매장 문자", "지인 소개"]);
+  assert.deepEqual(twins.map((s) => s.link?.inflow).sort(), ["내방", "외부영업"]);
   assert.ok(twins.every((s) => s.saleIdState === "ok"));
 });
 
@@ -186,20 +194,22 @@ test("6) 판매 상세에서 판매연결 저장: 예전 판매(ID 없음)는 �
   assert.equal((await save(a, [{ field: "customer", before: "", value: "x" }])).ok, false);
   // 행 정보가 다르면 거부 (다른 판매에 붙지 않게)
   assert.equal((await save({ ...a, customer: D.name }, [{ field: "inflow", before: "", value: "TM" }])).ok, false);
-  const ok = await save(a, [{ field: "inflow", before: "", value: "자연 방문" }, { field: "campaign", before: "", value: "상가 전단 활동" }]);
+  // 예전 항목 이름(자연 방문)은 새 판매에 저장할 수 없음
+  assert.equal((await save(a, [{ field: "inflow", before: "", value: "자연 방문" }])).ok, false);
+  const ok = await save(a, [{ field: "inflow", before: "", value: "내방" }, { field: "campaign", before: "", value: "상가 전단 활동" }]);
   assert.equal(ok.ok, true, JSON.stringify(ok));
   const a2 = byName(await list(), A.name);
   assert.equal(a2.saleId, ok.saleId);
-  assert.equal(a2.link?.inflow, "자연 방문");
+  assert.equal(a2.link?.inflow, "내방");
   assert.equal(a2.link?.campaign, "상가 전단 활동");
   assert.match(ss.month().cell(a2.row, L("C")).note, ID_LINE);
   // 화면에서 본 값(before)이 지금 값과 다르면 거부
   const stale = await save(a2, [{ field: "inflow", before: "", value: "TM" }]);
   assert.equal(stale.ok, false);
   // 화면이 ID 를 모른 채(예전 화면) 저장하려 하면 거부
-  assert.equal((await save({ ...a2, saleId: undefined }, [{ field: "inflow", before: "자연 방문", value: "TM" }])).ok, false);
+  assert.equal((await save({ ...a2, saleId: undefined }, [{ field: "inflow", before: "내방", value: "TM" }])).ok, false);
   // 올바른 수정·지우기
-  assert.equal((await save(a2, [{ field: "inflow", before: "자연 방문", value: "미확인" }])).ok, true);
+  assert.equal((await save(a2, [{ field: "inflow", before: "내방", value: "미확인" }])).ok, true);
   assert.equal(inflowOf(byName(await list(), A.name)), "미확인");
   const d = byName(await list(), D.name);
   assert.equal(d.link?.inflow, "", "다른 판매에는 영향 없음");
@@ -208,7 +218,7 @@ test("6) 판매 상세에서 판매연결 저장: 예전 판매(ID 없음)는 �
 
 test("7) 같은 ID 가 두 행에 있으면(시트에서 행 복사) 둘 다 'ID 중복' — 판매연결을 붙이지도 저장하지도 않음", async () => {
   const { ss } = setup();
-  await register(report(A.name, A.ctn, { extra: "유입경로 : 네이버 블로그" }), report(B.name, B.ctn));
+  await register(report(A.name, A.ctn, { extra: "유입경로 : 네이버" }), report(B.name, B.ctn));
   const a = byName(await list(), A.name);
   const b = byName(await list(), B.name);
   ss.month().cell(b.row, L("C")).note = ss.month().cell(a.row, L("C")).note; // 복사된 ID
@@ -332,24 +342,24 @@ test("11) 달성률: 미설정은 계산 안 함(0% 아님) / 목표 0 / 남은 
 
 /* ---------- 5. 분석 ---------- */
 
-test("12) 유입경로 분석: 판매 비중(전환율 아님)·미입력과 미확인 구분·입력률 / 지표별 유입경로는 지표끼리 더하지 않음 / 예산은 직원 실적관리와 같은 합계 / 캠페인", () => {
+test("12) 유입경로 분석: 판매 비중(전환율 아님)·미입력과 미확인 구분·입력률 / 예전 '네이버 블로그'는 네이버로 묶어 집계 / 지표별 유입경로는 지표끼리 더하지 않음 / 예산은 직원 실적관리와 같은 합계 / 캠페인", () => {
   const withLink = (s: SheetSale, inflow: string, campaign = "") => ({ ...s, link: { ...emptyLink(), inflow, campaign } });
   const sales = [
-    withLink(sale({ plan: "스초", second: "O" }), "네이버 블로그", "주말특가"),
-    withLink(sale(), "네이버 블로그"),
+    withLink(sale({ plan: "스초", second: "O" }), "네이버 블로그", "주말특가"), // 예전 항목으로 저장된 값
+    withLink(sale(), "네이버"),
     withLink(sale({ staff: "이호준" }), "미확인"),
     sale({ staff: "이호준" }), // 미입력
   ];
   const rows = inflowRows(sales);
-  const blog = rows.find((r) => r.inflow === "네이버 블로그")!;
+  const blog = rows.find((r) => r.inflow === "네이버")!;
   assert.equal(blog.sales, 2);
   assert.equal(blog.share, 50);
   assert.equal(rows.find((r) => r.inflow === "미확인")!.sales, 1);
   assert.equal(rows.find((r) => r.inflow === "미입력")!.sales, 1);
-  assert.deepEqual(inflowInputRate(sales), { total: 4, entered: 3, missing: 1, rate: 75, unknown: 1 });
+  assert.deepEqual(inflowInputRate(sales), { total: 4, entered: 3, missing: 1, rate: 75, unknown: 1, check: 0 });
   const byMetric = metricByInflow(sales);
-  assert.equal(byMetric.get("scho")!.get("네이버 블로그"), 1);
-  assert.equal(byMetric.get("second")!.get("네이버 블로그"), 1);
+  assert.equal(byMetric.get("scho")!.get("네이버"), 1);
+  assert.equal(byMetric.get("second")!.get("네이버"), 1);
   assert.equal(byMetric.get("postpaid")!.get("미입력"), 1);
   assert.equal(PRODUCT_METRIC_KEYS.length, 8);
   const perf = aggregateStaffPerformance(sales, ["윤기석", "이호준"]).total;

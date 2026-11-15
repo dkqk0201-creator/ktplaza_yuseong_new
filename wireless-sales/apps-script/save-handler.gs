@@ -33,6 +33,11 @@
  * LockService 로 한 번에 하나의 저장·삭제만 처리한다.
  * 여러 건 저장은 잠금·열 구조 확인·장표 읽기를 한 번만 해서 1건씩 여러 번 부르는 것보다 훨씬 빠르다.
  * 응답: 1건 → { ok, sheet, row, no } / 여러 건 → { ok: true, sheet, results: [{ ok, row, no } | { ok: false, message }], notesSaved }
+ * 등록요청 ID (2026-11-15, sale-link.gs 가 있을 때): links[k].requestId 를 보내면
+ *   - 새 판매 C열 메모에 판매 ID 줄과 "웹앱등록요청ID: <ID>" 줄을 판매 값과 함께 쓴다 (연결 저장이 실패해도 기록이 남음)
+ *   - 같은 등록요청 ID 가 이번 달 시트의 판매 1건에 이미 있으면 그 판매를 다시 쓰지 않고 { ok, row, no, saleId, repeated: true }
+ *     (판매연결 기록이 없으면 이어서 저장, 있으면 그대로) — 통신이 끊겨 다시 보내도 판매가 두 번 저장되지 않는다
+ *   - 같은 ID 가 두 행에 있으면(시트에서 행 복사) 그 건은 저장하지 않고 확인 필요로 거부
  */
 var WS_SAVE_BATCH_MAX = 30;
 
@@ -201,24 +206,56 @@ function handleSaveRequest_(e) {
       allNotes = null;
     }
 
+    // 등록요청 ID: 이미 저장된 요청은 다시 쓰지 않는다 (results 자리 미리 채움), 새 판매는 판매 ID·메모를 미리 정한다
+    var pre = wsPlanRequests_(sheet, all, allNotes, rows, body.links, tz);
+    if (pre.error) return wsJson_({ ok: false, message: pre.error });
+    var todo = pre.todo; // 새로 쓸 원래 index 목록
+    var todoRows = todo.map(function (k) {
+      return rows[k];
+    });
+    var todoNotes = todo.map(function (k) {
+      return pre.newNotes[k];
+    });
+    var pick = function (list) {
+      return Array.isArray(list)
+        ? todo.map(function (k) {
+            return list[k];
+          })
+        : list;
+    };
+    var merge = function (sub) {
+      var out = pre.results.slice();
+      for (var m = 0; m < todo.length; m++) {
+        out[todo[m]] = sub[m];
+        if (sub[m] && sub[m].ok && pre.saleIds[todo[m]]) sub[m].saleId = pre.saleIds[todo[m]];
+      }
+      return out;
+    };
+    // 모두 이미 저장된 요청: 장표는 그대로, 판매연결만 이어서
+    if (todo.length === 0) {
+      var linksOnly = typeof wsSaveLinksSafely_ === "function" ? wsSaveLinksSafely_(ss, sheet, tz, pre.results, body.links) : null;
+      return wsSaveReply_(batch, sheetName, pre.results, false, true, linksOnly);
+    }
+
     // 개통일 순서 위치에 저장 (정렬할 수 없으면 null → 아래 예전 방식)
     var lastSlot = wsLastSlotIndex_(all, tz);
-    var plan = allNotes ? wsPlanSortedSave_(all, allFormulas, rows, tz, allNotes) : null;
+    var plan = allNotes ? wsPlanSortedSave_(all, allFormulas, todoRows, tz, allNotes, todoNotes) : null;
     if (plan) {
       wsWriteSortedBlock_(sheet, plan);
       wsFormatDateColumn_(sheet, lastRow);
       SpreadsheetApp.flush();
       wsApplyNumbers_(plan.results, wsRenumberSaleRows_(sheet, tz, lastSlot));
       SpreadsheetApp.flush();
-      var sortedNotes = wsSaveNotesSafely_(ss, sheet, tz, plan.results, body.notes);
+      var sortedAll = merge(plan.results);
+      var sortedNotes = wsSaveNotesSafely_(ss, sheet, tz, plan.results, pick(body.notes));
       // 판매 고유 ID·판매연결 정보 (sale-link.gs). 실패해도 판매 저장은 그대로
-      var sortedLinks = typeof wsSaveLinksSafely_ === "function" ? wsSaveLinksSafely_(ss, sheet, tz, plan.results, body.links) : null;
-      return wsSaveReply_(batch, sheetName, plan.results, true, sortedNotes, sortedLinks);
+      var sortedLinks = typeof wsSaveLinksSafely_ === "function" ? wsSaveLinksSafely_(ss, sheet, tz, sortedAll, body.links) : null;
+      return wsSaveReply_(batch, sheetName, sortedAll, true, sortedNotes, sortedLinks);
     }
 
     var results = [];
     var next = 0;
-    for (var k = 0; k < rows.length; k++) {
+    for (var k = 0; k < todoRows.length; k++) {
       // 9행부터: 판매 자리 중 판매 데이터가 비어 있는 다음 행
       var index = -1;
       for (var i = next; i <= lastSlot; i++) {
@@ -240,9 +277,11 @@ function handleSaveRequest_(e) {
       wsWriteSaleRow_(
         sheet,
         WS_FIRST_ROW + index,
-        wsWithRowFormulas_(rows[k], WS_FIRST_ROW + index),
+        wsWithRowFormulas_(todoRows[k], WS_FIRST_ROW + index),
         allFormulas[index],
       );
+      // 판매 ID·등록요청 ID 메모를 판매와 바로 이어서 쓴다
+      if (todoNotes[k]) sheet.getRange(WS_FIRST_ROW + index, WS_DATE_COLUMN).setNote(todoNotes[k]);
       results.push({
         ok: true,
         row: WS_FIRST_ROW + index,
@@ -253,12 +292,67 @@ function handleSaveRequest_(e) {
     SpreadsheetApp.flush();
     wsApplyNumbers_(results, wsRenumberSaleRows_(sheet, tz, lastSlot));
     SpreadsheetApp.flush();
-    var notesSaved = wsSaveNotesSafely_(ss, sheet, tz, results, body.notes);
-    var linksSaved = typeof wsSaveLinksSafely_ === "function" ? wsSaveLinksSafely_(ss, sheet, tz, results, body.links) : null;
-    return wsSaveReply_(batch, sheetName, results, false, notesSaved, linksSaved);
+    var mergedAll = merge(results);
+    var notesSaved = wsSaveNotesSafely_(ss, sheet, tz, results, pick(body.notes));
+    var linksSaved = typeof wsSaveLinksSafely_ === "function" ? wsSaveLinksSafely_(ss, sheet, tz, mergedAll, body.links) : null;
+    return wsSaveReply_(batch, sheetName, mergedAll, false, notesSaved, linksSaved);
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * 등록요청 ID 확인 (sale-link.gs 가 있고 links 에 requestId 가 있을 때만).
+ * 반환: { results: [이미 저장된 건의 결과 | null], todo: [새로 쓸 index], newNotes: [C열 메모 | ""], saleIds: [미리 정한 판매 ID | ""] }
+ *       또는 { error } (한 요청 안에 같은 등록요청 ID 가 두 번)
+ */
+function wsPlanRequests_(sheet, all, allNotes, rows, links, tz) {
+  var out = { results: [], todo: [], newNotes: [], saleIds: [] };
+  var ready = typeof wsRequestIdFromNote_ === "function" && Array.isArray(links);
+  // 시트의 등록요청 ID → 판매 행 index 들 (판매가 있는 행만)
+  var found = {};
+  if (ready && allNotes) {
+    for (var i = 0; i < allNotes.length; i++) {
+      var rid = wsRequestIdFromNote_(allNotes[i][2]);
+      if (!rid || wsIsEmptySale_(all[i])) continue;
+      (found[rid] = found[rid] || []).push(i);
+    }
+  }
+  var seen = {};
+  for (var k = 0; k < rows.length; k++) {
+    out.results.push(null);
+    out.newNotes.push("");
+    out.saleIds.push("");
+    var link = ready ? links[k] : null;
+    var requestId = link && typeof link === "object" && WS_UUID_RE.test(String(link.requestId || "")) ? String(link.requestId) : "";
+    if (!requestId) {
+      out.todo.push(k);
+      continue;
+    }
+    if (seen[requestId]) return { error: "같은 등록 요청이 한 번에 두 번 들어왔습니다. 화면을 새로고침해 주세요." };
+    seen[requestId] = true;
+    var hits = found[requestId] || [];
+    if (hits.length > 1) {
+      out.results[k] = { ok: false, message: "같은 등록 요청 표시가 장표 두 행에 있습니다 (시트에서 행 복사 등). 중복 저장을 막기 위해 저장하지 않았습니다. 점장 확인이 필요합니다." };
+      continue;
+    }
+    if (hits.length === 1) {
+      var idx = hits[0];
+      out.results[k] = {
+        ok: true,
+        row: WS_FIRST_ROW + idx,
+        no: wsText_(all[idx][WS_B_INDEX], tz),
+        saleId: wsSaleIdFromNote_(allNotes[idx][2]),
+        repeated: true,
+      };
+      continue;
+    }
+    var saleId = Utilities.getUuid();
+    out.saleIds[k] = saleId;
+    out.newNotes[k] = wsNewSaleNote_(saleId, requestId);
+    out.todo.push(k);
+  }
+  return out;
 }
 
 /** 판매 한 행의 A열·C~AL열 메모만 비운다 (B열 No. 메모·값·서식은 그대로) */
@@ -342,7 +436,7 @@ function wsSheetCells_(row) {
  * 반환: { first, last, cells: { 행index: 38칸 }, notes: { 행index: 38칸 메모 }, results: [...] }
  *   메모는 값과 같이 판매를 따라 옮기고, 새 판매 자리는 빈 메모.
  */
-function wsPlanSortedSave_(all, formulas, newRows, tz, notes) {
+function wsPlanSortedSave_(all, formulas, newRows, tz, notes, newNotes) {
   var blankNotes = [];
   for (var bn = 0; bn < WS_COLUMN_COUNT; bn++) blankNotes.push("");
   var slots = []; // 판매 자리 (9행부터 이어진 구간, UMNP 행처럼 No. 가 빈 판매 행 포함)
@@ -382,8 +476,13 @@ function wsPlanSortedSave_(all, formulas, newRows, tz, notes) {
     for (var c = 0; c < WS_COLUMN_COUNT; c++) {
       if (c !== WS_B_INDEX && newRows[k][c] !== null) cells[c] = newRows[k][c];
     }
-    // 새 판매는 메모 없음 (그 자리에 남아 있던 이전 메모는 지워진다)
-    items.push({ key: newKey, order: filled.length + k, source: -1, cells: cells, notes: blankNotes, result: results.length });
+    // 새 판매는 메모 없음 (그 자리에 남아 있던 이전 메모는 지워진다). 판매 ID·등록요청 ID 가 정해져 있으면 C열 메모에만
+    var itemNotes = blankNotes;
+    if (newNotes && newNotes[k]) {
+      itemNotes = blankNotes.slice();
+      itemNotes[2] = newNotes[k];
+    }
+    items.push({ key: newKey, order: filled.length + k, source: -1, cells: cells, notes: itemNotes, result: results.length });
     results.push(null);
     used++;
   }

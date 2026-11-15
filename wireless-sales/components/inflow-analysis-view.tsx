@@ -8,9 +8,11 @@ import { EmptyBox, SummaryTile } from "@/components/work-ui";
 import { formatNumber, todayInKorea } from "@/lib/format";
 import { nextMonth, previousMonth, salesAcrossMonths, sheetForMonth } from "@/lib/month-sheet";
 import { PRODUCT_METRICS } from "@/lib/product-metrics";
-import { INFLOW_MISSING, inflowOf } from "@/lib/sale-link";
+import { inflowOf } from "@/lib/sale-link";
+import { INFLOW_MISSING } from "@/lib/inflow-options";
+import { useSalesConfig } from "@/components/use-sales-config";
 import {
-  INFLOW_ROWS,
+  inflowOrderFor,
   addDays,
   campaignRows,
   crossCount,
@@ -33,7 +35,8 @@ import { daysOfMonth } from "@/lib/staff-performance";
  * 고객 유입경로 분석 (점장 전용, 조회 전용).
  * 판매 건수·판매 비중만 보여 준다. 상담 후 구매하지 않은 고객 데이터가 없으므로 구매 전환율은 계산하지 않는다
  * (판매 비중 = 전체 판매 중 그 경로의 판매 비율이며 전환율이 아니다).
- * 유입경로가 저장되지 않은 판매는 "미입력" (직접 고른 "미확인"과 구분). 예전 판매를 추정해 채우지 않는다.
+ * 유입경로가 저장되지 않은 판매는 "미입력" (직접 고른 "미확인"과 구분), 원문만 있으면 "확인 필요". 예전 판매를 추정해 채우지 않는다.
+ * 유입경로 항목은 항목 관리의 목록(2026-11-15: 네이버·자점·TM·내방·외부영업). 예전 14개 값은 묶거나 "기존값"으로 보여 준다.
  */
 
 type PeriodKind = "month" | "week" | "day";
@@ -72,16 +75,21 @@ function AnalysisBody({ sheet, sheets, sales }: { sheet: string; sheets: string[
   const pool = useMemo(() => salesAcrossMonths(prev.sales, sales, next.sales), [sales, prev.sales, next.sales]);
   const selected = useMemo(() => (kind === "month" ? sales : inRange(pool, period.start, period.end)), [kind, sales, pool, period.start, period.end]);
 
-  const rate = inflowInputRate(selected);
-  const rows = inflowRows(selected);
+  const { config } = useSalesConfig();
+  const opts = config.inflows;
+  const group = (s: SheetSale) => inflowOf(s, opts);
+  const rate = inflowInputRate(selected, opts);
+  const rows = inflowRows(selected, opts);
   const shown = rows.filter((r) => r.sales > 0);
-  const byStaff = crossCount(selected, (s) => s.staff || "(직원명 없음)");
-  const byMetric = metricByInflow(selected);
-  const campaigns = campaignRows(selected);
-  const trend = weeklyInflowTrend(sales);
-  const usedInflows = INFLOW_ROWS.filter((i) => selected.some((s) => inflowOf(s) === i));
-  const prevByInflow = groupCount(prev.sales ?? [], inflowOf);
-  const curByInflow = groupCount(sales, inflowOf);
+  const byStaff = crossCount(selected, (s) => s.staff || "(직원명 없음)", opts);
+  const byMetric = metricByInflow(selected, opts);
+  const campaigns = campaignRows(selected, config.campaigns, opts);
+  const trend = weeklyInflowTrend(sales, opts);
+  const order = inflowOrderFor([...sales, ...(prev.sales ?? []), ...selected], opts);
+  const usedInflows = order.filter((i) => selected.some((s) => group(s) === i));
+  const monthInflows = order.filter((i) => sales.some((s) => group(s) === i));
+  const prevByInflow = groupCount(prev.sales ?? [], group);
+  const curByInflow = groupCount(sales, group);
 
   return (
     <div className="space-y-6">
@@ -123,6 +131,7 @@ function AnalysisBody({ sheet, sheets, sales }: { sheet: string; sheets: string[
         <SummaryTile label="유입경로 입력률" value={`${rate.rate}%`} tone={rate.rate < 100 ? "warn" : "good"} />
         <SummaryTile label="미입력" value={`${formatNumber(rate.missing)}건`} tone={rate.missing ? "warn" : "default"} />
         <SummaryTile label="미확인 (직접 선택)" value={`${formatNumber(rate.unknown)}건`} />
+        {rate.check > 0 && <SummaryTile label="확인 필요 (목록에 없는 원문)" value={`${formatNumber(rate.check)}건`} tone="warn" />}
       </div>
 
       {selected.length === 0 ? (
@@ -165,29 +174,30 @@ function AnalysisBody({ sheet, sheets, sales }: { sheet: string; sheets: string[
             title="캠페인별 판매"
             head={["캠페인", "판매", "유입경로"]}
             rows={campaigns.map((c) => [
-              c.campaign,
+              c.state === "check" ? `확인 필요 · ${c.campaign}` : c.campaign,
               `${formatNumber(c.sales)}건`,
               [...c.inflows.entries()].map(([i, n]) => `${i} ${n}`).join(", "),
             ])}
             empty="캠페인이 입력된 판매가 없습니다."
+            note="캠페인별 고객·예산은 위쪽 '캠페인' 탭에서 봅니다."
           />
         </>
       )}
 
       <Table
         title={`${sheetLabel(sheet)} 판매의 주별 유입경로 변화 (월요일 시작 주 · 달에 걸친 주 전체는 위 주간 보기에서 두 달 합산)`}
-        head={["주", "판매", ...INFLOW_ROWS.filter((i) => sales.some((s) => inflowOf(s) === i))]}
+        head={["주", "판매", ...monthInflows]}
         rows={trend.map((t) => [
           `${t.week} ~`,
           formatNumber(t.total),
-          ...INFLOW_ROWS.filter((i) => sales.some((s) => inflowOf(s) === i)).map((i) => formatNumber(t.inflows.get(i) ?? 0)),
+          ...monthInflows.map((i) => formatNumber(t.inflows.get(i) ?? 0)),
         ])}
         empty="판매가 없습니다."
       />
       <Table
         title={`월간 유입경로 변화 (${month} / 전월 ${prevMonth})`}
         head={["유입경로", "이번 달", "전월", "차이"]}
-        rows={INFLOW_ROWS.filter((i) => (curByInflow.get(i) ?? 0) + (prevByInflow.get(i) ?? 0) > 0).map((i) => {
+        rows={order.filter((i) => (curByInflow.get(i) ?? 0) + (prevByInflow.get(i) ?? 0) > 0).map((i) => {
           const c = curByInflow.get(i) ?? 0;
           const p = prevByInflow.get(i) ?? 0;
           return [i, formatNumber(c), prev.sales ? formatNumber(p) : "-", prev.sales ? (c - p > 0 ? `+${c - p}` : String(c - p)) : "-"];
