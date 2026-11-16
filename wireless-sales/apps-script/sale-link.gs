@@ -206,8 +206,11 @@ function wsLinkValueError_(field, value, cfg) {
   var v = String(value || "").trim();
   if (!v) return "";
   if (field === "inflow") {
-    var names = cfg && cfg.inflows ? cfg.inflows : WS_INFLOW_SOURCES;
-    return names.indexOf(v) >= 0 ? "" : "유입경로는 목록에서 골라 주세요.";
+    // cfg 없음 = 잠금 전 형식 검사: 길이만 본다 (항목 이름 1~10자 + 미확인).
+    // 사용 중 항목인지는 잠금 안에서 cfg(= 항목 관리 시트의 사용 중 항목 + 미확인)로 검사한다.
+    // (2026-11-16: 여기서 고정 기본 목록으로 검사해, 점장이 추가한 항목(권매)으로 판매 수정이 거부되던 문제 수정)
+    if (!cfg || !cfg.inflows) return v.length <= 10 ? "" : "유입경로는 목록에서 골라 주세요.";
+    return cfg.inflows.indexOf(v) >= 0 ? "" : "유입경로는 목록에서 골라 주세요.";
   }
   if (field === "goodbye") return v === "O" || v === "X" ? "" : "리본은 O 또는 X 로 입력해 주세요.";
   if (field === "campaignId") {
