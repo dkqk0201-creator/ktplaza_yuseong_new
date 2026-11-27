@@ -40,6 +40,8 @@ interface Item {
   fields: QuickFields;
   unknownLines: string[];
   repeatedFields: QuickFieldId[];
+  /** 정책사용 영역의 미인식 금액 줄 (있으면 등록 차단, 다시 분석해야 풀림) */
+  policyUseUnknown: string[];
   submit: Submit;
   /** 점장이 "중복 아님"을 확인한 경우 */
   allowDuplicate: boolean;
@@ -82,6 +84,7 @@ const BATCH_SIZE = 30;
 async function postQuickBatch(
   list: QuickFields[],
   requestIds: string[],
+  policyUseUnknown: string[][],
 ): Promise<SaveSaleResponse[]> {
   const unknown = (message: string): SaveSaleResponse[] =>
     list.map(() => ({ ok: false, message }));
@@ -89,7 +92,13 @@ async function postQuickBatch(
     const response = await fetch("/api/sales/quick", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ items: list.map((fields, k) => ({ fields, requestId: requestIds[k] })) }),
+      body: JSON.stringify({
+        items: list.map((fields, k) => ({
+          fields,
+          requestId: requestIds[k],
+          policyUseUnknown: policyUseUnknown[k] ?? [],
+        })),
+      }),
     });
     const body = (await response.json()) as QuickBatchResponse;
     if (body?.ok === true && Array.isArray(body.results)) {
@@ -194,7 +203,12 @@ export function QuickRegister({
     const n = normalized.get(item.id)!;
     if (item.submit.state === "done") return "done";
     if (item.submit.state === "saving") return "saving";
-    if (n.issues.length > 0 || item.repeatedFields.length > 0) return "issue";
+    if (
+      n.issues.length > 0 ||
+      item.repeatedFields.length > 0 ||
+      item.policyUseUnknown.length > 0
+    )
+      return "issue";
     if (duplicateReason(item, n) && !item.allowDuplicate) return "duplicate";
     if (item.submit.state === "failed") return "failed";
     return "ready";
@@ -208,6 +222,7 @@ export function QuickRegister({
       fields: r.fields,
       unknownLines: r.unknownLines,
       repeatedFields: r.repeatedFields,
+      policyUseUnknown: r.policyUseUnknown,
       submit: { state: "idle" } as Submit,
       allowDuplicate: false,
     }));
@@ -270,6 +285,7 @@ export function QuickRegister({
       const results = await postQuickBatch(
         chunk.map((i) => i.fields),
         chunk.map((i) => i.requestId),
+        chunk.map((i) => i.policyUseUnknown),
       );
       const byId = new Map(chunk.map((item, k) => [item.id, results[k]]));
       for (const [id, result] of byId) {
@@ -354,7 +370,7 @@ export function QuickRegister({
     runningRef.current = true;
     setRunning(true);
     updateItem(id, (i) => (i.submit.state === "done" ? { ...i, submit: { ...i.submit, retrying: true } } : i));
-    const [result] = await postQuickBatch([item.fields], [item.requestId]);
+    const [result] = await postQuickBatch([item.fields], [item.requestId], [item.policyUseUnknown]);
     runningRef.current = false;
     setRunning(false);
     updateItem(id, (i) => {
@@ -760,7 +776,9 @@ function QuickItemCard({
         </div>
       </header>
 
-      {(item.submit.state === "failed" || duplicateReason) && (
+      {(item.submit.state === "failed" ||
+        duplicateReason ||
+        item.policyUseUnknown.length > 0) && (
         <div className="space-y-2 px-4 pt-3">
           {item.submit.state === "failed" && (
             <p
@@ -774,6 +792,27 @@ function QuickItemCard({
                 </span>
               )}
             </p>
+          )}
+          {item.policyUseUnknown.length > 0 && (
+            <div
+              role="alert"
+              className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-800"
+            >
+              <p className="font-bold">
+                ⛔ 정책사용에 인식하지 못한 금액이 있어 등록할 수 없습니다.
+              </p>
+              <ul className="mt-1 list-disc pl-5 font-mono text-xs">
+                {item.policyUseUnknown.map((line, k) => (
+                  <li key={k}>{line}</li>
+                ))}
+              </ul>
+              <p className="mt-1 text-xs">
+                위 줄의 항목명을 카톡 원문에서 &apos;추가지원금&apos;,
+                &apos;고혜(기존할부금)&apos;, &apos;고혜(요금)&apos; 중 하나로
+                고친 뒤, 붙여넣기 칸에서 다시 [판매내용 분석]을 눌러 주세요. (아래
+                입력칸만 고쳐서는 등록되지 않습니다.)
+              </p>
+            </div>
           )}
           {duplicateReason && (
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">

@@ -157,6 +157,9 @@ const TOP_LEVEL: {
     children: {
       추가지원금: "useExtraSupport",
       "고혜(기존할부금)": "useInstallment",
+      // 직원 카톡 보고에서 실제로 쓰는 다른 표기 (같은 V열 세부 항목)
+      "고혜(할부금)": "useInstallment",
+      "고혜(기존할부)": "useInstallment",
       "고혜(요금)": "usePlan",
     },
   },
@@ -260,6 +263,25 @@ export interface QuickReport {
   raw: string;
   /** "중고폰&현물 판매" 줄이 보고에 있었는지 (예전 양식은 없음 → 리본을 판정하지 않음) */
   usedPhoneLine?: boolean;
+  /**
+   * "정책사용" 영역에서 항목명을 알아보지 못했는데 금액이 적힌 줄 (원문 그대로).
+   * 금액이 조용히 빠지지 않도록 하나라도 있으면 등록을 막는다 (화면·서버 모두). 양식을 고쳐 다시 분석해야 풀린다.
+   */
+  policyUseUnknown: string[];
+}
+
+/** 정책사용 미인식 줄이 있을 때 보여줄 안내 (화면·서버 공용) */
+export const POLICY_USE_UNKNOWN_MESSAGE =
+  "정책사용에 알 수 없는 항목의 금액이 있어 저장하지 않았습니다. 카톡 원문의 항목명을 '추가지원금', '고혜(기존할부금)', '고혜(요금)' 중 하나로 고친 뒤 다시 [판매내용 분석]을 눌러 주세요.";
+
+/**
+ * 정책사용 영역의 미인식 줄에 "확인이 필요한 금액"이 있는지.
+ * 숫자가 없거나(빈칸·X·메모), 읽은 금액이 0 이면 막지 않는다 (참고용 "양식에 없는 줄"로만 표시).
+ */
+function hasAmountToCheck(valuePart: string): boolean {
+  if (!/\d/.test(valuePart)) return false;
+  const parsed = parseAmountWithNote(valuePart);
+  return "error" in parsed || (parsed.value !== null && parsed.value !== 0);
 }
 
 /** 카톡 복사 시 붙는 "[이름] [오후 3:21]" 같은 앞부분 제거 */
@@ -336,6 +358,7 @@ export function parseQuickReports(text: string): QuickReport[] {
         unknownLines: [],
         repeatedFields: [],
         raw: "",
+        policyUseUnknown: [],
       };
       rawLines = [];
     }
@@ -349,6 +372,9 @@ export function parseQuickReports(text: string): QuickReport[] {
         lastField = childId;
       } else {
         current.unknownLines.push(trimmed);
+        if (parent?.key === "정책사용" && hasAmountToCheck(colon >= 0 ? value : body)) {
+          current.policyUseUnknown.push(trimmed);
+        }
         lastField = null;
       }
       continue;
@@ -359,6 +385,8 @@ export function parseQuickReports(text: string): QuickReport[] {
       parent = top;
       if (top.id === "usedPhone") current.usedPhoneLine = true;
       if (top.id) set(current, top.id, value);
+      // "정책사용 : 4만" 처럼 묶음 제목 줄에 적은 금액은 어느 항목인지 알 수 없다
+      else if (top.key === "정책사용" && hasAmountToCheck(value)) current.policyUseUnknown.push(trimmed);
       lastField = top.id;
       continue;
     }
@@ -371,6 +399,10 @@ export function parseQuickReports(text: string): QuickReport[] {
       continue;
     }
     current.unknownLines.push(trimmed);
+    // "ㄴ" 없이 정책사용 묶음 안에 적은 모르는 줄 (예: "고혜(할부금) : 41,793원")
+    if (parent?.key === "정책사용" && hasAmountToCheck(colon >= 0 ? value : body)) {
+      current.policyUseUnknown.push(trimmed);
+    }
   }
   finish();
   return reports;
@@ -473,6 +505,21 @@ export function parseAmount(
     return { value };
   }
   return { error: `금액 "${raw}" 를 읽을 수 없습니다.` };
+}
+
+/**
+ * 고혜(요금)·고혜(기존할부금) 전용: "41,793원(기존할부)" 처럼 금액 뒤 괄호 설명을 떼고 읽는다.
+ * 괄호 안에 숫자가 있으면(예: "4만(+1만)") 금액이 애매하므로 떼지 않고 기존 규칙대로 "확인 필요".
+ */
+export function parseAmountWithNote(
+  raw: string,
+): { value: number | null } | { error: string } {
+  const m = raw.trim().match(/^(.*?)\s*\(([^()]*)\)$/);
+  if (m && m[1].trim() !== "" && !/\d/.test(m[2])) {
+    const parsed = parseAmount(m[1]);
+    if (!("error" in parsed)) return parsed;
+  }
+  return parseAmount(raw);
 }
 
 function validDate(y: number, m: number, d: number): string | null {
@@ -704,8 +751,8 @@ export function normalizeQuick(
 
   // V열 = 고혜(요금) + 고혜(기존할부금) 합계 (한 번만 더함). 세부 금액은 참고내용으로 따로 보관
   {
-    const plan = parseAmount(fields.usePlan);
-    const installment = parseAmount(fields.useInstallment);
+    const plan = parseAmountWithNote(fields.usePlan);
+    const installment = parseAmountWithNote(fields.useInstallment);
     if ("error" in plan) issues.push({ field: "usePlan", message: plan.error });
     if ("error" in installment) issues.push({ field: "useInstallment", message: installment.error });
     if (!("error" in plan) && !("error" in installment)) {

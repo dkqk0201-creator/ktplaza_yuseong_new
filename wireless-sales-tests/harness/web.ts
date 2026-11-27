@@ -89,7 +89,11 @@ const post = (handler: (r: Request) => Promise<Response>, body: unknown) =>
 
 /** 간편등록 (보고 글 → 화면과 같은 해석 → 저장 API) */
 export async function register(...texts: string[]) {
-  const items = texts.map((t) => ({ fields: parseQuickReports(t)[0].fields }));
+  // 화면과 같이: 분석 결과의 필드 + 정책사용 미인식 금액 줄을 함께 보낸다
+  const items = texts.map((t) => {
+    const [r] = parseQuickReports(t);
+    return { fields: r.fields, policyUseUnknown: r.policyUseUnknown };
+  });
   return post(quickPOST, { items });
 }
 /** 간편등록 + 등록요청 ID (화면이 카드마다 만드는 값) */

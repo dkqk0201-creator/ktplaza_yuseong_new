@@ -3,6 +3,7 @@ import { getStaffNames } from "@/lib/data/staff";
 import { staffIdForName } from "@/lib/data/staff-list";
 import { todayInKorea } from "@/lib/format";
 import {
+  POLICY_USE_UNKNOWN_MESSAGE,
   QUICK_FIELDS,
   emptyQuickFields,
   normalizeQuick,
@@ -84,6 +85,19 @@ function parseFields(input: unknown): QuickFields | null {
   return fields;
 }
 
+/**
+ * 화면이 분석한 "정책사용 미인식 금액 줄" (원문). 없거나 빈 배열이면 [] (예전 화면 호환).
+ * 형식이 틀리면 null.
+ */
+function parsePolicyUseUnknown(input: unknown): string[] | null {
+  if (typeof input !== "object" || input === null) return [];
+  const v = (input as Record<string, unknown>).policyUseUnknown;
+  if (v === undefined) return [];
+  if (!Array.isArray(v) || v.length > 50) return null;
+  if (v.some((line) => typeof line !== "string" || line.length > 600)) return null;
+  return v as string[];
+}
+
 function errorReply(error: unknown): { status: number; message: string } {
   if (error instanceof AppsScriptError) {
     console.error(`[간편등록] 저장 실패 (${error.code}): ${error.message}`);
@@ -102,7 +116,11 @@ function errorReply(error: unknown): { status: number; message: string } {
 }
 
 /** 여러 건 저장. 확인이 필요한 건은 빼고 나머지만 Apps Script 로 한 번에 보낸다. */
-async function saveItems(list: QuickFields[], requestIds: (string | undefined)[] = []): Promise<SaveSaleResponse[]> {
+async function saveItems(
+  list: QuickFields[],
+  requestIds: (string | undefined)[] = [],
+  policyUseUnknown: string[][] = [],
+): Promise<SaveSaleResponse[]> {
   const config = await getSalesConfig();
   const context = {
     today: todayInKorea(),
@@ -119,7 +137,15 @@ async function saveItems(list: QuickFields[], requestIds: (string | undefined)[]
   }[] = [];
   list.forEach((fields, index) => {
     const normalized = normalizeQuick(fields, context);
-    if (normalized.issues.length > 0) {
+    const unknownAmounts = policyUseUnknown[index] ?? [];
+    if (unknownAmounts.length > 0) {
+      // 정책사용 금액이 조용히 빠지지 않도록 저장하지 않는다 (양식을 고쳐 다시 분석해야 함)
+      results[index] = {
+        ok: false,
+        message: POLICY_USE_UNKNOWN_MESSAGE,
+        errors: unknownAmounts.map((line) => `정책사용 미인식 항목: ${line}`),
+      };
+    } else if (normalized.issues.length > 0) {
       results[index] = {
         ok: false,
         message: "확인이 필요한 항목이 있습니다.",
@@ -213,13 +239,18 @@ export async function POST(request: Request) {
     }
     const list = items.map(parseFields);
     const requestIds = items.map(parseRequestId);
-    if (list.some((f) => f === null) || requestIds.some((r) => r === null) || new Set(requestIds.filter(Boolean)).size !== requestIds.filter(Boolean).length) {
+    const unknownLists = items.map(parsePolicyUseUnknown);
+    if (list.some((f) => f === null) || requestIds.some((r) => r === null) || unknownLists.some((u) => u === null) || new Set(requestIds.filter(Boolean)).size !== requestIds.filter(Boolean).length) {
       return reply(
         { ok: false, message: "요청 형식이 올바르지 않습니다." },
         400,
       );
     }
-    const results = await saveItems(list as QuickFields[], requestIds as (string | undefined)[]);
+    const results = await saveItems(
+      list as QuickFields[],
+      requestIds as (string | undefined)[],
+      unknownLists as string[][],
+    );
     return reply({ ok: true, results }, 200);
   }
 
@@ -228,7 +259,11 @@ export async function POST(request: Request) {
   if (!fields) {
     return reply({ ok: false, message: "요청 형식이 올바르지 않습니다." }, 400);
   }
-  const [result] = await saveItems([fields]);
+  const unknownOne = parsePolicyUseUnknown(input);
+  if (unknownOne === null) {
+    return reply({ ok: false, message: "요청 형식이 올바르지 않습니다." }, 400);
+  }
+  const [result] = await saveItems([fields], [], [unknownOne]);
   if (result.ok) return reply(result, 200);
   return reply(result, result.errors ? 400 : 502);
 }
