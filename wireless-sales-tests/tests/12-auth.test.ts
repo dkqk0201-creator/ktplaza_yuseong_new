@@ -30,6 +30,7 @@ import { GET as goalsGET, POST as goalsPOST } from "@/app/api/goals/route";
 import { GET as gobulbiGET, POST as gobulbiPOST } from "@/app/api/budget/gobulbi/route";
 import { GET as otherGET, POST as otherPOST } from "@/app/api/budget/other/route";
 import { GET as spotBulkGET, POST as spotBulkPOST } from "@/app/api/spot/bulk/route";
+import { GET as policyGET, POST as policyPOST } from "@/app/api/budget/policy/route";
 import { POST as linkPOST } from "@/app/api/sales/link/route";
 import { GET as boardGET, POST as boardPOST } from "@/app/api/goals/board/route";
 
@@ -67,6 +68,8 @@ const ROUTES: [string, "GET" | "POST", Handler, unknown][] = [
   ["/api/spot/bulk", "POST", spotBulkPOST, { op: "undo", requestId: "req-test-000001" }],
   ["/api/budget/other?month=2026-10", "GET", otherGET, undefined],
   ["/api/budget/other", "POST", otherPOST, { op: "create", month: "2026-10", id: "oth-test-0001", name: "x", kind: "gain", amount: 1 }],
+  ["/api/budget/policy", "GET", policyGET, undefined],
+  ["/api/budget/policy", "POST", policyPOST, { op: "undo", requestId: "req-test-000002" }],
 ];
 
 function req(url: string, method: string, body: unknown, headers: Record<string, string>) {
@@ -99,7 +102,7 @@ test("2) 모든 업무 API 파일: 내보낸 GET·POST 의 첫 동작이 require
   const walk = (d: string) => { for (const f of readdirSync(d)) { const p = path.join(d, f); if (statSync(p).isDirectory()) walk(p); else if (f === "route.ts") files.push(p); } };
   walk(path.join(WS, "app/api"));
   const business = files.filter((f) => !f.includes(`${path.sep}auth${path.sep}`));
-  assert.equal(business.length, 16);
+  assert.equal(business.length, 17);
   let handlers = 0;
   for (const f of business) {
     const src = readFileSync(f, "utf8");

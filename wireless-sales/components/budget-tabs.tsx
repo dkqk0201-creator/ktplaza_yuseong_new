@@ -1,15 +1,16 @@
 import Link from "next/link";
 
-/* 예산관리 안의 메뉴: 예산 현황 / 모델정책 정산 */
+/* 예산관리 안의 메뉴: 예산 현황 / 모델정책 정산 / 정책 확보 관리 */
 
 const TABS = [
   { href: "/budget", label: "예산 현황" },
   { href: "/budget/model-policy", label: "모델정책 정산" },
+  { href: "/budget/policy", label: "정책 확보 관리" },
 ] as const;
 
 export function BudgetTabs({ active }: { active: (typeof TABS)[number]["href"] }) {
   return (
-    <nav aria-label="예산관리 메뉴" className="mb-4 flex gap-1.5">
+    <nav aria-label="예산관리 메뉴" className="mb-4 flex flex-wrap gap-1.5">
       {TABS.map((tab) => {
         const on = tab.href === active;
         return (

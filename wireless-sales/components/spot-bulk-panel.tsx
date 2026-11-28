@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatNumber, todayInKorea } from "@/lib/format";
-import { sheetForMonth } from "@/lib/month-sheet";
+import { formatNumber } from "@/lib/format";
+import { loadSalesForMonths } from "@/lib/load-sales-months";
 import { parseOtherAmount } from "@/lib/other-budget";
 import { monthDayText } from "@/lib/sale-display";
-import type { SheetSale } from "@/lib/sheet-record";
 import { noteForDisplay, spotLabel } from "@/lib/spot";
 import { CURRENT_SPOT_TERM as T, spotTerm } from "@/lib/spot-term";
 import {
@@ -36,6 +35,7 @@ import { fetchSpotBulkHistory, postSpotBulkApply, postSpotBulkUndo } from "@/lib
  *   2) [적용 대상 조회] → 기간에 걸친 월 시트를 읽어 미리보기 (저장 안 함)
  *   3) 개별 체크·해제 (기존 스팟·충돌·No. 없음은 기본 해제) → [최종 등록] 때만 저장
  *   4) 결과 안내 + 스팟별 집계 자동 갱신 (onApplied)
+ *   미리보기 표의 '개통 요금제' = 그 판매 행의 장표 K열(요금제) 저장값 그대로 (빈칸이면 '미입력'). 표시 전용, 등록 로직과 무관.
  */
 
 interface Draft {
@@ -83,30 +83,6 @@ function toCondition(d: Draft): { condition: SpotCondition | null; error: string
 }
 
 type SalesLoad = { status: "idle" } | { status: "loading" } | { status: "error"; message: string };
-
-async function loadSalesForMonths(months: string[]): Promise<{ sales: BulkSale[]; errors: string[] }> {
-  const today = todayInKorea();
-  const errors: string[] = [];
-  const sales: BulkSale[] = [];
-  await Promise.all(
-    months.map(async (ym) => {
-      const sheet = sheetForMonth(ym, today);
-      if (!sheet) {
-        errors.push(`${ym}: 최근 12개월 밖이라 월 시트로 찾을 수 없습니다.`);
-        return;
-      }
-      try {
-        const r = await fetch(`/api/sales/list?sheet=${encodeURIComponent(sheet)}`, { cache: "no-store" });
-        const body = (await r.json()) as { ok?: boolean; sheet?: string; sales?: SheetSale[]; message?: string };
-        if (body?.ok && body.sheet === sheet && Array.isArray(body.sales)) sales.push(...body.sales.map((s) => ({ ...s, sheet })));
-        else errors.push(`${sheet}: ${body?.message || "불러오지 못했습니다."}`);
-      } catch {
-        errors.push(`${sheet}: 불러오지 못했습니다.`);
-      }
-    }),
-  );
-  return { sales, errors };
-}
 
 function Won({ value }: { value: number }) {
   return (
@@ -354,7 +330,7 @@ export function SpotBulkPanel({
             <p className="px-4 py-6 text-center text-sm text-ink-sub">조건에 맞는 판매가 없습니다.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px] text-sm">
+              <table className="w-full min-w-[1120px] text-sm">
                 <caption className="border-b border-line px-4 py-2.5 text-left text-sm font-bold text-ink">
                   적용 대상 미리보기
                   <span className="ml-2 text-xs font-normal text-ink-muted">체크한 판매만 저장 · 기존 번호·충돌·No. 없음은 기본 해제(확인 후 직접 체크)</span>
@@ -366,6 +342,7 @@ export function SpotBulkPanel({
                     <th scope="col" className="px-2 py-2.5 text-left font-semibold">판매 No.</th>
                     <th scope="col" className="px-2 py-2.5 text-left font-semibold">직원명</th>
                     <th scope="col" className="px-2 py-2.5 text-left font-semibold">모델명</th>
+                    <th scope="col" className="px-2 py-2.5 text-left font-semibold">개통 요금제</th>
                     <th scope="col" className="px-2 py-2.5 text-left font-semibold">기존 {T}</th>
                     <th scope="col" className="px-2 py-2.5 text-left font-semibold">신규 {T}</th>
                     <th scope="col" className="px-2 py-2.5 text-right font-semibold">적용 금액</th>
@@ -397,6 +374,7 @@ export function SpotBulkPanel({
                         <td className="px-2 py-2 whitespace-nowrap">{r.sale.no || <span className="font-semibold text-amber-700">없음</span>}</td>
                         <td className="px-2 py-2 whitespace-nowrap">{r.sale.staff || "-"}</td>
                         <td className="px-2 py-2 whitespace-nowrap">{r.sale.model || "-"}</td>
+                        <td className="px-2 py-2 whitespace-nowrap">{r.sale.plan || <span className="font-semibold text-amber-700">미입력</span>}</td>
                         <td className="px-2 py-2">
                           {r.sale.spot || r.sale.spotNote ? (
                             <>

@@ -45,6 +45,7 @@
  * - action = "gobulbi" 요청(예산관리 고불비사용)은 gobulbi.gs 의 wsHandleGobulbi_ 로 넘긴다.
  * - action = "spot-bulk" 요청(스팟관리 스팟예산 일괄등록)은 spot-bulk.gs 의 wsHandleSpotBulk_ 로 넘긴다.
  * - action = "other-budget" 요청(예산관리 기타 예산)은 other-budget.gs 의 wsHandleOtherBudget_ 로 넘긴다.
+ * - action = "policy-edit" 요청(예산관리 정책 확보 관리 — R·S·T 금액 수정)은 policy-edit.gs 의 wsHandlePolicyEdit_ 로 넘긴다.
  * - action = "auth-login" · "auth-check" · "auth-logout"(웹앱 관리자 로그인)은 auth-handler.gs 의 wsHandleAuth_ 로 넘긴다.
  * - action = "sale-link-set"(판매연결: 유입경로·캠페인·리본 등)은 sale-link.gs 의 wsHandleSaleLink_ 로 넘긴다.
  * - action = "config-…"(유입경로 항목·캠페인 목록)은 config-handler.gs 의 wsHandleConfig_ 로 넘긴다.
@@ -86,6 +87,10 @@ function wsHandleSaleUpdate_(e) {
   // 예산관리 기타 예산(other-budget.gs) — 별도 시트에만 저장
   if (body && body.action === "other-budget" && typeof wsHandleOtherBudget_ === "function") {
     return wsHandleOtherBudget_(body);
+  }
+  // 예산관리 정책 확보 관리(policy-edit.gs) — R·S·T 금액만, 이력은 별도 시트
+  if (body && body.action === "policy-edit" && typeof wsHandlePolicyEdit_ === "function") {
+    return wsHandlePolicyEdit_(body);
   }
   if (!body || body.action !== "sale-update") return null;
   // 이 handler 의 응답에는 항상 handler 표시를 붙인다 (웹앱이 올바른 코드가 배포됐는지 확인)

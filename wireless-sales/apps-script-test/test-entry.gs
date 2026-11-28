@@ -5,10 +5,10 @@
  *   넣으면 운영 시트 연결을 거부해 운영이 멈춘다 (운영 데이터가 바뀌는 방향의 실패는 아님).
  *
  * 테스트 프로젝트 = 어느 시트에도 붙지 않은 "독립(standalone)" 새 프로젝트.
- * 파일은 정확히 다음 15개 (그 밖의 파일, 특히 기존 Code.gs·기본 Code.gs·total-row.gs 는 두지 않는다):
+ * 파일은 정확히 다음 16개 (그 밖의 파일, 특히 기존 Code.gs·기본 Code.gs·total-row.gs 는 두지 않는다):
  *   common.gs, notes.gs, save-handler.gs, update-handler.gs, delete-handler.gs, list-handler.gs,
  *   inspection-review.gs, gobulbi.gs, goal-handler.gs, auth-handler.gs, sale-link.gs, config-handler.gs,
- *   spot-bulk.gs, other-budget.gs (2026-11-28 추가), test-entry.gs(이 파일)
+ *   spot-bulk.gs, other-budget.gs (2026-11-28 추가), policy-edit.gs (2026-11-28 추가), test-entry.gs(이 파일)
  * 웹에서 부를 수 있는 진입 함수는 이 파일의 doPost·doGet 둘뿐이다. 편집기에서 직접 실행해도 되는 함수는
  * wsTestSelfCheck(읽기 전용 점검)와 auth-handler.gs 의 wsAuthReset(로그인 잠금 해제 — 테스트 프로젝트의 스크립트 속성만 바꿈)이다.
  *
@@ -31,7 +31,7 @@
  *      (wsHandleSaleUpdate_ 가 inspection-review·gobulbi·auth-login·auth-check·auth-logout 요청도 넘겨받는다)
  */
 var WS_TEST_ENTRY = "test-entry";
-var WS_TEST_ENTRY_VERSION = 2;
+var WS_TEST_ENTRY_VERSION = 3;
 var WS_TEST_CONFIG = {
   // 테스트 시트 "무선장표 테스트전용" (가짜 데이터 전용, 2026-11-05 새로 만든 독립 파일)
   SPREADSHEET_ID: "1qM57jAfArHW1CGTfpKYJWeFQZ01EEL5CM1L7BWatti4",
@@ -62,6 +62,7 @@ var WS_TEST_REQUIRED_FILES = {
   "config-handler.gs": function () { return typeof wsHandleConfig_ === "function"; },
   "spot-bulk.gs": function () { return typeof wsHandleSpotBulk_ === "function"; },
   "other-budget.gs": function () { return typeof wsHandleOtherBudget_ === "function"; },
+  "policy-edit.gs": function () { return typeof wsHandlePolicyEdit_ === "function"; },
 };
 
 function wsTestSha256_(text) {
