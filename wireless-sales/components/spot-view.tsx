@@ -8,6 +8,15 @@ import { CURRENT_SPOT_TERM, spotTerm, type SpotTerm } from "@/lib/spot-term";
 import { EmptyBox, Notice } from "@/components/work-ui";
 import { formatCtn, formatNumber } from "@/lib/format";
 import { monthDayText } from "@/lib/sale-display";
+import { copyText } from "@/components/copy-text";
+import {
+  ADDON_STATE_LABEL,
+  addonMessage,
+  checkAddon,
+  type AddonCheck,
+  type AddonMessageSale,
+  type AddonState,
+} from "@/lib/spot-addon";
 import type { SheetSale } from "@/lib/sheet-record";
 import {
   buildSpotReport,
@@ -200,33 +209,121 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
 }
 
 function SpotCustomers({ spot }: { spot: SpotSummary }) {
+  const checks = spot.customers.map((c) => ({ c, check: checkAddon(c.addon) }));
+  const missingCount = checks.filter((x) => x.check.state === "missing").length;
+  const unclearCount = checks.filter((x) => x.check.state === "unclear").length;
   return (
     <section
       aria-label={`${spot.label} 고객 목록`}
       className="overflow-x-auto rounded-xl border border-line bg-white"
     >
-      <table className="w-full min-w-[320px] text-sm">
+      <table className="w-full min-w-[760px] text-sm">
         <caption className="border-b border-line px-4 py-3 text-left text-sm font-bold text-ink">
           {spot.label} 고객 {spot.count}건
+          <span className="ml-2 text-xs font-semibold">
+            {missingCount > 0 && <span className="text-rose-600">부가 미입력 {missingCount}건</span>}
+            {missingCount > 0 && unclearCount > 0 && <span className="text-ink-muted"> · </span>}
+            {unclearCount > 0 && <span className="text-amber-700">확인 필요 {unclearCount}건</span>}
+            {missingCount === 0 && unclearCount === 0 && <span className="text-emerald-700">부가 모두 입력됨</span>}
+          </span>
+          <span className="mt-0.5 block text-xs font-normal text-ink-muted">
+            부가서비스 = 장표 AI열(필L/필S) 기록 여부 검수 · 통신사 실제 가입 완료 여부는 아님 · 조회만 하며 장표는 바꾸지 않음
+          </span>
         </caption>
         <thead className="bg-zinc-50 text-xs text-ink-sub">
           <tr>
             <th scope="col" className="px-4 py-2.5 text-left font-semibold">개통일</th>
             <th scope="col" className="px-4 py-2.5 text-left font-semibold">고객명</th>
             <th scope="col" className="px-4 py-2.5 text-left font-semibold">CTN</th>
+            <th scope="col" className="px-4 py-2.5 text-left font-semibold">담당 직원</th>
+            <th scope="col" className="px-4 py-2.5 text-left font-semibold">부가서비스</th>
+            <th scope="col" className="px-4 py-2.5 text-left font-semibold">조치</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-line tabular-nums text-ink">
-          {spot.customers.map((c) => (
-            <tr key={c.row}>
+          {checks.map(({ c, check }) => (
+            <tr key={c.row} className={check.state === "missing" ? "bg-rose-50/60" : check.state === "unclear" ? "bg-amber-50/60" : undefined}>
               <td className="px-4 py-2.5 whitespace-nowrap">{monthDayText(c.activatedAt)}</td>
               <td className="px-4 py-2.5 whitespace-nowrap">{c.customer || "-"}</td>
               <td className="px-4 py-2.5 whitespace-nowrap">{formatCtn(c.ctn) || "-"}</td>
+              <td className="px-4 py-2.5 whitespace-nowrap">{c.staff?.trim() || <span className="text-ink-muted">미기재</span>}</td>
+              <td className="px-4 py-2.5 whitespace-nowrap">
+                <AddonBadge check={check} />
+              </td>
+              <td className="px-4 py-2.5 whitespace-nowrap">
+                <AddonCopyButton
+                  state={check.state}
+                  sale={{ activatedAt: c.activatedAt, customer: c.customer, no: c.no ?? "", staff: c.staff ?? "" }}
+                />
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
     </section>
+  );
+}
+
+function AddonBadge({ check }: { check: AddonCheck }) {
+  if (check.state === "entered") {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+          {ADDON_STATE_LABEL.entered}
+        </span>
+        <span className="font-semibold text-ink">{check.names.join(", ")}</span>
+      </span>
+    );
+  }
+  if (check.state === "missing") {
+    return (
+      <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700 ring-1 ring-rose-300">
+        {ADDON_STATE_LABEL.missing}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800 ring-1 ring-amber-300">
+        {ADDON_STATE_LABEL.unclear}
+      </span>
+      {check.raw && <span className="max-w-[12rem] truncate text-xs text-ink-sub" title={check.raw}>장표: {check.raw}</span>}
+    </span>
+  );
+}
+
+/** 미입력 → [카톡용 복사], 확인 필요 → [확인 요청 복사], 입력됨 → 버튼 없음. 복사만 하고 전송·저장은 하지 않는다 */
+function AddonCopyButton({ state, sale }: { state: AddonState; sale: AddonMessageSale }) {
+  const [result, setResult] = useState<"idle" | "done" | "failed">("idle");
+  const message = addonMessage(sale, state);
+  if (!message) return <span className="text-xs text-ink-muted">-</span>;
+  const label = state === "missing" ? "카톡용 복사" : "확인 요청 복사";
+  return (
+    <span className="inline-flex flex-col items-start gap-1">
+      <button
+        type="button"
+        onClick={async () => {
+          const ok = await copyText(message);
+          setResult(ok ? "done" : "failed");
+          if (ok) setTimeout(() => setResult((r) => (r === "done" ? "idle" : r)), 2500);
+        }}
+        className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${
+          result === "done"
+            ? "border border-emerald-300 bg-emerald-50 text-emerald-700"
+            : state === "missing"
+              ? "bg-brand text-white hover:bg-brand-strong"
+              : "border border-amber-300 bg-white text-amber-800 hover:bg-amber-50"
+        }`}
+      >
+        {result === "done" ? "✓ 복사 완료" : label}
+      </button>
+      {result === "failed" && (
+        <span className="w-64 whitespace-normal text-xs text-rose-600">
+          복사하지 못했습니다. 아래 문구를 길게 눌러 직접 복사해 주세요.
+          <textarea readOnly value={message} rows={6} className="mt-1 block w-full rounded border border-line p-1 text-xs text-ink" />
+        </span>
+      )}
+    </span>
   );
 }
 

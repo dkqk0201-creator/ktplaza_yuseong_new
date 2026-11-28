@@ -97,6 +97,10 @@ export interface SpotCustomer {
   customer: string;
   ctn: string;
   row: number;
+  /** B열 판매 No. · M열 직원명 · AI열 부가 (충청관리 부가서비스 검수용, 읽기 전용 — 금액 계산에 쓰지 않음) */
+  no?: string;
+  staff?: string;
+  addon?: string;
 }
 
 export interface SpotSummary {
@@ -173,6 +177,9 @@ export function buildSpotReport(sales: readonly SheetSale[], term: SpotTerm = "�
           customer: sale.customer,
           ctn: sale.ctn,
           row: sale.row,
+          no: sale.no,
+          staff: sale.staff,
+          addon: sale.addon,
         });
       }
     }
