@@ -43,6 +43,8 @@
  *   (기록은 이력으로 남김, 응답 reviewClosed: true). 고객명·CTN 을 바꾸면 보완 기록 키도 옮긴다.
  * - action = "inspection-review" 요청은 inspection-review.gs 의 wsHandleInspectionReview_ 로 넘긴다.
  * - action = "gobulbi" 요청(예산관리 고불비사용)은 gobulbi.gs 의 wsHandleGobulbi_ 로 넘긴다.
+ * - action = "spot-bulk" 요청(스팟관리 스팟예산 일괄등록)은 spot-bulk.gs 의 wsHandleSpotBulk_ 로 넘긴다.
+ * - action = "other-budget" 요청(예산관리 기타 예산)은 other-budget.gs 의 wsHandleOtherBudget_ 로 넘긴다.
  * - action = "auth-login" · "auth-check" · "auth-logout"(웹앱 관리자 로그인)은 auth-handler.gs 의 wsHandleAuth_ 로 넘긴다.
  * - action = "sale-link-set"(판매연결: 유입경로·캠페인·리본 등)은 sale-link.gs 의 wsHandleSaleLink_ 로 넘긴다.
  * - action = "config-…"(유입경로 항목·캠페인 목록)은 config-handler.gs 의 wsHandleConfig_ 로 넘긴다.
@@ -76,6 +78,14 @@ function wsHandleSaleUpdate_(e) {
   // 예산관리 고불비사용(gobulbi.gs)도 이 입구로 받는다 → doPost 를 고치지 않아도 된다
   if (body && body.action === "gobulbi" && typeof wsHandleGobulbi_ === "function") {
     return wsHandleGobulbi_(body);
+  }
+  // 스팟예산 일괄등록(spot-bulk.gs) — O열 값·메모만, 이력은 별도 시트
+  if (body && body.action === "spot-bulk" && typeof wsHandleSpotBulk_ === "function") {
+    return wsHandleSpotBulk_(body);
+  }
+  // 예산관리 기타 예산(other-budget.gs) — 별도 시트에만 저장
+  if (body && body.action === "other-budget" && typeof wsHandleOtherBudget_ === "function") {
+    return wsHandleOtherBudget_(body);
   }
   if (!body || body.action !== "sale-update") return null;
   // 이 handler 의 응답에는 항상 handler 표시를 붙인다 (웹앱이 올바른 코드가 배포됐는지 확인)

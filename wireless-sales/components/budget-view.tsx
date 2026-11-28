@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GobulbiPanel, type GobulbiLoad } from "@/components/gobulbi-panel";
+import { OtherBudgetPanel, type OtherBudgetLoad } from "@/components/other-budget-panel";
 import { SaleDetail } from "@/components/sale-detail";
 import { useFreshSalesData, useSalesData } from "@/components/sales-data-provider";
 import {
@@ -24,6 +25,8 @@ import { oldWRuleSuspects, vMismatches, wonText } from "@/lib/v-split";
 import { formatCtn, todayInKorea } from "@/lib/format";
 import { applyGobulbi, checkAgainstSheetAc, isCurrentMonth } from "@/lib/gobulbi";
 import { fetchGobulbi } from "@/lib/gobulbi-api";
+import { applyOtherBudget } from "@/lib/other-budget";
+import { fetchOtherBudget } from "@/lib/other-budget-api";
 import { monthDayText } from "@/lib/sale-display";
 
 /* 예산관리 + 무선 목표 (선택한 월 시트의 실제 장표 데이터 기준) */
@@ -89,6 +92,29 @@ function useGobulbi(month: string) {
   return { load, reload };
 }
 
+/** 선택한 월의 기타 예산 불러오기 (월이 바뀌면 이전 응답은 버림) */
+function useOtherBudget(month: string) {
+  const [load, setLoad] = useState<OtherBudgetLoad>({ status: "loading" });
+  const seq = useRef(0);
+  const reload = useCallback(async () => {
+    const my = ++seq.current;
+    setLoad({ status: "loading" });
+    const res = await fetchOtherBudget(month);
+    if (my !== seq.current) return;
+    if (res.ok && res.data && res.data.month === month) setLoad({ status: "ok", data: res.data });
+    else
+      setLoad({
+        status: "error",
+        message: res.ok ? "기타 예산 응답을 확인하지 못했습니다." : res.message,
+        notDeployed: !res.ok && res.notDeployed === true,
+      });
+  }, [month]);
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+  return { load, reload };
+}
+
 function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   const { invalidate } = useSalesData();
   const b = calculateBudget(sales);
@@ -104,6 +130,16 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   // 장표 AC열(최종 남은 예산) 합계 = AC8. 웹앱 총 매장 예산과의 차이는 고불비사용 합계와 같아야 한다
   const acTotal = sales.reduce((t, s) => t + (s.finalTotal ?? 0), 0);
   const acCheck = applied ? checkAgainstSheetAc(acTotal, applied) : null;
+  // 기타 예산 (별도 시트): 기존 매장 총예산은 그대로 두고 최종 매장 총예산에만 더한다. AC열 검증은 기존 총예산 기준
+  const { load: other, reload: reloadOther } = useOtherBudget(month);
+  const existingTotal = applied ? applied.total : b.total;
+  const otherFinal = other.status === "ok" ? applyOtherBudget(existingTotal, other.data.net) : null;
+  const otherWarn =
+    other.status === "loading"
+      ? "기타 예산 확인 중 (아직 미반영)"
+      : other.status === "error"
+        ? "기타 예산 미반영 (불러오기 실패)"
+        : undefined;
   const gobulbiWarn =
     gobulbi.status === "loading"
       ? "고불비사용 확인 중 (아직 차감 전)"
@@ -167,14 +203,45 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         className="rounded-2xl border border-brand/30 bg-white p-6 ring-1 ring-brand/10"
       >
         <p className="text-sm font-semibold text-brand">
-          {sheetLabel(sheet)} 총 매장 예산
+          {sheetLabel(sheet)} 총 매장 예산{otherFinal ? " (기타 예산 반영 후 최종)" : ""}
         </p>
         <p className="mt-2 text-brand">
-          <Money value={applied ? applied.total : b.total} big />
+          <Money value={otherFinal ? otherFinal.finalTotal : existingTotal} big />
         </p>
+        <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs tabular-nums sm:grid-cols-5">
+          <div>
+            <dt className="text-ink-muted">기존 매장 총예산</dt>
+            <dd className="font-semibold text-ink">{formatNumber(existingTotal)}원</dd>
+          </div>
+          <div>
+            <dt className="text-ink-muted">기타 예산 확보</dt>
+            <dd className="font-semibold text-emerald-700">{other.status === "ok" ? `+${formatNumber(other.data.gain)}원` : "-"}</dd>
+          </div>
+          <div>
+            <dt className="text-ink-muted">기타 예산 차감</dt>
+            <dd className="font-semibold text-rose-600">{other.status === "ok" ? `−${formatNumber(other.data.deduct)}원` : "-"}</dd>
+          </div>
+          <div>
+            <dt className="text-ink-muted">기타 예산 순증감</dt>
+            <dd className="font-semibold text-ink">
+              {other.status === "ok" ? `${other.data.net >= 0 ? "+" : "−"}${formatNumber(Math.abs(other.data.net))}원` : "-"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-ink-muted">기타 예산 반영 후 최종</dt>
+            <dd className="font-bold text-brand">{otherFinal ? `${formatNumber(otherFinal.finalTotal)}원` : "-"}</dd>
+          </div>
+        </dl>
         <p className="mt-2 text-xs text-ink-muted">
-          고객혜택 잔여금액 + 스팟예산 + 현금예산(고불비 차감 후) · 고불비사용은 현금예산에서 한 번만 차감
+          기존 매장 총예산 = 고객혜택 잔여금액 + 스팟예산 + 현금예산(고불비 차감 후) · 고불비사용은 현금예산에서 한 번만 차감 ·
+          최종 = 기존 매장 총예산 + 기타 예산 순증감 (기타 예산은 고객혜택·스팟·현금예산에 넣지 않음)
         </p>
+        {otherWarn && (
+          <p role="status" className="mt-2 text-xs font-semibold text-amber-700">
+            ⚠ {otherWarn}
+            {other.status === "error" && <> — {other.message}</>}
+          </p>
+        )}
         {gobulbiWarn && (
           <p role="status" className="mt-2 text-xs font-semibold text-amber-700">
             ⚠ {gobulbiWarn}
@@ -186,7 +253,8 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
             className={`mt-2 text-xs tabular-nums ${acCheck.ok ? "text-ink-sub" : "font-semibold text-rose-600"}`}
           >
             장표 AC열 합계 {formatNumber(acTotal)}원 − 고불비사용 {formatNumber(applied!.gobulbi)}원 ={" "}
-            {formatNumber(acCheck.expected)}원 {acCheck.ok ? "✓ 일치" : `≠ 총 매장 예산 (차이 ${formatNumber(acCheck.expected - applied!.total)}원, 장표 AC열 수식 확인 필요)`}
+            {formatNumber(acCheck.expected)}원 {acCheck.ok ? "✓ 기존 매장 총예산과 일치" : `≠ 기존 매장 총예산 (차이 ${formatNumber(acCheck.expected - applied!.total)}원, 장표 AC열 수식 확인 필요)`}
+            {" "}· 기타 예산은 AC열 검증 뒤 별도 반영
           </p>
         )}
       </section>
@@ -303,6 +371,17 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
           }}
         />
       )}
+
+      <OtherBudgetPanel
+        month={month}
+        monthLabel={sheetLabel(sheet)}
+        load={other}
+        onChanged={(message) => {
+          setNotice(message);
+          void reloadOther();
+        }}
+        onRetry={() => void reloadOther()}
+      />
 
       <UsedCheckSection sales={sales} />
 

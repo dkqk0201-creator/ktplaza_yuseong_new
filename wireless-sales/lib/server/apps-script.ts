@@ -77,12 +77,12 @@ function readConfig(): { url: string; secret: string } {
   return { url, secret };
 }
 
-function shortText(value: unknown, maxLength = 200): string {
+export function shortText(value: unknown, maxLength = 200): string {
   return typeof value === "string" ? value.slice(0, maxLength) : "";
 }
 
 /** Apps Script에 요청을 보내고 ok: true 인 JSON 응답만 돌려준다. */
-async function postToAppsScript(
+export async function postToAppsScript(
   payload: Record<string, unknown>,
   rejectedMessage: string,
   timeoutMs = REQUEST_TIMEOUT_MS,

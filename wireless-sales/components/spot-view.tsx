@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useFreshSalesData } from "@/components/sales-data-provider";
-import { SalesDataGate, sheetLabel } from "@/components/sales-data-status";
-import { EmptyBox } from "@/components/work-ui";
+import { useFreshSalesData, useSalesData } from "@/components/sales-data-provider";
+import { SalesDataGate, sheetLabel, sheetToYearMonth } from "@/components/sales-data-status";
+import { SpotBulkPanel } from "@/components/spot-bulk-panel";
+import { EmptyBox, Notice } from "@/components/work-ui";
 import { formatCtn, formatNumber } from "@/lib/format";
 import { monthDayText } from "@/lib/sale-display";
 import type { SheetSale } from "@/lib/sheet-record";
@@ -15,8 +16,10 @@ import {
 } from "@/lib/spot";
 
 /*
- * 스팟관리: 선택한 월 시트 O열(SPOT정책) 메모를 SPOT 번호별로 집계 (조회 전용).
+ * 스팟관리: 선택한 월 시트 O열(SPOT정책) 메모를 SPOT 번호별로 집계.
  * SPOT별 금액은 메모에 적힌 금액만 더한다. O열 값과 메모 합계가 다르면 경고만 보여준다.
+ * 상단 [스팟 일괄등록] 을 누르면 같은 화면 안에 일괄등록 영역이 펼쳐진다 (2026-11-28, components/spot-bulk-panel.tsx).
+ * 일괄등록 저장 후에는 판매내역을 다시 읽어 아래 집계가 자동으로 갱신된다.
  */
 
 export function SpotView() {
@@ -41,9 +44,13 @@ function Won({ value }: { value: number }) {
 }
 
 function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
+  const { invalidate } = useSalesData();
   const report = buildSpotReport(sales);
   const [selected, setSelected] = useState<number | null>(null);
   const [showProblems, setShowProblems] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const models = [...new Set(sales.map((s) => s.model).filter(Boolean))];
   const selectedSpot = report.spots.find((s) => s.spot === selected) ?? null;
   const mismatch = report.problems.filter((p) => p.status === "mismatch");
   const missing = report.problems.filter((p) => p.status === "missingNote");
@@ -53,6 +60,33 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
 
   return (
     <div className="space-y-4">
+      {notice && <Notice message={notice} onClose={() => setNotice(null)} />}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setShowBulk((v) => !v)}
+          aria-expanded={showBulk}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+            showBulk ? "border border-brand bg-brand-soft/40 text-brand" : "bg-brand text-white hover:bg-brand-strong"
+          }`}
+        >
+          {showBulk ? "스팟 일괄등록 닫기 ▲" : "스팟 일괄등록 ▼"}
+        </button>
+        <span className="text-xs text-ink-muted">기간·모델별 스팟 금액을 한 번에 등록 (미리보기 후 최종 등록)</span>
+      </div>
+
+      {showBulk && (
+        <SpotBulkPanel
+          modelSuggestions={models}
+          defaultMonth={sheetToYearMonth(sheet)}
+          onApplied={(message) => {
+            setNotice(message);
+            void invalidate();
+          }}
+          onClose={() => setShowBulk(false)}
+        />
+      )}
+
       {report.problems.length > 0 && (
         <button
           type="button"
