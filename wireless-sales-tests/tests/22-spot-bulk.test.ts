@@ -295,6 +295,7 @@ test("11) 로그인 없이는 거부 · 공용 규칙(메모 형식·모델 정�
   const r = await POST(new Request("https://test.invalid/api/spot/bulk", { method: "POST", headers: { origin: "https://test.invalid" }, body: "{}" }));
   assert.equal(r.status, 401);
   assert.equal(normalizeModel("  galaxy   s26 "), "GALAXY S26");
-  assert.equal(noteAfter("", [{ spot: 2, amount: 35500 }]), "스팟2 35,500원");
-  assert.equal(noteAfter("스팟1 3만", [{ spot: 2, amount: 50000 }]), "스팟1 3만\n스팟2 5만");
+  assert.equal(noteAfter("", [{ spot: 2, amount: 35500 }], "스팟"), "스팟2 35,500원");
+  assert.equal(noteAfter("", [{ spot: 2, amount: 35500 }]), "충청2 35,500원", "기본은 현재 명칭(충청)");
+  assert.equal(noteAfter("스팟1 3만", [{ spot: 2, amount: 50000 }], "스팟"), "스팟1 3만\n스팟2 5만");
 });

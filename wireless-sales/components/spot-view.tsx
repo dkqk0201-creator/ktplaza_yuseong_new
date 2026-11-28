@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useFreshSalesData, useSalesData } from "@/components/sales-data-provider";
 import { SalesDataGate, sheetLabel, sheetToYearMonth } from "@/components/sales-data-status";
 import { SpotBulkPanel } from "@/components/spot-bulk-panel";
+import { CURRENT_SPOT_TERM, spotTerm, type SpotTerm } from "@/lib/spot-term";
 import { EmptyBox, Notice } from "@/components/work-ui";
 import { formatCtn, formatNumber } from "@/lib/format";
 import { monthDayText } from "@/lib/sale-display";
@@ -45,7 +46,9 @@ function Won({ value }: { value: number }) {
 
 function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   const { invalidate } = useSalesData();
-  const report = buildSpotReport(sales);
+  // 보는 월의 명칭: 2026년 10월까지 "스팟", 11월부터 "충청" (같은 예산 항목, 메모의 스팟1·충청1 은 같은 1번)
+  const term = spotTerm(sheetToYearMonth(sheet));
+  const report = buildSpotReport(sales, term);
   const [selected, setSelected] = useState<number | null>(null);
   const [showProblems, setShowProblems] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
@@ -70,9 +73,9 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
             showBulk ? "border border-brand bg-brand-soft/40 text-brand" : "bg-brand text-white hover:bg-brand-strong"
           }`}
         >
-          {showBulk ? "스팟 일괄등록 닫기 ▲" : "스팟 일괄등록 ▼"}
+          {showBulk ? `${CURRENT_SPOT_TERM} 일괄등록 닫기 ▲` : `${CURRENT_SPOT_TERM} 일괄등록 ▼`}
         </button>
-        <span className="text-xs text-ink-muted">기간·모델별 스팟 금액을 한 번에 등록 (미리보기 후 최종 등록)</span>
+        <span className="text-xs text-ink-muted">기간·모델별 {CURRENT_SPOT_TERM} 금액을 한 번에 등록 (미리보기 후 최종 등록 · 10월 이전 개통 판매는 &lsquo;스팟&rsquo;으로 기록)</span>
       </div>
 
       {showBulk && (
@@ -104,19 +107,19 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
       )}
 
       {showProblems && report.problems.length > 0 && (
-        <ProblemTable problems={report.problems} />
+        <ProblemTable problems={report.problems} term={term} />
       )}
 
       {report.spots.length === 0 ? (
-        <EmptyBox text="이 월 시트 O열 메모에 SPOT 내역이 없습니다." />
+        <EmptyBox text={`이 월 시트 O열 메모에 ${term} 내역이 없습니다.`} />
       ) : (
         <section
-          aria-label={`${sheetLabel(sheet)} SPOT별 집계`}
+          aria-label={`${sheetLabel(sheet)} ${term}번호별 집계`}
           className="overflow-x-auto rounded-xl border border-line bg-white"
         >
           <table className="w-full min-w-[360px] text-sm">
             <caption className="border-b border-line px-4 py-3 text-left text-sm font-bold text-ink">
-              {sheetLabel(sheet)} SPOT별 집계
+              {sheetLabel(sheet)} {term}번호별 집계
               <span className="ml-2 text-xs font-normal text-ink-muted">
                 항목을 누르면 고객 목록
               </span>
@@ -124,7 +127,7 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
             <thead className="bg-zinc-50 text-xs text-ink-sub">
               <tr>
                 <th scope="col" className="px-4 py-2.5 text-left font-semibold">
-                  SPOT
+                  {term}
                 </th>
                 <th scope="col" className="px-4 py-2.5 text-right font-semibold">
                   건수
@@ -185,9 +188,10 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
       {selectedSpot && <SpotCustomers spot={selectedSpot} />}
 
       <p className="text-xs leading-relaxed text-ink-muted">
-        SPOT별 합계 = O열 메모에 적힌 SPOT별 금액의 합 (O열 값을 나누지 않음) ·
-        건수 = 그 SPOT을 받은 판매 수 · 메모 형식: 줄마다 &ldquo;스팟1 3만&rdquo;
-        · 금액 없이 &ldquo;스팟11&rdquo;처럼 번호만 한 줄이면 O열 금액(다른 줄 금액 제외)을 그 SPOT 금액으로 봅니다
+        {term}번호별 합계 = O열 메모에 적힌 번호별 금액의 합 (O열 값을 나누지 않음) ·
+        건수 = 그 번호를 받은 판매 수 · 메모 형식: 줄마다 &ldquo;{term}1 3만&rdquo;
+        · 금액 없이 &ldquo;{term}11&rdquo;처럼 번호만 한 줄이면 O열 금액(다른 줄 금액 제외)을 그 번호 금액으로 봅니다
+        · 2026년 10월까지는 &lsquo;스팟&rsquo;, 11월부터 &lsquo;충청&rsquo;으로 부르며 같은 예산 항목입니다 (메모의 스팟1·충청1 은 같은 1번으로 한 번만 집계)
         · O열 값과 메모 합계가 다르면 위 경고에만 표시하며 장표는 수정하지
         않습니다.
       </p>
@@ -226,14 +230,14 @@ function SpotCustomers({ spot }: { spot: SpotSummary }) {
   );
 }
 
-function problemLabel(p: SpotCheck): string {
+function problemLabel(p: SpotCheck, term: SpotTerm): string {
   if (p.status === "missingNote") return "메모 미입력";
-  if (p.unsplit.length > 0) return "SPOT 금액 미기재";
+  if (p.unsplit.length > 0) return `${term} 금액 미기재`;
   if (p.diff !== 0) return `${formatNumber(Math.abs(p.diff))}원 불일치`;
   return "해석 못한 줄";
 }
 
-function ProblemTable({ problems }: { problems: SpotCheck[] }) {
+function ProblemTable({ problems, term }: { problems: SpotCheck[]; term: SpotTerm }) {
   return (
     <section
       aria-label="금액 확인 필요"
@@ -243,7 +247,7 @@ function ProblemTable({ problems }: { problems: SpotCheck[] }) {
         <caption className="border-b border-amber-200 bg-amber-50/60 px-4 py-3 text-left text-sm font-bold text-ink">
           금액 확인 필요 {problems.length}건
           <span className="ml-2 text-xs font-normal text-ink-muted">
-            차액 = O열 금액 − 메모 합계 · 차액은 어느 SPOT에도 나누지 않습니다
+            차액 = O열 금액 − 메모 합계 · 차액은 어느 번호에도 나누지 않습니다
           </span>
         </caption>
         <thead className="bg-zinc-50 text-xs text-ink-sub">
@@ -266,7 +270,7 @@ function ProblemTable({ problems }: { problems: SpotCheck[] }) {
               <td className="px-3 py-2.5 text-right whitespace-nowrap"><Won value={p.oAmount} /></td>
               <td className="px-3 py-2.5 text-right whitespace-nowrap"><Won value={p.noteTotal} /></td>
               <td className="px-3 py-2.5 text-right whitespace-nowrap">
-                <span className="font-semibold text-rose-600">{problemLabel(p)}</span>
+                <span className="font-semibold text-rose-600">{problemLabel(p, term)}</span>
                 {p.status !== "missingNote" && p.diff !== 0 && (
                   <span className="block text-xs text-ink-muted">
                     {p.diff > 0 ? "+" : "−"}
@@ -282,8 +286,8 @@ function ProblemTable({ problems }: { problems: SpotCheck[] }) {
                 )}
                 {p.unsplit.length > 0 && (
                   <span className="mt-1 block text-xs text-rose-600">
-                    금액 없이 번호만 적힌 SPOT: {p.unsplit.map(spotLabel).join(" · ")} — O열 금액을 어느 SPOT에 얼마씩
-                    나눌지 알 수 없어 SPOT별 합계에 넣지 않았습니다. 메모에 SPOT별 금액을 적어 주세요 (예: 스팟10 3만)
+                    금액 없이 번호만 적힌 {term}: {p.unsplit.map((n) => spotLabel(n, term)).join(" · ")} — O열 금액을 어느 번호에 얼마씩
+                    나눌지 알 수 없어 번호별 합계에 넣지 않았습니다. 메모에 번호별 금액을 적어 주세요 (예: {term}10 3만)
                   </span>
                 )}
                 {p.unparsed.length > 0 && (

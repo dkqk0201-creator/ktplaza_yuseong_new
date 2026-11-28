@@ -26,6 +26,7 @@ import { formatCtn, todayInKorea } from "@/lib/format";
 import { applyGobulbi, checkAgainstSheetAc, isCurrentMonth } from "@/lib/gobulbi";
 import { fetchGobulbi } from "@/lib/gobulbi-api";
 import { applyOtherBudget } from "@/lib/other-budget";
+import { spotTerm } from "@/lib/spot-term";
 import { fetchOtherBudget } from "@/lib/other-budget-api";
 import { monthDayText } from "@/lib/sale-display";
 
@@ -171,7 +172,8 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
       value: b.benefitRemaining,
       hint: "확보금액 − 고객혜택 사용금액 − 추가지원금 사용금액",
     },
-    { label: "스팟예산", value: b.spot, hint: `${BUDGET_COLUMNS.spot}열(SPOT정책) 합계` },
+    // 2026년 10월까지 "스팟예산", 11월부터 "충청예산" (같은 O열 합계, 이름만 다름)
+    { label: `${spotTerm(month)}예산`, value: b.spot, hint: `${BUDGET_COLUMNS.spot}열(SPOT정책) 합계` },
     {
       label: "기존 현금예산",
       value: b.cash,
@@ -233,8 +235,8 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
           </div>
         </dl>
         <p className="mt-2 text-xs text-ink-muted">
-          기존 매장 총예산 = 고객혜택 잔여금액 + 스팟예산 + 현금예산(고불비 차감 후) · 고불비사용은 현금예산에서 한 번만 차감 ·
-          최종 = 기존 매장 총예산 + 기타 예산 순증감 (기타 예산은 고객혜택·스팟·현금예산에 넣지 않음)
+          기존 매장 총예산 = 고객혜택 잔여금액 + {spotTerm(month)}예산 + 현금예산(고불비 차감 후) · 고불비사용은 현금예산에서 한 번만 차감 ·
+          최종 = 기존 매장 총예산 + 기타 예산 순증감 (기타 예산은 고객혜택·{spotTerm(month)}·현금예산에 넣지 않음)
         </p>
         {otherWarn && (
           <p role="status" className="mt-2 text-xs font-semibold text-amber-700">

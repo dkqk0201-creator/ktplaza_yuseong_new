@@ -6,7 +6,9 @@
  *   - O열 셀 메모       = SPOT 번호별 금액, 줄마다 하나 ("스팟1 3만")
  * 일괄등록은 판매마다
  *   O열  ← 기존 O열 금액 + 새 SPOT 금액 (숫자로 쓴다. 글자로 바꾸거나 번호와 합치지 않음)
- *   메모 ← 기존 메모 + 새 줄 "스팟N 금액" (기존 줄은 그대로)
+ *   메모 ← 기존 메모 + 새 줄 "충청N 금액" (기존 줄은 그대로)
+ *     명칭 (2026-11-28 점장 결정): 판매 개통일이 2026-11 이후면 "충청N", 그 전이면 "스팟N" (웹앱 lib/spot-term.ts 와 같음).
+ *     "스팟1" 과 "충청1" 은 같은 1번으로 본다 (같은 예산 항목 — 이미 있는 번호 확인에 둘 다 쓴다).
  * 만 바꾼다. 같은 행의 N(=SUM(O:T))·AC(최종 남은 예산) 수식은 건드리지 않으며 O열 값에 따라 자동 계산된다.
  * 다른 칸·다른 행·B열 No.·수식은 쓰지 않는다. O열이 수식인 행은 거부한다.
  *
@@ -82,21 +84,26 @@ function wsSpotBulkAmountText_(amount) {
   return String(amount).replace(/\B(?=(\d{3})+(?!\d))/g, ",") + "원";
 }
 
-/** 기존 메모 + 새 줄 (웹앱 noteAfter 와 같음) */
-function wsSpotBulkNoteAfter_(before, adds) {
+/** 이 날짜(yyyy-MM-dd)·연월 시기의 명칭: 2026-11 부터 "충청", 그 전 "스팟" (웹앱 spotTerm 과 같음) */
+function wsSpotBulkTerm_(dateOrMonth) {
+  return String(dateOrMonth || "").slice(0, 7) >= "2026-11" ? "충청" : "스팟";
+}
+
+/** 기존 메모 + 새 줄 (웹앱 noteAfter 와 같음). term = 판매 개통일 시기의 명칭 */
+function wsSpotBulkNoteAfter_(before, adds, term) {
   var parts = [];
   var base = String(before || "").trim();
   if (base) parts.push(base);
-  for (var i = 0; i < adds.length; i++) parts.push("스팟" + adds[i].spot + " " + wsSpotBulkAmountText_(adds[i].amount));
+  for (var i = 0; i < adds.length; i++) parts.push(term + adds[i].spot + " " + wsSpotBulkAmountText_(adds[i].amount));
   return parts.join("\n");
 }
 
-/** 메모에 적힌 스팟 번호 ("스팟1 3만", "스팟 11", "SPOT2: 5만") */
+/** 메모에 적힌 번호 ("스팟1 3만", "충청1 3만", "스팟 11", "SPOT2: 5만") — 스팟·충청은 같은 번호 */
 function wsSpotBulkSpotsInNote_(note) {
   var out = {};
   var lines = String(note || "").split(/\r?\n/);
   for (var i = 0; i < lines.length; i++) {
-    var m = /^(?:스\s*팟|spot)\s*(\d{1,3})(?!\d)/i.exec(lines[i].trim());
+    var m = /^(?:스\s*팟|충\s*청|spot)\s*(\d{1,3})(?!\d)/i.exec(lines[i].trim());
     if (m) out[Number(m[1])] = true;
   }
   return out;
@@ -191,7 +198,10 @@ function wsSpotBulkConditions_(raw) {
       amount: c.amount,
       models: modelSet,
       modelCount: modelList.length,
-      text: String(c.from) + "~" + String(c.to) + " / " + (modelList.length ? modelList.join(",") : "전체 모델") + " / 스팟" + c.spot + " / " + c.amount + "원",
+      text:
+        String(c.from) + "~" + String(c.to) + " / " + (modelList.length ? modelList.join(",") : "전체 모델") + " / " +
+        (wsSpotBulkTerm_(c.from) === wsSpotBulkTerm_(c.to) ? wsSpotBulkTerm_(c.to) : wsSpotBulkTerm_(c.to) + "(" + wsSpotBulkTerm_(c.from) + ")") +
+        c.spot + " / " + c.amount + "원",
     };
   }
   return { byId: byId };
@@ -336,7 +346,7 @@ function wsSpotBulkApply_(ss, tz, requestId, conditions, items, operator, stamp)
       }
     }
     if (!addOk) {
-      fail("적용할 스팟 형식이 올바르지 않습니다.");
+      fail("적용할 번호 형식이 올바르지 않습니다.");
       continue;
     }
 
@@ -418,9 +428,9 @@ function wsSpotBulkApply_(ss, tz, requestId, conditions, items, operator, stamp)
     }
     var already = wsSpotBulkSpotsInNote_(curNote);
     var dup = "";
-    for (var d = 0; d < cleanAdds.length; d++) if (already[cleanAdds[d].spot]) dup = "스팟" + cleanAdds[d].spot;
+    for (var d = 0; d < cleanAdds.length; d++) if (already[cleanAdds[d].spot]) dup = wsSpotBulkTerm_(date) + cleanAdds[d].spot;
     if (dup) {
-      fail("이미 " + dup + " 이(가) 등록된 판매라 적용하지 않았습니다.");
+      fail("이미 같은 번호(" + dup + ")가 등록된 판매라 적용하지 않았습니다.");
       continue;
     }
     var addAmount = 0;
@@ -439,7 +449,7 @@ function wsSpotBulkApply_(ss, tz, requestId, conditions, items, operator, stamp)
       beforeRaw: cur[WS_SPOT_BULK_O_INDEX],
       afterO: curO + addAmount,
       beforeNote: curNote,
-      afterNote: wsSpotBulkNoteAfter_(curNote, cleanAdds),
+      afterNote: wsSpotBulkNoteAfter_(curNote, cleanAdds, wsSpotBulkTerm_(date)),
       addAmount: addAmount,
       history: [
         requestId,
@@ -454,7 +464,7 @@ function wsSpotBulkApply_(ss, tz, requestId, conditions, items, operator, stamp)
         model,
         cleanAdds
           .map(function (x) {
-            return "스팟" + x.spot;
+            return wsSpotBulkTerm_(date) + x.spot;
           })
           .join(", "),
         addAmount,

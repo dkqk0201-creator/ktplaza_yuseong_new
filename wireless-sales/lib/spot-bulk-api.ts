@@ -18,7 +18,7 @@ export type SpotBulkResponse =
     }
   | { ok: false; message: string; notDeployed?: boolean };
 
-const NETWORK_FAIL = "서버와 통신하지 못했습니다. 다시 누르지 말고 스팟관리를 새로고침해 반영 여부를 먼저 확인해 주세요.";
+const NETWORK_FAIL = "서버와 통신하지 못했습니다. 다시 누르지 말고 충청관리를 새로고침해 반영 여부를 먼저 확인해 주세요.";
 
 async function call(init: RequestInit): Promise<SpotBulkResponse> {
   try {

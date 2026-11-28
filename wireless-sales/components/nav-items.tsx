@@ -60,7 +60,7 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     href: "/spot",
-    label: "스팟관리",
+    label: "충청관리", // 2026-11 부터 '스팟' → '충청' (lib/spot-term.ts). 주소 /spot 은 그대로
     icon: (
       <svg {...iconProps}>
         <path d="M12 3v3M12 18v3M3 12h3M18 12h3" />

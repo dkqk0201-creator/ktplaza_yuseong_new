@@ -34,11 +34,11 @@ const FAILURE: Record<AppsScriptError["code"], { status: number; message: string
   not_configured: { status: 503, message: "스프레드시트 연결 설정이 아직 완료되지 않았습니다." },
   timeout: {
     status: 504,
-    message: "스프레드시트 응답이 늦어 처리 여부를 확인하지 못했습니다. 다시 누르지 말고 먼저 스팟관리를 새로고침해 반영 여부를 확인해 주세요.",
+    message: "스프레드시트 응답이 늦어 처리 여부를 확인하지 못했습니다. 다시 누르지 말고 먼저 충청관리를 새로고침해 반영 여부를 확인해 주세요.",
   },
   network: { status: 502, message: "스프레드시트에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요." },
   bad_response: { status: 502, message: "스프레드시트 응답을 확인하지 못했습니다. 새로고침해 확인해 주세요." },
-  rejected: { status: 409, message: "스팟 일괄등록을 처리하지 못했습니다." },
+  rejected: { status: 409, message: "충청 일괄등록을 처리하지 못했습니다." },
 };
 
 function failure(error: unknown, what: string) {
@@ -50,7 +50,7 @@ function failure(error: unknown, what: string) {
     return reply({ ok: false, message, notDeployed: error.details.notDeployed === true || undefined }, f.status);
   }
   console.error(`[스팟 일괄등록] ${what} 오류`, error);
-  return reply({ ok: false, message: "스팟 일괄등록 처리 중 오류가 발생했습니다." }, 500);
+  return reply({ ok: false, message: "충청 일괄등록 처리 중 오류가 발생했습니다." }, 500);
 }
 
 export async function GET(request: Request) {

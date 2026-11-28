@@ -6,7 +6,8 @@ import { sheetForMonth } from "@/lib/month-sheet";
 import { parseOtherAmount } from "@/lib/other-budget";
 import { monthDayText } from "@/lib/sale-display";
 import type { SheetSale } from "@/lib/sheet-record";
-import { spotLabel } from "@/lib/spot";
+import { noteForDisplay, spotLabel } from "@/lib/spot";
+import { CURRENT_SPOT_TERM as T, spotTerm } from "@/lib/spot-term";
 import {
   SPOT_BULK_MAX_CONDITIONS,
   SPOT_BULK_MAX_ITEMS,
@@ -30,7 +31,7 @@ import {
 import { fetchSpotBulkHistory, postSpotBulkApply, postSpotBulkUndo } from "@/lib/spot-bulk-api";
 
 /*
- * 스팟관리 화면 안의 "스팟 일괄등록" 영역 (별도 메뉴·페이지 없음).
+ * 충청관리(예전 스팟관리) 화면 안의 "충청 일괄등록" 영역. 명칭: 판매 개통일이 2026-11 이후면 "충청N", 그 전이면 "스팟N" (lib/spot-term.ts) (별도 메뉴·페이지 없음).
  *   1) 조건 여러 줄 입력 (기간·대상(특정 모델/전체)·스팟 번호·건당 금액)
  *   2) [적용 대상 조회] → 기간에 걸친 월 시트를 읽어 미리보기 (저장 안 함)
  *   3) 개별 체크·해제 (기존 스팟·충돌·No. 없음은 기본 해제) → [최종 등록] 때만 저장
@@ -48,9 +49,9 @@ interface Draft {
 }
 
 const FLAG_LABEL: Record<BulkFlag, string> = {
-  already: "이미 같은 스팟 등록",
+  already: "이미 같은 번호 등록",
   conflict: "조건 중복(충돌)",
-  existing: "기존 스팟 있음(보호)",
+  existing: `기존 ${T}(스팟) 있음(보호)`,
   noNo: "판매 No. 없음",
 };
 
@@ -200,8 +201,8 @@ export function SpotBulkPanel({
       return;
     }
     const ok = window.confirm(
-      `스팟 일괄등록을 저장할까요?\n\n적용 대상 ${summary.targetSales}건 · 총 적용 금액 ${formatNumber(summary.totalAmount)}원\n` +
-        `(기존 스팟이 있는 판매 중 체크한 판매: ${resolved.choices.filter((c) => c.beforeO !== 0 || c.beforeNote).length}건)\n\n` +
+      `${T} 일괄등록을 저장할까요?\n\n적용 대상 ${summary.targetSales}건 · 총 적용 금액 ${formatNumber(summary.totalAmount)}원\n` +
+        `(기존 ${T}(스팟)이 있는 판매 중 체크한 판매: ${resolved.choices.filter((c) => c.beforeO !== 0 || c.beforeNote).length}건)\n\n` +
         "장표 O열 금액과 메모에 바로 반영됩니다. 변경 전 값은 이력에 남아 되돌릴 수 있습니다.",
     );
     if (!ok) return;
@@ -218,7 +219,7 @@ export function SpotBulkPanel({
     onApplied(
       res.result.repeated
         ? "이미 처리된 일괄등록입니다 (다시 저장하지 않음)."
-        : `스팟 일괄등록: ${res.result.applied}건 적용 (${formatNumber(res.result.amount)}원)${res.result.failed ? `, ${res.result.failed}건 실패` : ""}`,
+        : `${T} 일괄등록: ${res.result.applied}건 적용 (${formatNumber(res.result.amount)}원)${res.result.failed ? `, ${res.result.failed}건 실패` : ""}`,
     );
   }
 
@@ -231,10 +232,10 @@ export function SpotBulkPanel({
     });
 
   return (
-    <section aria-label="스팟 일괄등록" className="overflow-hidden rounded-xl border border-brand/30 bg-white">
+    <section aria-label={`${T} 일괄등록`} className="overflow-hidden rounded-xl border border-brand/30 bg-white">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-brand-soft/30 px-4 py-3">
-        <h3 className="text-sm font-bold text-ink">스팟 일괄등록</h3>
-        <span className="text-xs text-ink-muted">기간·모델 조건 → 적용 대상 조회 → 확인 후 최종 등록 (O열 금액 + 메모 &ldquo;스팟N 금액&rdquo;)</span>
+        <h3 className="text-sm font-bold text-ink">{T} 일괄등록</h3>
+        <span className="text-xs text-ink-muted">기간·모델 조건 → 적용 대상 조회 → 확인 후 최종 등록 (O열 금액 + 메모 &ldquo;{T}N 금액&rdquo; · 10월 이전 개통 판매는 &ldquo;스팟N&rdquo;)</span>
         <button type="button" onClick={onClose} className="ml-auto text-xs font-medium text-ink-sub underline underline-offset-2">
           닫기
         </button>
@@ -284,7 +285,7 @@ export function SpotBulkPanel({
                   )}
                 </div>
                 <label className="block text-xs font-semibold text-ink-sub">
-                  스팟 번호
+                  {T} 번호
                   <input value={d.spotText} onChange={(e) => update(d.id, { spotText: e.target.value })} inputMode="numeric" placeholder="1" className={`${fieldClass} text-right`} />
                 </label>
                 <label className="block text-xs font-semibold text-ink-sub">
@@ -356,7 +357,7 @@ export function SpotBulkPanel({
               <table className="w-full min-w-[980px] text-sm">
                 <caption className="border-b border-line px-4 py-2.5 text-left text-sm font-bold text-ink">
                   적용 대상 미리보기
-                  <span className="ml-2 text-xs font-normal text-ink-muted">체크한 판매만 저장 · 기존 스팟·충돌·No. 없음은 기본 해제(확인 후 직접 체크)</span>
+                  <span className="ml-2 text-xs font-normal text-ink-muted">체크한 판매만 저장 · 기존 번호·충돌·No. 없음은 기본 해제(확인 후 직접 체크)</span>
                 </caption>
                 <thead className="bg-zinc-50 text-xs text-ink-sub">
                   <tr>
@@ -365,8 +366,8 @@ export function SpotBulkPanel({
                     <th scope="col" className="px-2 py-2.5 text-left font-semibold">판매 No.</th>
                     <th scope="col" className="px-2 py-2.5 text-left font-semibold">직원명</th>
                     <th scope="col" className="px-2 py-2.5 text-left font-semibold">모델명</th>
-                    <th scope="col" className="px-2 py-2.5 text-left font-semibold">기존 스팟</th>
-                    <th scope="col" className="px-2 py-2.5 text-left font-semibold">신규 스팟</th>
+                    <th scope="col" className="px-2 py-2.5 text-left font-semibold">기존 {T}</th>
+                    <th scope="col" className="px-2 py-2.5 text-left font-semibold">신규 {T}</th>
                     <th scope="col" className="px-2 py-2.5 text-right font-semibold">적용 금액</th>
                     <th scope="col" className="px-2 py-2.5 text-right font-semibold">변경 후 금액</th>
                     <th scope="col" className="px-2 py-2.5 text-left font-semibold">적용 여부</th>
@@ -383,7 +384,7 @@ export function SpotBulkPanel({
                         <td className="px-2 py-2 text-center">
                           <input
                             type="checkbox"
-                            aria-label={`${r.sale.activatedAt} No.${r.sale.no || "없음"} ${spotLabel(r.condition.spot)} 적용`}
+                            aria-label={`${r.sale.activatedAt} No.${r.sale.no || "없음"} ${spotLabel(r.condition.spot, spotTerm(r.sale.activatedAt))} 적용`}
                             checked={checked}
                             disabled={!r.selectable || saving || !!result}
                             onChange={() => toggle(r.key)}
@@ -400,14 +401,14 @@ export function SpotBulkPanel({
                           {r.sale.spot || r.sale.spotNote ? (
                             <>
                               <Won value={r.sale.spot ?? 0} />
-                              {r.sale.spotNote && <pre className="font-sans text-[11px] whitespace-pre-wrap text-ink-sub">{r.sale.spotNote}</pre>}
+                              {r.sale.spotNote && <pre className="font-sans text-[11px] whitespace-pre-wrap text-ink-sub">{noteForDisplay(r.sale.spotNote, spotTerm(r.sale.activatedAt))}</pre>}
                             </>
                           ) : (
                             <span className="text-ink-muted">없음</span>
                           )}
                         </td>
                         <td className="px-2 py-2 whitespace-nowrap font-semibold">
-                          {spotLabel(r.condition.spot)}
+                          {spotLabel(r.condition.spot, spotTerm(r.sale.activatedAt))}
                           <span className="block text-[11px] font-normal text-ink-muted">조건 {r.conditionIndex + 1}</span>
                         </td>
                         <td className="px-2 py-2 text-right whitespace-nowrap"><Won value={r.condition.amount} /></td>
@@ -421,7 +422,7 @@ export function SpotBulkPanel({
                               {FLAG_LABEL[f]}
                             </span>
                           ))}
-                          {conflictBad && <span className="block text-[11px] text-rose-600">같은 스팟 번호 중복 선택</span>}
+                          {conflictBad && <span className="block text-[11px] text-rose-600">같은 번호 중복 선택</span>}
                         </td>
                       </tr>
                     );
@@ -449,7 +450,7 @@ export function SpotBulkPanel({
             {[
               ["조건에 맞는 총 판매", `${formatNumber(summary.matchedSales)}건`],
               ["실제 적용 대상", `${formatNumber(summary.targetSales)}건`],
-              ["기존 스팟 등록 판매", `${formatNumber(summary.existingSales)}건`],
+              [`기존 ${T}(스팟) 등록 판매`, `${formatNumber(summary.existingSales)}건`],
               ["중복 조건·충돌", `${formatNumber(summary.conflictSales)}건${summary.alreadyRows ? ` · 이미 등록 ${summary.alreadyRows}줄` : ""}`],
               ["제외", `${formatNumber(summary.excludedSales)}건${summary.noNoSales ? ` (No. 없음 ${summary.noNoSales}건 포함 가능)` : ""}`],
               ["총 적용 금액", `${formatNumber(summary.totalAmount)}원`],
@@ -550,7 +551,7 @@ function SpotBulkHistory({ refreshKey, onUndone }: { refreshKey: string; onUndon
     const r = await postSpotBulkUndo(h.requestId);
     setBusy(null);
     if (r.ok) {
-      onUndone(`스팟 일괄등록 되돌리기: ${r.message}`);
+      onUndone(`${T} 일괄등록 되돌리기: ${r.message}`);
       if (r.undo && r.undo.skipped.length > 0) window.alert(`건너뛴 판매:\n${r.undo.skipped.join("\n")}`);
     } else window.alert(`되돌리지 못했습니다: ${r.message}`);
     setSeq((s) => s + 1);

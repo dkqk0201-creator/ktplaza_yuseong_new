@@ -15,7 +15,7 @@ import {
  */
 
 const NOT_DEPLOYED =
-  "Apps Script에 스팟 일괄등록 코드(spot-bulk.gs)와 최신 update-handler.gs 가 배포되어 있지 않아 처리하지 않았습니다.";
+  "Apps Script에 충청 일괄등록 코드(spot-bulk.gs)와 최신 update-handler.gs 가 배포되어 있지 않아 처리하지 않았습니다.";
 
 async function postSpotBulk(payload: Record<string, unknown>, rejected: string, timeoutMs = 60_000) {
   let data: Record<string, unknown>;
@@ -40,11 +40,11 @@ export async function applySpotBulkInAppsScript(
 ): Promise<SpotBulkApplyResult> {
   const data = await postSpotBulk(
     { op: "apply", requestId, operator: "점장(웹앱)", conditions, items },
-    "Apps Script가 스팟 일괄등록을 거부했습니다.",
+    "Apps Script가 충청 일괄등록을 거부했습니다.",
     // 판매 수만큼 읽기·쓰기가 늘어나므로 넉넉하게
     120_000,
   );
-  if (data.requestId !== requestId) throw new AppsScriptError("bad_response", "스팟 일괄등록 응답을 확인하지 못했습니다.");
+  if (data.requestId !== requestId) throw new AppsScriptError("bad_response", "충청 일괄등록 응답을 확인하지 못했습니다.");
   const repeated = data.repeated === true;
   const results: SpotBulkItemResult[] = Array.isArray(data.results)
     ? data.results.map((r) => {
@@ -53,7 +53,7 @@ export async function applySpotBulkInAppsScript(
       })
     : [];
   if (!repeated && results.length !== items.length) {
-    throw new AppsScriptError("bad_response", "스팟 일괄등록 응답에 건별 결과가 없습니다. 스팟관리에서 반영 여부를 확인해 주세요.");
+    throw new AppsScriptError("bad_response", "충청 일괄등록 응답에 건별 결과가 없습니다. 충청관리에서 반영 여부를 확인해 주세요.");
   }
   return { requestId, repeated, applied: num(data.applied), failed: num(data.failed), amount: num(data.amount), results };
 }

@@ -1,4 +1,5 @@
 import { parseSpotNote, spotLabel } from "@/lib/spot";
+import { spotTerm, spotTermForRange, type SpotTerm } from "@/lib/spot-term";
 import type { SheetSale } from "@/lib/sheet-record";
 
 /*
@@ -9,7 +10,7 @@ import type { SheetSale } from "@/lib/sheet-record";
  *   - O열 메모 = SPOT 번호별 금액, 줄마다 하나 ("스팟1 3만")
  * 일괄등록은 판매마다
  *   O열 = 기존 O열 금액 + 새 SPOT 금액 (숫자 그대로, 글자로 바꾸지 않음)
- *   메모 = 기존 메모 + 새 줄 "스팟N 금액" (기존 줄은 그대로 둠)
+ *   메모 = 기존 메모 + 새 줄 "충청N 금액" (2026-11 부터, 그 전 개통 판매는 "스팟N 금액" — lib/spot-term.ts) (기존 줄은 그대로 둠)
  * 로 저장한다 → 스팟관리 SPOT별 집계·예산관리 스팟예산(O열 합계)에 그대로 반영된다.
  *
  * 미리보기(이 파일)는 화면에서 계산하고, 실제 저장은 Apps Script(spot-bulk.gs)가
@@ -59,7 +60,7 @@ export function conditionError(c: SpotCondition): string | null {
   if (c.from > c.to) return "종료일이 시작일보다 앞설 수 없습니다.";
   if (dayDiff(c.from, c.to) > 92) return "기간은 최대 93일까지 지정할 수 있습니다.";
   if (!Number.isInteger(c.spot) || c.spot < 1 || c.spot > SPOT_NUMBER_MAX) {
-    return `스팟 번호는 1~${SPOT_NUMBER_MAX} 사이 숫자로 입력해 주세요.`;
+    return `번호는 1~${SPOT_NUMBER_MAX} 사이 숫자로 입력해 주세요.`;
   }
   if (!Number.isInteger(c.amount) || c.amount < 1 || c.amount > SPOT_AMOUNT_MAX) {
     return `건당 금액은 1원 이상 ${SPOT_AMOUNT_MAX.toLocaleString("ko-KR")}원 이하로 입력해 주세요.`;
@@ -78,7 +79,7 @@ function dayDiff(a: string, b: string): number {
 
 export function conditionText(c: SpotCondition): string {
   const models = c.models.map(normalizeModel).filter(Boolean);
-  return `${c.from}~${c.to} / ${models.length ? models.join(",") : "전체 모델"} / ${spotLabel(c.spot)} / ${c.amount}원`;
+  return `${c.from}~${c.to} / ${models.length ? models.join(",") : "전체 모델"} / ${spotTermForRange(c.from, c.to)}${c.spot} / ${c.amount}원`;
 }
 
 /** 조건 기간에 걸친 연월 목록 ("2026-11-21"~"2026-12-03" → ["2026-11","2026-12"]) */
@@ -107,18 +108,19 @@ export function spotAmountText(amount: number): string {
   return `${amount.toLocaleString("en-US")}원`;
 }
 
-export function spotNoteLine(spot: number, amount: number): string {
-  return `${spotLabel(spot)} ${spotAmountText(amount)}`;
+/** 메모 한 줄. term = 그 판매 개통일 시기의 명칭 (2026-11 부터 "충청") */
+export function spotNoteLine(spot: number, amount: number, term: SpotTerm = "충청"): string {
+  return `${spotLabel(spot, term)} ${spotAmountText(amount)}`;
 }
 
 /** 기존 메모 + 새 줄 (Apps Script wsSpotBulkNoteAfter_ 와 같은 규칙) */
-export function noteAfter(before: string, adds: readonly { spot: number; amount: number }[]): string {
+export function noteAfter(before: string, adds: readonly { spot: number; amount: number }[], term: SpotTerm = "충청"): string {
   const base = (before ?? "").trim();
-  const lines = adds.map((a) => spotNoteLine(a.spot, a.amount));
+  const lines = adds.map((a) => spotNoteLine(a.spot, a.amount, term));
   return [base, ...lines].filter(Boolean).join("\n");
 }
 
-/** 메모에 이미 적힌 SPOT 번호 (금액 있는 줄·번호만 있는 줄 모두) */
+/** 메모에 이미 적힌 번호 (금액 있는 줄·번호만 있는 줄 모두, "스팟1"·"충청1" 은 같은 1번) */
 export function spotsInNote(note: string | undefined): Set<number> {
   const p = parseSpotNote(note);
   return new Set([...p.entries.map((e) => e.spot), ...p.bare]);
@@ -270,7 +272,7 @@ export function resolveSelection(preview: BulkPreview, selected: ReadonlySet<str
     }
     if (ch.adds.some((a) => a.spot === r.condition.spot)) {
       errors.push(
-        `${r.sale.activatedAt} 판매 No.${r.sale.no || "없음"}: ${spotLabel(r.condition.spot)}을 두 조건에서 함께 골랐습니다. 하나만 체크해 주세요.`,
+        `${r.sale.activatedAt} 판매 No.${r.sale.no || "없음"}: ${spotLabel(r.condition.spot, spotTerm(r.sale.activatedAt))}을 두 조건에서 함께 골랐습니다. 하나만 체크해 주세요.`,
       );
       continue;
     }
@@ -279,7 +281,7 @@ export function resolveSelection(preview: BulkPreview, selected: ReadonlySet<str
   const choices = [...map.values()];
   for (const ch of choices) {
     ch.afterO = ch.beforeO + ch.adds.reduce((t, a) => t + a.amount, 0);
-    ch.afterNote = noteAfter(ch.beforeNote, ch.adds);
+    ch.afterNote = noteAfter(ch.beforeNote, ch.adds, spotTerm(ch.sale.activatedAt));
   }
   return { choices, errors };
 }

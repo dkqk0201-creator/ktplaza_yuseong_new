@@ -10,7 +10,7 @@ export default function BudgetPage() {
     <>
       <PageHeader
         title="예산관리"
-        description="선택한 월 시트의 고객혜택·스팟·현금 예산과 무선 목표를 봅니다."
+        description="선택한 월 시트의 고객혜택·충청(10월까지 스팟)·현금 예산과 무선 목표를 봅니다."
       />
       <BudgetTabs active="/budget" />
       <BudgetView />

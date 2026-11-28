@@ -1,4 +1,5 @@
 import type { SheetSale } from "@/lib/sheet-record";
+import type { SpotTerm } from "@/lib/spot-term";
 
 /*
  * 스팟관리 (조회 전용).
@@ -12,6 +13,8 @@ import type { SheetSale } from "@/lib/sheet-record";
  *   - 그런 줄이 한 판매에 하나뿐이면 O열 금액 − 다른 줄 금액 합계(0보다 클 때)를 그 SPOT 금액으로 본다.
  *   - 둘 이상이면 금액을 나눌 수 없으므로 SPOT 분류(건수·고객)만 하고 금액은 더하지 않으며 경고로 보여준다.
  * 웹앱은 O열 값·메모를 읽기만 한다.
+ * 2026-11 부터 명칭이 '충청'으로 바뀌었다 (lib/spot-term.ts). 메모의 "스팟1" 과 "충청1" 은 같은 1번으로 읽는다
+ * (같은 예산 항목, 중복 집계 안 함). 화면 표시는 보는 월의 명칭(buildSpotReport 의 term)을 쓴다.
  */
 
 export interface SpotEntry {
@@ -40,12 +43,12 @@ export function parseSpotAmount(text: string): number | null {
 }
 
 /**
- * 한 줄: "스팟1 3만", "스팟 1 30,000원", "스팟1:3만" (대소문자 무관 SPOT 도 인식).
+ * 한 줄: "스팟1 3만", "충청1 3만", "스팟 1 30,000원", "스팟1:3만" (대소문자 무관 SPOT 도 인식).
  * (?!\d): 번호 숫자를 중간에서 끊지 않는다 — "스팟 11" 을 스팟1 + 금액 1 로 읽지 않음.
  */
-const LINE = /^(?:스\s*팟|spot)\s*(\d{1,3})(?!\d)\s*[:：=]?\s*(.+)$/i;
-/** 금액 없이 번호만: "스팟11", "스팟 10" */
-const BARE = /^(?:스\s*팟|spot)\s*(\d{1,3})\s*$/i;
+const LINE = /^(?:스\s*팟|충\s*청|spot)\s*(\d{1,3})(?!\d)\s*[:：=]?\s*(.+)$/i;
+/** 금액 없이 번호만: "스팟11", "충청 10" */
+const BARE = /^(?:스\s*팟|충\s*청|spot)\s*(\d{1,3})\s*$/i;
 
 export function parseSpotNote(note: string | undefined): ParsedSpotNote {
   const entries: SpotEntry[] = [];
@@ -116,7 +119,8 @@ export interface SpotReport {
   oTotal: number;
 }
 
-export const spotLabel = (spot: number) => `스팟${spot}`;
+/** 번호 표시 이름: 기본은 예전 명칭 "스팟N", term 을 주면 그 명칭 (2026-11 부터 "충청N") */
+export const spotLabel = (spot: number, term: SpotTerm = "스팟") => `${term}${spot}`;
 
 function byDateThenRow(a: SpotCustomer, b: SpotCustomer): number {
   if (a.activatedAt !== b.activatedAt) {
@@ -126,7 +130,7 @@ function byDateThenRow(a: SpotCustomer, b: SpotCustomer): number {
 }
 
 /** 판매 목록 → SPOT 번호별 집계 + 판매별 금액 검증 */
-export function buildSpotReport(sales: readonly SheetSale[]): SpotReport {
+export function buildSpotReport(sales: readonly SheetSale[], term: SpotTerm = "스팟"): SpotReport {
   const map = new Map<number, SpotSummary>();
   const checks: SpotCheck[] = [];
   let noteTotal = 0;
@@ -157,7 +161,7 @@ export function buildSpotReport(sales: readonly SheetSale[]): SpotReport {
     for (const { spot, amount } of [...entries, ...unsplit.map((spot) => ({ spot, amount: 0 }))]) {
       let s = map.get(spot);
       if (!s) {
-        s = { spot, label: spotLabel(spot), count: 0, amount: 0, customers: [] };
+        s = { spot, label: spotLabel(spot, term), count: 0, amount: 0, customers: [] };
         map.set(spot, s);
       }
       s.amount += amount;
@@ -202,4 +206,15 @@ export function buildSpotReport(sales: readonly SheetSale[]): SpotReport {
       ),
     );
   return { spots, checks, problems, noteTotal, oTotal };
+}
+
+/**
+ * 화면 표시용 메모: 줄 앞의 "스팟"/"충청" 이름만 그 시기 명칭으로 바꿔 보여준다 (장표 메모는 그대로).
+ * 예: 11월 판매 "스팟1 3만" → "충청1 3만"
+ */
+export function noteForDisplay(note: string | undefined, term: SpotTerm): string {
+  return (note ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^(\s*)(?:스\s*팟|충\s*청)(?=\s*\d)/, `$1${term}`))
+    .join("\n");
 }
