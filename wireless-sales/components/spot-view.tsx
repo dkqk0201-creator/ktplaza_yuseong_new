@@ -12,7 +12,10 @@ import { copyText } from "@/components/copy-text";
 import {
   ADDON_STATE_LABEL,
   addonMessage,
+  buildAddonOverview,
   checkAddon,
+  type AddonOverview,
+  type AddonOverviewItem,
   type AddonCheck,
   type AddonMessageSale,
   type AddonState,
@@ -34,11 +37,13 @@ import {
 
 export function SpotView() {
   useFreshSalesData();
+  // [부가 미입력 고객 조회] 보기는 월을 바꿔도 유지 → 바꾼 월의 결과로 다시 계산된다
+  const [addonView, setAddonView] = useState(false);
   return (
     <SalesDataGate>
       {(data) => (
         // 월이 바뀌면 펼친 상세를 닫는다
-        <SpotBody key={data.sheet} sheet={data.sheet} sales={data.sales} />
+        <SpotBody key={data.sheet} sheet={data.sheet} sales={data.sales} addonView={addonView} setAddonView={setAddonView} />
       )}
     </SalesDataGate>
   );
@@ -53,7 +58,17 @@ function Won({ value }: { value: number }) {
   );
 }
 
-function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
+function SpotBody({
+  sheet,
+  sales,
+  addonView,
+  setAddonView,
+}: {
+  sheet: string;
+  sales: SheetSale[];
+  addonView: boolean;
+  setAddonView: (v: boolean) => void;
+}) {
   const { invalidate } = useSalesData();
   // 보는 월의 명칭: 2026년 10월까지 "스팟", 11월부터 "충청" (같은 예산 항목, 메모의 스팟1·충청1 은 같은 1번)
   const term = spotTerm(sheetToYearMonth(sheet));
@@ -83,6 +98,16 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
           }`}
         >
           {showBulk ? `${CURRENT_SPOT_TERM} 일괄등록 닫기 ▲` : `${CURRENT_SPOT_TERM} 일괄등록 ▼`}
+        </button>
+        <button
+          type="button"
+          onClick={() => setAddonView(!addonView)}
+          aria-pressed={addonView}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+            addonView ? "border border-rose-300 bg-rose-50 text-rose-700" : "border border-line bg-white text-ink hover:border-brand/50"
+          }`}
+        >
+          부가 미입력 고객 조회
         </button>
         <span className="text-xs text-ink-muted">기간·모델별 {CURRENT_SPOT_TERM} 금액을 한 번에 등록 (미리보기 후 최종 등록 · 10월 이전 개통 판매는 &lsquo;스팟&rsquo;으로 기록)</span>
       </div>
@@ -119,7 +144,14 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         <ProblemTable problems={report.problems} term={term} />
       )}
 
-      {report.spots.length === 0 ? (
+      {addonView ? (
+        <AddonOverviewSection
+          sheet={sheet}
+          term={term}
+          overview={buildAddonOverview(report.spots, new Map(report.checks.map((c) => [c.sale.row, c.oAmount])))}
+          onBack={() => setAddonView(false)}
+        />
+      ) : report.spots.length === 0 ? (
         <EmptyBox text={`이 월 시트 O열 메모에 ${term} 내역이 없습니다.`} />
       ) : (
         <section
@@ -194,7 +226,7 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         </section>
       )}
 
-      {selectedSpot && <SpotCustomers spot={selectedSpot} />}
+      {!addonView && selectedSpot && <SpotCustomers spot={selectedSpot} />}
 
       <p className="text-xs leading-relaxed text-ink-muted">
         {term}번호별 합계 = O열 메모에 적힌 번호별 금액의 합 (O열 값을 나누지 않음) ·
@@ -208,6 +240,19 @@ function SpotBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   );
 }
 
+/** 요금제·모델명: 장표 값 그대로, 비어 있으면 '미입력' (추정하지 않음) */
+function TextOrMissing({ value }: { value?: string }) {
+  const v = (value ?? "").trim();
+  return v ? <>{v}</> : <span className="text-ink-muted">미입력</span>;
+}
+
+const TH = "px-3 py-2.5 text-left font-semibold whitespace-nowrap";
+const TD = "px-3 py-2.5 whitespace-nowrap";
+
+function rowTone(state: AddonState) {
+  return state === "missing" ? "bg-rose-50/60" : state === "unclear" ? "bg-amber-50/60" : undefined;
+}
+
 function SpotCustomers({ spot }: { spot: SpotSummary }) {
   const checks = spot.customers.map((c) => ({ c, check: checkAddon(c.addon) }));
   const missingCount = checks.filter((x) => x.check.state === "missing").length;
@@ -217,7 +262,7 @@ function SpotCustomers({ spot }: { spot: SpotSummary }) {
       aria-label={`${spot.label} 고객 목록`}
       className="overflow-x-auto rounded-xl border border-line bg-white"
     >
-      <table className="w-full min-w-[760px] text-sm">
+      <table className="w-full min-w-[1040px] text-sm">
         <caption className="border-b border-line px-4 py-3 text-left text-sm font-bold text-ink">
           {spot.label} 고객 {spot.count}건
           <span className="ml-2 text-xs font-semibold">
@@ -232,28 +277,30 @@ function SpotCustomers({ spot }: { spot: SpotSummary }) {
         </caption>
         <thead className="bg-zinc-50 text-xs text-ink-sub">
           <tr>
-            <th scope="col" className="px-4 py-2.5 text-left font-semibold">개통일</th>
-            <th scope="col" className="px-4 py-2.5 text-left font-semibold">고객명</th>
-            <th scope="col" className="px-4 py-2.5 text-left font-semibold">CTN</th>
-            <th scope="col" className="px-4 py-2.5 text-left font-semibold">담당 직원</th>
-            <th scope="col" className="px-4 py-2.5 text-left font-semibold">부가서비스</th>
-            <th scope="col" className="px-4 py-2.5 text-left font-semibold">조치</th>
+            <th scope="col" className={TH}>개통일</th>
+            <th scope="col" className={TH}>고객명</th>
+            <th scope="col" className={TH}>CTN</th>
+            <th scope="col" className={TH}>담당 직원</th>
+            <th scope="col" className={TH}>부가서비스</th>
+            <th scope="col" className={TH}>개통 요금제</th>
+            <th scope="col" className={TH}>모델명</th>
+            <th scope="col" className={TH}>조치</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-line tabular-nums text-ink">
           {checks.map(({ c, check }) => (
-            <tr key={c.row} className={check.state === "missing" ? "bg-rose-50/60" : check.state === "unclear" ? "bg-amber-50/60" : undefined}>
-              <td className="px-4 py-2.5 whitespace-nowrap">{monthDayText(c.activatedAt)}</td>
-              <td className="px-4 py-2.5 whitespace-nowrap">{c.customer || "-"}</td>
-              <td className="px-4 py-2.5 whitespace-nowrap">{formatCtn(c.ctn) || "-"}</td>
-              <td className="px-4 py-2.5 whitespace-nowrap">{c.staff?.trim() || <span className="text-ink-muted">미기재</span>}</td>
-              <td className="px-4 py-2.5 whitespace-nowrap">
-                <AddonBadge check={check} />
-              </td>
-              <td className="px-4 py-2.5 whitespace-nowrap">
+            <tr key={c.row} className={rowTone(check.state)}>
+              <td className={TD}>{monthDayText(c.activatedAt)}</td>
+              <td className={TD}>{c.customer || "-"}</td>
+              <td className={TD}>{formatCtn(c.ctn) || "-"}</td>
+              <td className={TD}>{c.staff?.trim() || <span className="text-ink-muted">미기재</span>}</td>
+              <td className={TD}><AddonBadge check={check} /></td>
+              <td className={`${TD} max-w-[16rem] truncate`} title={c.plan}><TextOrMissing value={c.plan} /></td>
+              <td className={TD}><TextOrMissing value={c.model} /></td>
+              <td className={TD}>
                 <AddonCopyButton
                   state={check.state}
-                  sale={{ activatedAt: c.activatedAt, customer: c.customer, no: c.no ?? "", staff: c.staff ?? "" }}
+                  sale={{ activatedAt: c.activatedAt, customer: c.customer, ctn: c.ctn, staff: c.staff ?? "" }}
                 />
               </td>
             </tr>
@@ -261,6 +308,116 @@ function SpotCustomers({ spot }: { spot: SpotSummary }) {
         </tbody>
       </table>
     </section>
+  );
+}
+
+/** [부가 미입력 고객 조회]: 선택한 월의 모든 번호를 판매별로 합쳐 미입력·확인 필요만 (조회용, 예산에 반영하지 않음) */
+function AddonOverviewSection({
+  sheet,
+  term,
+  overview,
+  onBack,
+}: {
+  sheet: string;
+  term: SpotTerm;
+  overview: AddonOverview;
+  onBack: () => void;
+}) {
+  const { missing, unclear } = overview;
+  return (
+    <section aria-label={`${sheetLabel(sheet)} 부가 미입력 고객`} className="space-y-3">
+      <div className="rounded-xl border border-rose-200 bg-white p-4">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <h2 className="text-sm font-bold text-ink">{sheetLabel(sheet)} 부가 미입력 고객 ({term}번호 전체)</h2>
+          <button
+            type="button"
+            onClick={onBack}
+            className="ml-auto rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-semibold text-ink hover:border-brand/50"
+          >
+            ← 번호별 집계로 돌아가기
+          </button>
+        </div>
+        <dl className="mt-3 grid grid-cols-1 gap-2 text-sm tabular-nums sm:grid-cols-3">
+          <div className="rounded-lg bg-rose-50 px-3 py-2">
+            <dt className="text-xs text-rose-700">부가 미입력</dt>
+            <dd className="text-lg font-bold text-rose-700">총 {missing.length}건</dd>
+          </div>
+          <div className="rounded-lg bg-zinc-50 px-3 py-2">
+            <dt className="text-xs text-ink-sub">미입력 판매의 {term}예산 적용 금액 합계 (O열)</dt>
+            <dd className="text-lg font-bold text-ink"><Won value={overview.missingAmount} /></dd>
+          </div>
+          <div className="rounded-lg bg-amber-50 px-3 py-2">
+            <dt className="text-xs text-amber-800">확인 필요</dt>
+            <dd className="text-lg font-bold text-amber-800">{unclear.length}건</dd>
+          </div>
+        </dl>
+        <p className="mt-2 text-xs text-ink-muted">
+          대상 = O열 메모에 {term}번호가 있는 판매 (같은 판매는 한 번만, 번호는 모두 표시) · 입력됨 {overview.enteredCount}건 제외 ·
+          금액은 조회용이며 매장 예산에 더하거나 빼지 않습니다
+        </p>
+      </div>
+
+      {missing.length === 0 ? (
+        <EmptyBox text="부가 미입력 고객이 없습니다." />
+      ) : (
+        <OverviewTable label="부가 미입력 고객" items={missing} />
+      )}
+
+      {unclear.length > 0 && (
+        <details className="rounded-xl border border-amber-300 bg-amber-50/40">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-amber-900">
+            확인 필요 {unclear.length}건 (장표 AI열 값을 해석할 수 없음 — 미입력으로 단정하지 않음) · 펼쳐 보기
+          </summary>
+          <div className="px-2 pb-2">
+            <OverviewTable label="확인 필요 고객" items={unclear} />
+          </div>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function OverviewTable({ label, items }: { label: string; items: AddonOverviewItem[] }) {
+  return (
+    <div aria-label={label} className="overflow-x-auto rounded-xl border border-line bg-white">
+      <table className="w-full min-w-[1180px] text-sm">
+        <thead className="bg-zinc-50 text-xs text-ink-sub">
+          <tr>
+            <th scope="col" className={TH}>개통일</th>
+            <th scope="col" className={TH}>고객명</th>
+            <th scope="col" className={TH}>CTN</th>
+            <th scope="col" className={TH}>담당 직원</th>
+            <th scope="col" className={TH}>번호</th>
+            <th scope="col" className={`${TH} text-right`}>적용 금액(O열)</th>
+            <th scope="col" className={TH}>부가서비스</th>
+            <th scope="col" className={TH}>개통 요금제</th>
+            <th scope="col" className={TH}>모델명</th>
+            <th scope="col" className={TH}>조치</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line tabular-nums text-ink">
+          {items.map((i) => (
+            <tr key={i.row} className={rowTone(i.check.state)}>
+              <td className={TD}>{monthDayText(i.activatedAt)}</td>
+              <td className={TD}>{i.customer || "-"}</td>
+              <td className={TD}>{formatCtn(i.ctn) || "-"}</td>
+              <td className={TD}>{i.staff.trim() || <span className="text-ink-muted">미기재</span>}</td>
+              <td className={TD}>{i.spots.map((x) => x.label).join(", ")}</td>
+              <td className={`${TD} text-right font-semibold`}><Won value={i.oAmount} /></td>
+              <td className={TD}><AddonBadge check={i.check} /></td>
+              <td className={`${TD} max-w-[16rem] truncate`} title={i.plan}><TextOrMissing value={i.plan} /></td>
+              <td className={TD}><TextOrMissing value={i.model} /></td>
+              <td className={TD}>
+                <AddonCopyButton
+                  state={i.check.state}
+                  sale={{ activatedAt: i.activatedAt, customer: i.customer, ctn: i.ctn, staff: i.staff }}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

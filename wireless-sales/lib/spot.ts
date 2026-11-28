@@ -97,10 +97,14 @@ export interface SpotCustomer {
   customer: string;
   ctn: string;
   row: number;
-  /** B열 판매 No. · M열 직원명 · AI열 부가 (충청관리 부가서비스 검수용, 읽기 전용 — 금액 계산에 쓰지 않음) */
+  /** B열 판매 No. · M열 직원명 · AI열 부가 · K열 요금제 · J열 모델명 (충청관리 고객 목록 표시용, 읽기 전용 — 금액 계산에 쓰지 않음) */
   no?: string;
   staff?: string;
   addon?: string;
+  plan?: string;
+  model?: string;
+  /** 이 판매 메모에서 이 번호에 적힌 금액 (같은 번호가 두 줄이면 합, 금액을 정할 수 없으면 0) — 표시용 */
+  spotAmount?: number;
 }
 
 export interface SpotSummary {
@@ -160,7 +164,7 @@ export function buildSpotReport(sales: readonly SheetSale[], term: SpotTerm = "�
     noteTotal += total;
     oTotal += oAmount;
 
-    const seen = new Set<number>();
+    const seen = new Map<number, SpotCustomer>();
     // 금액을 정할 수 없는 SPOT 도 분류(건수·고객)는 한다 — 금액은 0 으로 더함
     for (const { spot, amount } of [...entries, ...unsplit.map((spot) => ({ spot, amount: 0 }))]) {
       let s = map.get(spot);
@@ -169,10 +173,11 @@ export function buildSpotReport(sales: readonly SheetSale[], term: SpotTerm = "�
         map.set(spot, s);
       }
       s.amount += amount;
-      if (!seen.has(spot)) {
-        seen.add(spot);
-        s.count += 1;
-        s.customers.push({
+      const already = seen.get(spot);
+      if (already) {
+        already.spotAmount = (already.spotAmount ?? 0) + amount;
+      } else {
+        const customer: SpotCustomer = {
           activatedAt: sale.activatedAt,
           customer: sale.customer,
           ctn: sale.ctn,
@@ -180,7 +185,13 @@ export function buildSpotReport(sales: readonly SheetSale[], term: SpotTerm = "�
           no: sale.no,
           staff: sale.staff,
           addon: sale.addon,
-        });
+          plan: sale.plan,
+          model: sale.model,
+          spotAmount: amount,
+        };
+        seen.set(spot, customer);
+        s.count += 1;
+        s.customers.push(customer);
       }
     }
 
