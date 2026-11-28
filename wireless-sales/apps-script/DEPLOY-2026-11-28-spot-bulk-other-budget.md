@@ -11,6 +11,7 @@
 | Apps Script (교체) | `apps-script/update-handler.gs` | 입구에 `spot-bulk`·`other-budget` 두 줄 추가만 (doPost 수정 불필요) |
 | TEST 전용 (교체) | `apps-script-test/test-entry.gs` | 필수 파일 목록에 새 두 파일 추가 (버전 2) — **TEST 프로젝트에만** |
 | 분석데이터 (새 파일) | `analysis-apps-script/other-budget-tab.gs` | AI 분석 스프레드시트에 `기타예산` 탭 (기존 직원별예산 탭 그대로) |
+| 분석데이터 (Code.gs 4곳) | 분석 프로젝트 `Code.gs` (저장소 밖) | VERSION C-1.1.0 · AI_TABS 에 '기타예산' · aiReadWireless_ 반환에 extras · builders 에 '기타예산' · 읽는법 '기타 예산' 한 줄 |
 | 웹앱 | `lib/spot-bulk.ts`, `lib/spot-bulk-api.ts`, `lib/server/spot-bulk.ts`, `app/api/spot/bulk/route.ts`, `components/spot-bulk-panel.tsx`, `components/spot-view.tsx`, `app/spot/page.tsx` | 스팟관리 화면 안 [스팟 일괄등록] |
 | 웹앱 | `lib/other-budget.ts`, `lib/other-budget-api.ts`, `lib/server/other-budget.ts`, `app/api/budget/other/route.ts`, `components/other-budget-panel.tsx`, `components/budget-view.tsx` | 예산관리 화면 안 [기타 예산] + 최종 매장 총예산 |
 | 웹앱 | `lib/server/apps-script.ts` | `postToAppsScript`·`shortText` export 만 (동작 변경 없음) |
@@ -40,3 +41,18 @@
 - 웹앱: Vercel 이전 배포로 Promote
 - Apps Script: 이전 버전으로 배포 되돌리기. 새로 생긴 시트 3개는 남겨도 기존 기능에 영향 없음
 - 스팟 일괄등록 자체는 화면 [최근 일괄등록 이력 → 되돌리기] 로 변경 전 O열 금액·메모 복구
+
+## TEST 결과 (2026-11-28, 실제 TEST 환경)
+
+| 항목 | 결과 |
+|---|---|
+| TEST 프로젝트 반영 | 바꾸기 전 13개 파일이 main 과 동일함 확인 → 새 2개 추가·2개 교체 → 저장 후 다시 열어 4개 파일 해시가 저장소와 동일 → `wsTestSelfCheck` 정상 → 배포 버전 5 (URL 그대로) |
+| Preview → TEST 연결 | Preview 조회 결과가 TEST 장표(11월 시트만, 10행)와 일치. 운영 장표(10월·11월)와 다름 |
+| 스팟 일괄등록 | 조건 2개(11/1~30 테스트폰 스팟1 3만, 11/1~10 전체 스팟2 5만) → 3건 110,000원 저장 · O열 숫자 50000/30000/30000 · 메모 "스팟2 5만"/"스팟1 3만" · N·AC 수식 그대로 · 스팟별 집계·예산관리 스팟예산 110,000 반영 |
+| 중복·충돌·보호 | 다시 조회 시 3건 모두 "이미 같은 스팟 등록" 제외 · 조건 겹침 2건 충돌 표시(기본 미적용) · 기존 스팟 판매 명시 승인 → O 50,000→100,000, 메모 기존 줄 보존 + 추가 |
+| 이력·되돌리기 | 이력 시트에 변경 전/후 O열·메모 기록(고객정보 없음) · 되돌리기로 O 50,000·메모 "스팟2 5만" 복구 |
+| 기타 예산 | 확보 300,000 등록 → 최종 268,207 · 차감 50,000 → 218,207 · 수정 70,000 → 198,207 · 삭제 → 268,207 · 복구 → 198,207 · 변경이력 5줄 · AC 검증 "기존 매장 총예산과 일치" 유지 |
+| 로그인 없는 요청 | 로그인 화면으로 돌려보내짐, 시트에 기록 없음 |
+| AI 분석 TEST | 수동 갱신 정상(모든 탭 정상, C-1.1.0) · 기타예산 탭 = 웹앱(-31,793 / +300,000 / −70,000 / 최종 198,207) · 직원별예산 탭 구조 그대로 |
+
+TEST 장표에 남은 시험 데이터: 11월 8·9·10번 판매 O열 스팟(합계 110,000)과 메모, `스팟일괄등록이력`, `기타예산내역`(TEST 항목 2건), `기타예산변경이력` — 모두 TEST 장표에만 있음.
