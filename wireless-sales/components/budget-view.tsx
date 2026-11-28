@@ -1,8 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { GobulbiPanel, type GobulbiLoad } from "@/components/gobulbi-panel";
-import { OtherBudgetPanel, type OtherBudgetLoad } from "@/components/other-budget-panel";
+import { useEffect, useRef, useState } from "react";
+import { GobulbiPanel } from "@/components/gobulbi-panel";
+import { OtherBudgetPanel } from "@/components/other-budget-panel";
+import { useBudgetExtras } from "@/components/use-budget-extras";
+import { prefetchBudgetExtras } from "@/lib/budget-extras";
 import { SaleDetail } from "@/components/sale-detail";
 import { useFreshSalesData, useSalesData } from "@/components/sales-data-provider";
 import {
@@ -24,19 +26,23 @@ import { isUmnpSale, postpaidCount } from "@/lib/umnp";
 import { oldWRuleSuspects, vMismatches, wonText } from "@/lib/v-split";
 import { formatCtn, todayInKorea } from "@/lib/format";
 import { applyGobulbi, checkAgainstSheetAc, isCurrentMonth } from "@/lib/gobulbi";
-import { fetchGobulbi } from "@/lib/gobulbi-api";
 import { applyOtherBudget } from "@/lib/other-budget";
 import { spotTerm } from "@/lib/spot-term";
-import { fetchOtherBudget } from "@/lib/other-budget-api";
 import { monthDayText } from "@/lib/sale-display";
 
 /* 예산관리 + 무선 목표 (선택한 월 시트의 실제 장표 데이터 기준) */
 
 export function BudgetView() {
-  useFreshSalesData();
+  const { selectedSheet } = useFreshSalesData();
+  // 판매내역을 기다리지 않고 고불비사용·기타 예산 조회를 바로 시작한다 (60초 안 값이 있으면 다시 부르지 않음).
+  // 처음 열 때(월 미정)는 이번 달 — 판매내역 조회도 이번 달 시트를 고른다. 다른 달이면 화면이 그 달로 다시 조회한다.
+  const prefetchMonth = selectedSheet ? sheetToYearMonth(selectedSheet) : todayInKorea().slice(0, 7);
+  useEffect(() => {
+    prefetchBudgetExtras(prefetchMonth);
+  }, [prefetchMonth]);
   return (
     <SalesDataGate>
-      {(data) => <BudgetBody sheet={data.sheet} sales={data.sales} />}
+      {(data) => <BudgetBody key={data.sheet} sheet={data.sheet} sales={data.sales} />}
     </SalesDataGate>
   );
 }
@@ -60,7 +66,9 @@ function Money({ value, big = false }: { value: number; big?: boolean }) {
 
 interface BudgetCard {
   label: string;
-  value: number;
+  /** null = 아직 확정할 수 없음 (pending 문구를 금액 대신 표시, 0원으로 보이지 않게) */
+  value: number | null;
+  pending?: string;
   hint: string;
   /** 있으면 눌러서 내역을 펼치는 카드 (고객별 사용내역 / 고불비사용 내역) */
   kind?: Panel;
@@ -69,52 +77,6 @@ interface BudgetCard {
 }
 
 type Panel = UsageKind | "gobulbi";
-
-/** 선택한 월의 고불비사용 불러오기 (월이 바뀌면 이전 응답은 버림) */
-function useGobulbi(month: string) {
-  const [load, setLoad] = useState<GobulbiLoad>({ status: "loading" });
-  const seq = useRef(0);
-  const reload = useCallback(async () => {
-    const my = ++seq.current;
-    setLoad({ status: "loading" });
-    const res = await fetchGobulbi(month);
-    if (my !== seq.current) return;
-    if (res.ok && res.data && res.data.month === month) setLoad({ status: "ok", data: res.data });
-    else
-      setLoad({
-        status: "error",
-        message: res.ok ? "고불비사용 응답을 확인하지 못했습니다." : res.message,
-        notDeployed: !res.ok && res.notDeployed === true,
-      });
-  }, [month]);
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-  return { load, reload };
-}
-
-/** 선택한 월의 기타 예산 불러오기 (월이 바뀌면 이전 응답은 버림) */
-function useOtherBudget(month: string) {
-  const [load, setLoad] = useState<OtherBudgetLoad>({ status: "loading" });
-  const seq = useRef(0);
-  const reload = useCallback(async () => {
-    const my = ++seq.current;
-    setLoad({ status: "loading" });
-    const res = await fetchOtherBudget(month);
-    if (my !== seq.current) return;
-    if (res.ok && res.data && res.data.month === month) setLoad({ status: "ok", data: res.data });
-    else
-      setLoad({
-        status: "error",
-        message: res.ok ? "기타 예산 응답을 확인하지 못했습니다." : res.message,
-        notDeployed: !res.ok && res.notDeployed === true,
-      });
-  }, [month]);
-  useEffect(() => {
-    void reload();
-  }, [reload]);
-  return { load, reload };
-}
 
 function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   const { invalidate } = useSalesData();
@@ -126,21 +88,32 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
   const usageRows = usage && usage !== "gobulbi" ? budgetUsageRows(sales, usage) : [];
   // 고불비사용 (별도 시트, 지급일 기준): 현금예산에서 한 번만 차감
   const month = sheetToYearMonth(sheet);
-  const { load: gobulbi, reload: reloadGobulbi } = useGobulbi(month);
+  // 고불비사용·기타 예산: 한 번의 요청으로 함께 조회, 60초 안 재방문은 다시 부르지 않음 (계산식은 그대로)
+  const extras = useBudgetExtras(month);
+  const { gobulbi, other, reloadGobulbi, reloadOther, reloadAll } = extras;
   const applied = gobulbi.status === "ok" ? applyGobulbi(b, gobulbi.data.total) : null;
   // 장표 AC열(최종 남은 예산) 합계 = AC8. 웹앱 총 매장 예산과의 차이는 고불비사용 합계와 같아야 한다
   const acTotal = sales.reduce((t, s) => t + (s.finalTotal ?? 0), 0);
   const acCheck = applied ? checkAgainstSheetAc(acTotal, applied) : null;
   // 기타 예산 (별도 시트): 기존 매장 총예산은 그대로 두고 최종 매장 총예산에만 더한다. AC열 검증은 기존 총예산 기준
-  const { load: other, reload: reloadOther } = useOtherBudget(month);
-  const existingTotal = applied ? applied.total : b.total;
-  const otherFinal = other.status === "ok" ? applyOtherBudget(existingTotal, other.data.net) : null;
-  const otherWarn =
-    other.status === "loading"
-      ? "기타 예산 확인 중 (아직 미반영)"
-      : other.status === "error"
-        ? "기타 예산 미반영 (불러오기 실패)"
-        : undefined;
+  // 기존 매장 총예산은 고불비사용을 확인한 뒤에만 확정 (그 전에는 금액을 보이지 않음)
+  const existingTotal = applied ? applied.total : null;
+  const otherFinal =
+    existingTotal !== null && other.status === "ok" ? applyOtherBudget(existingTotal, other.data.net) : null;
+  // 총 매장 예산 상태: 판매내역(이미 받음)·고불비사용·기타 예산이 모두 확인돼야 'ready'
+  const totalState: "ready" | "loading" | "error" =
+    gobulbi.status === "error" || other.status === "error"
+      ? "error"
+      : otherFinal
+        ? "ready"
+        : "loading";
+  // 직전 조회값 (참고용, 확정값 아님): 60초 넘게 지난 같은 달 값이 남아 있을 때만
+  const prevG = extras.previous.gobulbi ?? (gobulbi.status === "ok" ? gobulbi.data : undefined);
+  const prevO = extras.previous.other ?? (other.status === "ok" ? other.data : undefined);
+  const previousFinal =
+    totalState !== "ready" && (extras.previous.gobulbi || extras.previous.other) && prevG && prevO
+      ? applyOtherBudget(applyGobulbi(b, prevG.total).total, prevO.net).finalTotal
+      : null;
   const gobulbiWarn =
     gobulbi.status === "loading"
       ? "고불비사용 확인 중 (아직 차감 전)"
@@ -182,7 +155,8 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
     },
     {
       label: "고불비사용",
-      value: applied ? applied.gobulbi : 0,
+      value: applied ? applied.gobulbi : null,
+      pending: gobulbi.status === "error" ? "불러오기 실패" : "확인 중…",
       hint:
         gobulbi.status === "ok"
           ? `${month.slice(5).replace(/^0/, "")}월 지급일 기준 ${gobulbi.data.items.length}건 합계 · 누르면 사용내역`
@@ -192,7 +166,8 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
     },
     {
       label: "현금예산 (고불비 차감 후)",
-      value: applied ? applied.cash : b.cash,
+      value: applied ? applied.cash : null,
+      pending: gobulbi.status === "error" ? "고불비 미확인" : "확인 중…",
       hint: `${BUDGET_COLUMNS.cash}열 합계 − 고불비사용`,
       warn: gobulbiWarn,
     },
@@ -207,13 +182,48 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
         <p className="text-sm font-semibold text-brand">
           {sheetLabel(sheet)} 총 매장 예산{otherFinal ? " (기타 예산 반영 후 최종)" : ""}
         </p>
-        <p className="mt-2 text-brand">
-          <Money value={otherFinal ? otherFinal.finalTotal : existingTotal} big />
-        </p>
+        {totalState === "ready" && otherFinal ? (
+          <p className="mt-2 text-brand">
+            <Money value={otherFinal.finalTotal} big />
+          </p>
+        ) : totalState === "loading" ? (
+          <div role="status" aria-live="polite" className="mt-2">
+            <p className="flex items-center gap-2 text-2xl font-bold text-ink-sub sm:text-3xl">
+              <span aria-hidden className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-brand/30 border-t-brand" />
+              예산 계산 중…
+            </p>
+            <p className="mt-1 text-xs text-ink-muted">
+              {gobulbi.status !== "ok" && other.status !== "ok"
+                ? "고불비사용·기타 예산을 확인하고 있습니다"
+                : gobulbi.status !== "ok"
+                  ? "고불비사용을 확인하고 있습니다"
+                  : "기타 예산을 확인하고 있습니다"}
+              {previousFinal !== null && <> · 직전 조회값 {formatNumber(previousFinal)}원 (확정 아님)</>}
+            </p>
+          </div>
+        ) : (
+          <div role="alert" className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-3">
+            <p className="text-base font-bold text-rose-700">총 매장 예산을 확정하지 못했습니다</p>
+            <ul className="mt-1 list-disc pl-5 text-xs text-rose-700">
+              {gobulbi.status === "error" && <li>고불비사용 불러오기 실패 — {gobulbi.message}</li>}
+              {other.status === "error" && <li>기타 예산 불러오기 실패 — {other.message}</li>}
+            </ul>
+            <p className="mt-1 text-xs text-ink-sub">실패한 항목을 0원으로 계산하지 않았습니다. 잠시 뒤 다시 조회해 주세요.</p>
+            <button
+              type="button"
+              onClick={() => void reloadAll()}
+              className="mt-2 rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-white hover:bg-brand/90"
+            >
+              다시 조회
+            </button>
+          </div>
+        )}
         <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs tabular-nums sm:grid-cols-5">
           <div>
             <dt className="text-ink-muted">기존 매장 총예산</dt>
-            <dd className="font-semibold text-ink">{formatNumber(existingTotal)}원</dd>
+            <dd className="font-semibold text-ink">
+              {existingTotal !== null ? `${formatNumber(existingTotal)}원` : gobulbi.status === "error" ? "불러오기 실패" : "확인 중…"}
+            </dd>
           </div>
           <div>
             <dt className="text-ink-muted">기타 예산 확보</dt>
@@ -238,18 +248,6 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
           기존 매장 총예산 = 고객혜택 잔여금액 + {spotTerm(month)}예산 + 현금예산(고불비 차감 후) · 고불비사용은 현금예산에서 한 번만 차감 ·
           최종 = 기존 매장 총예산 + 기타 예산 순증감 (기타 예산은 고객혜택·{spotTerm(month)}·현금예산에 넣지 않음)
         </p>
-        {otherWarn && (
-          <p role="status" className="mt-2 text-xs font-semibold text-amber-700">
-            ⚠ {otherWarn}
-            {other.status === "error" && <> — {other.message}</>}
-          </p>
-        )}
-        {gobulbiWarn && (
-          <p role="status" className="mt-2 text-xs font-semibold text-amber-700">
-            ⚠ {gobulbiWarn}
-            {gobulbi.status === "error" && <> — {gobulbi.message}</>}
-          </p>
-        )}
         {acCheck && (
           <p
             className={`mt-2 text-xs tabular-nums ${acCheck.ok ? "text-ink-sub" : "font-semibold text-rose-600"}`}
@@ -290,7 +288,11 @@ function BudgetBody({ sheet, sales }: { sheet: string; sales: SheetSale[] }) {
                 )}
               </p>
               <p className="mt-1.5">
-                <Money value={card.value} />
+                {card.value !== null ? (
+                  <Money value={card.value} />
+                ) : (
+                  <span className="text-2xl font-bold text-ink-muted">{card.pending ?? "확인 중…"}</span>
+                )}
               </p>
               <p className="mt-1.5 text-xs text-ink-muted">{card.hint}</p>
               {card.warn && (
