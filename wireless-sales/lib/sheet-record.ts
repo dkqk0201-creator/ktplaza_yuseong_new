@@ -53,7 +53,16 @@ export type SheetSale = {
     saleIdState?: SaleIdState;
     /** 판매연결 정보 (보조 시트 "웹앱판매연결", saleId 가 이 판매에만 있을 때만) */
     link?: SaleLink;
+    /**
+     * R·S·T열(정책 확보금액)에 금액으로 읽을 수 없는 글자가 있을 때만 그 원문 (정책 확보 관리 필터의 '확인 필요' 판정용).
+     * 빈칸·"-"·숫자는 넣지 않는다. 금액 값(null)은 그대로.
+     */
+    policyUnread?: Partial<Record<PolicyAmountKey, string>>;
   };
+
+/** 정책 확보 관리에서 보는 세 금액 열 (T 고객혜택 · S 모델정책 · R 2ND) */
+export const POLICY_AMOUNT_KEYS = ["customerBenefit", "modelPolicy", "securedSecond"] as const;
+export type PolicyAmountKey = (typeof POLICY_AMOUNT_KEYS)[number];
 
 /** 글자로 읽기. 시트가 계산식 방지용으로 붙인 ' 는 떼어 낸다. */
 export function cellText(value: unknown): string {
@@ -88,6 +97,14 @@ export function parseSheetRow(
       : cellText(values[index]);
   }
   sale.no = cellText(no) || cellText(values[COLUMN_INDEX.no]);
+  for (const key of POLICY_AMOUNT_KEYS) {
+    const text = cellText(values[COLUMN_INDEX[key]]);
+    if (sale[key] === null && text !== "" && text !== "-") {
+      const unread = (sale.policyUnread ?? {}) as Record<string, string>;
+      unread[key] = text.slice(0, 40);
+      sale.policyUnread = unread;
+    }
+  }
   return sale as SheetSale;
 }
 

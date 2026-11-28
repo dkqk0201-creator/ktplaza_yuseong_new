@@ -43,6 +43,37 @@ export interface PolicyQuery {
   to: string;
   /** 비어 있으면 기간 내 전체 판매 */
   models: string[];
+  /** 정책 항목 필터 (2026-11-29). 비어 있거나 없으면 기존처럼 정책 조건 없이 전체. 여러 개면 하나 이상 확보(0원 초과)한 판매 */
+  policies?: PolicyKey[];
+}
+
+/** 정책 항목 하나의 판정: 확보(0원 초과) / 없음(빈칸·0원) / 확인 필요(금액으로 읽을 수 없는 글자, 음수) */
+export type PolicyPresence = "secured" | "none" | "unclear";
+
+export function policyPresence(sale: SheetSale, key: PolicyKey): PolicyPresence {
+  const field = POLICY_FIELDS.find((f) => f.key === key)!;
+  if (sale.policyUnread?.[field.saleKey] !== undefined) return "unclear";
+  const v = sale[field.saleKey];
+  if (v === null || v === 0) return "none";
+  if (!Number.isFinite(v) || v < 0) return "unclear";
+  return "secured";
+}
+
+/** 판매가 정책 조건에 맞는지: match(선택한 항목 중 하나 이상 확보) / unclear(확보는 없고 읽을 수 없는 항목이 있음) / no */
+export function matchPolicies(sale: SheetSale, keys: readonly PolicyKey[]): "match" | "unclear" | "no" {
+  let unclear = false;
+  for (const k of keys) {
+    const p = policyPresence(sale, k);
+    if (p === "secured") return "match";
+    if (p === "unclear") unclear = true;
+  }
+  return unclear ? "unclear" : "no";
+}
+
+export function policyFilterLabel(keys: readonly PolicyKey[] | undefined): string {
+  if (!keys || keys.length === 0) return "정책 조건 없음 (전체)";
+  const names = POLICY_FIELDS.filter((f) => keys.includes(f.key)).map((f) => `${f.label}(${f.letter}열)`);
+  return names.length > 1 ? `${names.join(" + ")} 중 하나 이상 확보` : `${names[0]} 확보`;
 }
 
 export function queryError(q: PolicyQuery): string | null {
@@ -50,6 +81,7 @@ export function queryError(q: PolicyQuery): string | null {
   if (q.from > q.to) return "종료일이 시작일보다 앞설 수 없습니다.";
   if (Date.parse(`${q.to}T00:00:00Z`) - Date.parse(`${q.from}T00:00:00Z`) > 92 * 86_400_000) return "기간은 최대 93일까지 지정할 수 있습니다.";
   if (q.models.length > POLICY_MODELS_MAX) return `모델은 ${POLICY_MODELS_MAX}개까지 선택할 수 있습니다.`;
+  if (q.policies && q.policies.some((k) => !POLICY_FIELDS.some((f) => f.key === k))) return "정책 항목을 확인해 주세요.";
   for (const m of q.models) {
     const n = normalizeModel(m);
     if (!n || n.length > 40) return "모델명을 확인해 주세요.";
@@ -70,22 +102,39 @@ export function policyTotal(v: PolicyValues): number {
   return (v.benefit ?? 0) + (v.other ?? 0) + (v.second ?? 0);
 }
 
-/** 조회: 개통일이 기간 안(양쪽 포함)이고 모델이 맞는 판매. 개통일을 읽지 못한 판매는 따로 */
-export function selectPolicySales(sales: readonly PolicySale[], q: PolicyQuery): { rows: PolicySale[]; invalidDate: PolicySale[] } {
+/**
+ * 조회: 개통일이 기간 안(양쪽 포함)이고 모델이 맞는 판매. 개통일을 읽지 못한 판매는 따로.
+ * 정책 항목을 고르면 그 항목 중 하나 이상 확보(0원 초과)한 판매만 rows (판매 1건 = 1줄, 중복 없음).
+ * 고른 항목에 확보는 없고 금액으로 읽을 수 없는 값만 있는 판매는 policyUnclear 로 따로 (0원으로 단정하지 않음).
+ */
+export function selectPolicySales(
+  sales: readonly PolicySale[],
+  q: PolicyQuery,
+): { rows: PolicySale[]; invalidDate: PolicySale[]; policyUnclear: PolicySale[] } {
   const models = new Set(q.models.map(normalizeModel).filter(Boolean));
+  const policies = q.policies ?? [];
   const rows: PolicySale[] = [];
   const invalidDate: PolicySale[] = [];
+  const policyUnclear: PolicySale[] = [];
+  const seen = new Set<string>();
+  const order = (a: PolicySale, b: PolicySale) => a.activatedAt.localeCompare(b.activatedAt) || a.sheet.localeCompare(b.sheet) || a.row - b.row;
   for (const s of sales) {
     if (models.size > 0 && !models.has(normalizeModel(s.model))) continue;
+    if (policies.length > 0 && matchPolicies(s, policies) === "no") continue;
     if (!isValidDate(s.activatedAt)) {
       invalidDate.push(s);
       continue;
     }
     if (s.activatedAt < q.from || s.activatedAt > q.to) continue;
-    rows.push(s);
+    const key = saleKeyOf(s);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (policies.length > 0 && matchPolicies(s, policies) === "unclear") policyUnclear.push(s);
+    else rows.push(s);
   }
-  rows.sort((a, b) => a.activatedAt.localeCompare(b.activatedAt) || a.sheet.localeCompare(b.sheet) || a.row - b.row);
-  return { rows, invalidDate };
+  rows.sort(order);
+  policyUnclear.sort(order);
+  return { rows, invalidDate, policyUnclear };
 }
 
 /** 입력 금액 → 정수 원. "30000", "30,000", "3만", "3만5천" 등. 빈칸은 undefined (= 바꾸지 않음), 잘못된 값은 NaN */

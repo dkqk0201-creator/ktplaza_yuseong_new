@@ -15,6 +15,8 @@ import {
   queryError,
   saleKeyOf,
   selectPolicySales,
+  policyFilterLabel,
+  policyPresence,
   toEditItem,
   type PolicyChange,
   type PolicyEditApplyResult,
@@ -70,10 +72,12 @@ export function PolicyEditView() {
   const [to, setTo] = useState(today);
   const [mode, setMode] = useState<"models" | "all">("models");
   const [modelsText, setModelsText] = useState("");
+  // 정책 항목 필터 (복수 선택, 비우면 정책 조건 없음)
+  const [policies, setPolicies] = useState<PolicyKey[]>([]);
   const [modelSuggestions, setModelSuggestions] = useState<string[]>([]);
   const [load, setLoad] = useState<Load>({ status: "idle" });
   const [loadErrors, setLoadErrors] = useState<string[]>([]);
-  const [queried, setQueried] = useState<{ query: PolicyQuery; rows: PolicySale[]; invalidDate: PolicySale[] } | null>(null);
+  const [queried, setQueried] = useState<{ query: PolicyQuery; rows: PolicySale[]; invalidDate: PolicySale[]; policyUnclear: PolicySale[] } | null>(null);
   const [edits, setEdits] = useState<Map<string, Edit>>(new Map());
   const [open, setOpen] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -83,7 +87,8 @@ export function PolicyEditView() {
   const [historyKey, setHistoryKey] = useState(0);
 
   const models = mode === "all" ? [] : [...new Set(modelsText.split(/[,，\n]/).map(normalizeModel).filter(Boolean))];
-  const query: PolicyQuery = { from, to, models };
+  // 화면 순서(고객혜택·그외·2ND)대로 정리해 조건에 넣는다
+  const query: PolicyQuery = { from, to, models, policies: POLICY_FIELDS.map((f) => f.key).filter((k) => policies.includes(k)) };
   const inputError = mode === "models" && models.length === 0 ? "조회할 모델을 입력하거나 '기간 내 전체 판매'를 선택해 주세요." : queryError(query);
 
   // 모델 목록 (입력 도움): 이번 달 판매 모델
@@ -109,8 +114,8 @@ export function PolicyEditView() {
       return;
     }
     setModelSuggestions((cur) => [...cur, ...sales.map((s) => s.model)]);
-    const { rows, invalidDate } = selectPolicySales(sales, q);
-    setQueried({ query: q, rows, invalidDate });
+    const { rows, invalidDate, policyUnclear } = selectPolicySales(sales, q);
+    setQueried({ query: q, rows, invalidDate, policyUnclear });
     setLoad({ status: "idle" });
   }
 
@@ -286,6 +291,31 @@ export function PolicyEditView() {
             })}
           </div>
         )}
+        <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="정책 항목 선택">
+          <span className="text-xs font-semibold text-ink-sub">정책 항목 선택</span>
+          {POLICY_FIELDS.map((f) => {
+            const on = policies.includes(f.key);
+            return (
+              <label
+                key={f.key}
+                className={`flex cursor-pointer items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-semibold ${
+                  on ? "border-brand bg-brand-soft/40 text-brand" : "border-line text-ink-sub hover:border-brand/50"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  disabled={saving}
+                  onChange={() => setPolicies((cur) => (cur.includes(f.key) ? cur.filter((k) => k !== f.key) : [...cur, f.key]))}
+                />
+                {f.label} <span className="font-normal text-ink-muted">({f.letter}열)</span>
+              </label>
+            );
+          })}
+          <span className="text-[11px] text-ink-muted">
+            {policies.length === 0 ? "선택 안 함 = 정책 조건 없이 기간·모델에 맞는 전체 판매" : policies.length > 1 ? "고른 항목 중 하나 이상 0원보다 큰 판매 (한 번만 표시)" : "그 항목 금액이 0원보다 큰 판매만"}
+          </span>
+        </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -313,6 +343,15 @@ export function PolicyEditView() {
 
       {queried && (
         <section aria-label="정책 확보 내역" className="overflow-hidden rounded-xl border border-line bg-white">
+          <p className="border-b border-line bg-zinc-50/60 px-4 py-2 text-xs text-ink-sub">
+            <span className="font-semibold text-ink">조회 조건</span> · {queried.query.from}~{queried.query.to} ·{" "}
+            {queried.query.models.length ? queried.query.models.join(", ") : "전체 모델"} ·{" "}
+            <span className="font-semibold text-brand">정책: {policyFilterLabel(queried.query.policies)}</span> ·{" "}
+            <span className="font-semibold text-ink">검색된 판매 {formatNumber(queried.rows.length)}건</span>
+            {queried.policyUnclear.length > 0 && (
+              <span className="font-semibold text-amber-700"> · 금액 확인 필요 {formatNumber(queried.policyUnclear.length)}건 (아래)</span>
+            )}
+          </p>
           {queried.rows.length === 0 ? (
             <p className="px-4 py-6 text-center text-sm text-ink-sub">조건에 맞는 판매가 없습니다.</p>
           ) : (
@@ -414,6 +453,24 @@ export function PolicyEditView() {
                   </tfoot>
                 )}
               </table>
+            </div>
+          )}
+
+          {queried.policyUnclear.length > 0 && (
+            <div className="border-t border-amber-200 bg-amber-50/60 px-4 py-3 text-xs text-amber-900">
+              <p className="font-bold">
+                고른 정책 항목에 금액으로 읽을 수 없는 값이 있어 판정하지 못한 판매 {formatNumber(queried.policyUnclear.length)}건 (0원으로 보지 않음 · 장표 확인 필요)
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {queried.policyUnclear.map((x) => (
+                  <li key={saleKeyOf(x)}>
+                    {x.sheet} {x.row}행 · No.{x.no || "없음"} · {x.activatedAt || "-"} · {x.model || "-"} —{" "}
+                    {POLICY_FIELDS.filter((f) => queried.query.policies?.includes(f.key) && policyPresence(x, f.key) === "unclear")
+                      .map((f) => `${f.label}(${f.letter}열) '${x.policyUnread?.[f.saleKey] ?? formatNumber(x[f.saleKey] ?? 0)}'`)
+                      .join(", ")}
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 
